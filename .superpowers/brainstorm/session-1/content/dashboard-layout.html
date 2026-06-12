@@ -1,0 +1,364 @@
+<style>
+  .tv-dashboard {
+    background-color: #131722;
+    color: #d1d4dc;
+    font-family: -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif;
+    border-radius: 8px;
+    border: 1px solid #2a2e39;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 700px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  }
+  .tv-header {
+    background-color: #1c2030;
+    border-bottom: 1px solid #2a2e39;
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .tv-logo {
+    font-weight: bold;
+    font-size: 18px;
+    color: #2962ff;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tv-logo span {
+    color: #ffffff;
+  }
+  .tv-search {
+    background-color: #2a2e39;
+    border: 1px solid #363c4e;
+    border-radius: 4px;
+    color: #ffffff;
+    padding: 6px 12px;
+    width: 250px;
+    outline: none;
+    font-size: 14px;
+  }
+  .tv-search:focus {
+    border-color: #2962ff;
+  }
+  .tv-market-tags {
+    display: flex;
+    gap: 10px;
+  }
+  .tv-tag {
+    background-color: #2a2e39;
+    border-radius: 3px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .tv-tag.bull { color: #089981; background-color: rgba(8, 153, 129, 0.1); }
+  .tv-tag.bear { color: #f23645; background-color: rgba(242, 54, 69, 0.1); }
+  
+  .tv-body {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+  .tv-sidebar {
+    width: 200px;
+    background-color: #131722;
+    border-right: 1px solid #2a2e39;
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    gap: 16px;
+  }
+  .tv-menu-title {
+    font-size: 11px;
+    color: #787b86;
+    text-transform: uppercase;
+    font-weight: bold;
+    letter-spacing: 1px;
+  }
+  .tv-watchlist-item {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .tv-watchlist-item:hover {
+    background-color: #1c2030;
+  }
+  .tv-watchlist-item .change.up { color: #089981; }
+  .tv-watchlist-item .change.down { color: #f23645; }
+
+  .tv-main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    background-color: #1c2030;
+  }
+
+  .tv-stock-info {
+    padding: 16px;
+    border-bottom: 1px solid #2a2e39;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #131722;
+  }
+  .tv-stock-title {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  .tv-stock-name {
+    font-size: 24px;
+    font-weight: bold;
+    color: #ffffff;
+  }
+  .tv-stock-symbol {
+    font-size: 14px;
+    color: #787b86;
+  }
+  .tv-stock-price {
+    font-size: 28px;
+    font-weight: bold;
+    color: #ffffff;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .tv-stock-change {
+    font-size: 16px;
+    font-weight: 500;
+  }
+  .tv-stock-change.up { color: #089981; }
+  .tv-stock-change.down { color: #f23645; }
+
+  .tv-score-box {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    border: 1px solid #3b82f6;
+    border-radius: 8px;
+    padding: 12px 20px;
+    text-align: center;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+  }
+  .tv-score-val {
+    font-size: 32px;
+    font-weight: 900;
+    color: #3b82f6;
+  }
+  .tv-score-stars {
+    color: #fbbf24;
+    font-size: 18px;
+    margin-top: 4px;
+  }
+
+  .tv-workspace-grid {
+    display: grid;
+    grid-template-columns: 3fr 2fr;
+    flex: 1;
+    min-height: 480px;
+  }
+  .tv-chart-pane {
+    border-right: 1px solid #2a2e39;
+    display: flex;
+    flex-direction: column;
+    background-color: #131722;
+    padding: 12px;
+  }
+  .tv-chart-toolbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .tv-btn {
+    background-color: #2a2e39;
+    border: none;
+    color: #d1d4dc;
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .tv-btn.active {
+    background-color: #2962ff;
+    color: white;
+  }
+  .tv-mock-chart {
+    flex: 1;
+    border: 1px dashed #363c4e;
+    border-radius: 4px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at center, #1c2030 0%, #131722 100%);
+  }
+  
+  .tv-analysis-pane {
+    padding: 16px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    background-color: #171b26;
+  }
+  .tv-analysis-section {
+    background-color: #1c2030;
+    border: 1px solid #2a2e39;
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .tv-section-title {
+    font-size: 14px;
+    font-weight: bold;
+    color: #ffffff;
+    border-left: 3px solid #2962ff;
+    padding-left: 8px;
+    margin-bottom: 10px;
+  }
+  .tv-analysis-list {
+    margin: 0;
+    padding-left: 20px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .tv-analysis-list li {
+    margin-bottom: 6px;
+  }
+  .tv-conclusion-box {
+    background-color: rgba(41, 98, 255, 0.1);
+    border: 1px solid rgba(41, 98, 255, 0.3);
+    border-radius: 6px;
+    padding: 12px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #90caf9;
+  }
+</style>
+
+<h2>界面原型设计与布局 / UI & UX Layout Mockup</h2>
+<p class="subtitle">参考 TradingView 风格的黑色极客金融风面板，集成主副图联动以及右侧全方位多维度研报。</p>
+
+<div class="tv-dashboard">
+  <!-- 头部栏 -->
+  <div class="tv-header">
+    <div class="tv-logo">
+      📊 <span>Antigravity</span> Stock Analyzer
+    </div>
+    <div>
+      <input type="text" class="tv-search" placeholder="输入代码或拼音... 比如 AAPL / 700 / 600519" value="AAPL">
+    </div>
+    <div class="tv-market-tags">
+      <span class="tv-tag bull">美股 (US)</span>
+      <span class="tv-tag">港股 (HK)</span>
+      <span class="tv-tag">A股 (CN)</span>
+      <span class="tv-tag">日股 (JP)</span>
+    </div>
+  </div>
+
+  <div class="tv-body">
+    <!-- 侧边自选栏 -->
+    <div class="tv-sidebar">
+      <div class="tv-menu-title">自选股 / Watchlist</div>
+      <div class="tv-watchlist-item">
+        <span>AAPL (苹果)</span>
+        <span class="change up">+1.43%</span>
+      </div>
+      <div class="tv-watchlist-item">
+        <span>0700.HK (腾讯)</span>
+        <span class="change up">+0.89%</span>
+      </div>
+      <div class="tv-watchlist-item">
+        <span>600519.SS (茅台)</span>
+        <span class="change down">-1.20%</span>
+      </div>
+      <div class="tv-watchlist-item">
+        <span>9984.T (软银)</span>
+        <span class="change up">+2.15%</span>
+      </div>
+    </div>
+
+    <!-- 主分析区域 -->
+    <div class="tv-main-content">
+      <!-- 股票基本信息与评分 -->
+      <div class="tv-stock-info">
+        <div class="tv-stock-title">
+          <span class="tv-stock-name">Apple Inc.</span>
+          <span class="tv-stock-symbol">AAPL.US (NASDAQ)</span>
+          <div class="tv-stock-price">
+            $178.58
+            <span class="tv-stock-change up">+$2.52 (+1.43%)</span>
+          </div>
+        </div>
+        
+        <div class="tv-score-box">
+          <div class="tv-score-val">4.5 / 5</div>
+          <div class="tv-score-stars">★★★★☆</div>
+          <div style="font-size: 11px; color: #787b86; margin-top: 2px;">强烈建议买入/持有</div>
+        </div>
+      </div>
+
+      <!-- 工作区网格：左K线图，右研报面板 -->
+      <div class="tv-workspace-grid">
+        <!-- 左侧K线图 -->
+        <div class="tv-chart-pane">
+          <div class="tv-chart-toolbar">
+            <button class="tv-btn active">日 K</button>
+            <button class="tv-btn">周 K</button>
+            <button class="tv-btn">EMA (5/10/20/60)</button>
+            <button class="tv-btn">BOLL</button>
+          </div>
+          <div class="tv-mock-mockup tv-mock-chart">
+            <div style="text-align: center; color: #787b86;">
+              <div style="font-size: 36px; margin-bottom: 10px;">📈</div>
+              <strong>TradingView Lightweight Charts 实时图表渲染区</strong>
+              <p style="font-size: 12px; margin-top: 4px;">[主图: K线 + EMA多头排列 | 副图: MACD金叉 + RSI超买]</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右侧股票研报分析面板 -->
+        <div class="tv-analysis-pane">
+          <div class="tv-conclusion-box">
+            <strong>📋 综合分析结论：</strong><br/>
+            该股目前日K处于多头突破排列，周线长周期亦维持上升通道（多周期共振）。日线MACD在零轴上方再次发生金叉，能量柱呈放大态势，量价配合良好。RSI位于65强势区，未见顶背离。神奇九转目前处于日K序列5，暂无趋势耗尽警示。综合判断，趋势强劲，评分4.5分，强烈建议顺势持有或逢低买入。
+          </div>
+
+          <div class="tv-analysis-section">
+            <div class="tv-section-title">日K 趋势与关键形态</div>
+            <ul class="tv-analysis-list">
+              <li><strong>趋势结构</strong>：EMA 5/10/20/60 多头排列，处于极强上升通道。</li>
+              <li><strong>关键形态</strong>：昨日以大阳线突破前期箱体压力位 $176.00，成交量放大 1.5 倍，确认有效突破。无向下跳空缺口。</li>
+            </ul>
+          </div>
+
+          <div class="tv-analysis-section">
+            <div class="tv-section-title">指标分析 (MACD / KDJ / RSI)</div>
+            <ul class="tv-analysis-list">
+              <li><strong>MACD</strong>：零轴上方二次金叉，红柱动能持续放大。</li>
+              <li><strong>KDJ</strong>：D值在 75 强市区，J值拐头向上，且前低点形成底背离。</li>
+              <li><strong>量价与力道</strong>：OBV 创近一月新高，CMF 值为 +0.18，买力极强。</li>
+            </ul>
+          </div>
+
+          <div class="tv-analysis-section">
+            <div class="tv-section-title">高级形态与经典理论</div>
+            <ul class="tv-analysis-list">
+              <li><strong>缠论结构</strong>：日线图上已确认第3笔上涨，处于向上段运行中，无中枢背驰迹象。</li>
+              <li><strong>神奇九转</strong>：日K处于买入九转序列之「上升第5天」，距离转折点尚有空间。</li>
+              <li><strong>斐波那契</strong>：若回调，在 0.382 支撑位（$173.20）有强力支撑。</li>
+              <li><strong>经典形态</strong>：形态上隐约呈现出大型「杯柄形 (Cup and Handle)」的杯柄突破阶段。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top: 20px; text-align: center;">请在下方进行反馈：这个布局结构和 TradingView 风格视觉是否符合您的预期？</p>

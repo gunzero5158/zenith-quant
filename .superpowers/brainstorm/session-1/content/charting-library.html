@@ -1,0 +1,28 @@
+<h2>选择图表展示库 / Charting Library Selection</h2>
+<p class="subtitle">如何呈现 TradingView 风格的专业股票 K 线图与指标？</p>
+
+<div class="options">
+  <div class="option" data-choice="lightweight-charts" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>TradingView Lightweight Charts (强烈推荐)</h3>
+      <p>使用 <strong>TradingView 官方开源的轻量级图表库</strong>。它能完美还原 TradingView 的视觉体验和交互手势（缩放、拖拽、十字光标、价格/时间坐标轴），支持多图层叠加（K线、成交量、EMA、布林通道等），极其适合本项目。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="apexcharts" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>ApexCharts / Chart.js 等通用图表库</h3>
+      <p>使用通用的可视化图表库。虽然也可以绘制 K 线图，但在金融图表的细节交互（例如对数坐标、主图指标层与副图指标层对齐缩放）上远逊于专业金融图表库，且视觉风格不够 TradingView。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>我们将实现的图表交互特性：</h3>
+  <ul>
+    <li><strong>主图区域</strong>：绘制日线/周线 K 线图，可叠加密码 EMA 均线、BOLL 通道，并标注“神奇九转”九号点、反转 K 线、W底/头肩形等形态的拐点位置。</li>
+    <li><strong>副图区域</strong>：支持切换展示 MACD（柱状图与快慢线）、KDJ、RSI 以及成交量配合 OBV/CMF 指标。</li>
+    <li><strong>联动缩放</strong>：主图和副图的时间轴联动，保持缩放同步。</li>
+  </ul>
+</div>

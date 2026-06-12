@@ -1,0 +1,54 @@
+# 任务清单
+
+- [x] **Phase 17: APIMax 推广整合、底部 Banner 布局修复、分析历史 Cookie 化与 Logo 重新设计**
+  - [x] **Cookie 模块与分析历史开发**
+    - [x] `src/app/page.tsx`: 定义 `getCookie` & `setCookie` 工具函数。
+    - [x] `src/app/page.tsx`: 在 `TRANSLATIONS` 中将自选股 (Watchlist) 翻译为“分析历史”等。
+    - [x] `src/app/page.tsx`: 初始化时加载 Cookie 分析历史，若不存在则从 LocalStorage Watchlist 迁移或使用默认值。
+    - [x] `src/app/page.tsx`: 移除搜索栏旁的手动 `+` 添加按钮 and `handleAddWatchlist` 函数。
+    - [x] `src/app/page.tsx`: 成功分析股票后自动更新分析历史 Cookie，去重限长 15。
+    - [x] `src/app/page.tsx`: 移除分析历史中的某只股票时更新 Cookie。
+  - [x] **APIMax 推广整合**
+    - [x] `src/app/page.tsx`: 在大模型配置 (Settings Modal) 里的 API Key input 旁加上指向推广链接 of APIMax。
+    - [x] `src/app/page.tsx`: 新手指引（欢迎页）增加第 4 步以整合 APIMax 购买指引及推广链接。
+  - [x] **底部 Banner 布局修复与美化**
+    - [x] `src/app/page.tsx`: 将底部 APIMax 广告 Banner 移出 `styles.body`，挂载在 `styles.body` 同级的下方，使其全宽显示在视口最底部。
+    - [x] `src/app/page.tsx`: 全面替换 APIMax 相关 URL 为返利推广链接 `https://apimax.io/register?aff=96rA`。
+    - [x] `src/app/page.tsx`: 润色 Banner 广告词和流光质感，添加微放大微动画。
+  - [x] **Header Logo 重新设计**
+    - [x] `src/app/page.tsx`: 移除 `📈` Emoji Logo，改为发光科技感的自定义 SVG 趋势箭头。
+  - [x] **打包构建与回归测试**
+    - [x] `package.json`: 升级版本号至 `0.4.1`。
+    - [x] 运行 `npm run build` and `npm run test:run`。
+    - [x] 归档 `walkthrough.md`。
+
+- [x] **Phase 18: 红绿涨跌切换器与现价及自选股配色同步**
+  - [x] **状态管理与初始化**
+    - [x] `src/app/page.tsx`: 定义 `isRedUp` 状态，并在 `useEffect` 挂载时从 `localStorage` 中加载 `"zenith_chart_color_mode"` 的设置。
+    - [x] `src/app/page.tsx`: 声明 `toggleColorMode` 函数以切换状态并同步至 `localStorage`。
+  - [x] **按钮 UI 设计与动画**
+    - [x] `src/app/page.tsx`: 在页面 `<style>` 中引入呼吸灯脉冲点指示器关键帧 `indicator-pulse` 和 `.color-mode-btn` hover 动效。
+    - [x] `src/app/page.tsx`: 在 K 线控制栏 `styles.chartSelector` 最右侧，挂载红绿涨跌切换按钮（Pill 形状，包含脉冲点与对应语种的标签文字）。
+  - [x] **配色同步逻辑**
+    - [x] `src/app/page.tsx`: 将 `isRedUp` 状态作为 prop 传递给 `<StockChart>`。
+    - [x] `src/app/page.tsx`: 在 `page.tsx` 中定义 `upColor` and `downColor`。
+    - [x] `src/app/page.tsx`: 更新股票现价右侧涨跌幅的 `color` 为动态 `upColor` / `downColor`。
+    - [x] `src/app/page.tsx`: 更新分析历史 (Watchlist) 列表中涨跌幅的 `color` 为动态 `upColor` / `downColor`。
+  - [x] **打包构建与回归测试**
+    - [x] `package.json`: 升级版本号至 `0.4.2` (功能新增/修复，SemVer)。
+    - [x] 运行 `npm run build` and `npm run test:run`。
+    - [x] 归档 `walkthrough.md`。
+
+- [x] **Phase 19: 本地分析结果缓存与减少冗余 API 请求**
+  - [x] `src/app/page.tsx`: 定义 `isNonTradingHours` 辅助函数，智能识别 A 股、港股和美股的对应非交易时间（包含周末及盘后）。
+  - [x] `src/app/page.tsx`: 修改 `fetchActiveStockData` 逻辑，在非强制刷新模式下，若存在同日且处于非交易时间的本地缓存，则直接读取并跳过网络请求。
+  - [x] `src/app/page.tsx`: 成功获取新的分析结果后，通过 `localStorage` 将结果序列化落盘。
+  - [x] `src/app/page.tsx`: 将 `appLanguage` 移出主数据请求的 `useEffect` 依赖数组，切换语言时不再触发无效重复请求。
+  - [x] `src/app/page.tsx`: 在设置弹窗保存时，只有 API 密钥或底层模式变更才触发重查，仅切换语言时不强制刷新。
+  - [x] `package.json`: 升级版本号至 `0.4.3`。
+
+- [x] **Phase 20: 日本股市 (TSE) 识别及非交易时间段缓存逻辑**
+  - [x] `src/app/page.tsx`: 修改 `isNonTradingHours` 辅助函数，增加日股正则判定 `/^\d{4}\.T$/i.test(symbol)`。
+  - [x] `src/app/page.tsx`: 精确配置日股非交易时间段。转换北京时间 (CST) 后非交易时段为：`hour < 8 || hour >= 14 || (hour === 10 && min >= 30) || (hour === 11 && min < 30)`。
+  - [x] `package.json`: 升级版本号至 `0.5.0` (SemVer 规范下，功能新增升次版本)。
+  - [x] 运行回归测试并确保所有 101 个测试通过。

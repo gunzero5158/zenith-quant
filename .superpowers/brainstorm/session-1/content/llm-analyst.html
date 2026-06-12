@@ -1,0 +1,41 @@
+<h2>大模型分析员设计方案 / LLM Analyst Integration</h2>
+<p class="subtitle">如何利用大模型 (LLM) 编写极具专业深度的 TradingView 风格股票分析研报？</p>
+
+<div class="options">
+  <div class="option" data-choice="llm-hybrid" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>硬核算法计算 + 大模型深度生成 (强烈推荐)</h3>
+      <p><strong>分工明确：</strong>数学指标（EMA, MACD 等）和几何形态（W底、神奇九转、背离）全部由<strong>程序算法客观计算</strong>。计算结果（数据结构、形态列表、打分）与基本面信息作为 Prompt 的输入，交给 <strong>Gemini 2.5 Flash / 1.5 Flash</strong> 生成分析结论。兼顾数学上的绝对准确性与自然语言的智能总结。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="rule-based" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>纯规则模板生成</h3>
+      <p>不使用大模型，完全通过预设的条件分支（IF-ELSE）和文本模板拼装结论。虽然不需要 API Key，但分析语调生硬、死板，缺乏大模型“华尔街分析师”般的灵活思考与深度洞察。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>LLM 分析员特性设计：</h3>
+  <ul>
+    <li><strong>双重模式自动切换</strong>：
+      <ul>
+        <li><strong>LLM 智能模式</strong>：检测到 <code>GEMINI_API_KEY</code> 环境变量时，调用 Google Gemini API，生成地道的 TradingView 风格研报。</li>
+        <li><strong>规则兜底模式 (Fallback)</strong>：若未配置 Key，自动采用本地规则算法拼接分析报告，确保网站随时可用。</li>
+      </ul>
+    </li>
+    <li><strong>数据输入 Prompt 示例</strong>：
+      <pre style="background: #1c2030; padding: 10px; border-radius: 4px; font-size: 11px; overflow-x: auto; border: 1px solid #2a2e39;">
+股票代码: AAPL
+当前价格: 178.58 (+1.43%)
+指标状态: 日K多头排列 | MACD金叉向上 | RSI 65强势区
+高级信号: 神奇九转为日5 | 简版缠论向上笔运行中
+经典形态: 突破 $176.00 箱体颈线，疑似“杯柄突破”
+请扮演华尔街资深量化分析师，为该股撰写一份 TradingView 风格的专业技术分析报告，重点剖析多周期共振或冲突，并给交易者具体建议。
+      </pre>
+    </li>
+  </ul>
+</div>

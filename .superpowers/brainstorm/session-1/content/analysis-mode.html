@@ -1,0 +1,40 @@
+<h2>选择分析运行模式 / Analysis Mode Selection</h2>
+<p class="subtitle">这决定了系统的数据处理流程与后端架构复杂度</p>
+
+<div class="options">
+  <div class="option" data-choice="realtime" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>实时搜索分析模式 (推荐)</h3>
+      <p>用户输入股票代码（如 AAPL, 0700.HK），系统实时调用 API 获取其日线和周线数据，现场执行算法计算指标（EMA, BOLL 等）与识别形态，生成评分并返回。不需要数据库，部署极其简单且即开即用。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="database" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>定时计算 + 数据库筛选模式</h3>
+      <p>后台设置定时任务（如每天收盘后），批量获取预设股票列表的数据，计算分析结果并存入数据库。用户可以直接查看大盘股票排行榜、按得分/形态筛选股票。开发周期较长，需要数据库（如 PostgreSQL / SQLite）支持。</p>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h4>A. 实时模式优缺点</h4>
+    <ul>
+      <li>✅ 零数据库依赖，部署简单</li>
+      <li>✅ 支持全球任意有效股票代码查询</li>
+      <li>✅ 数据绝对实时最新</li>
+      <li>❌ 无法跨股票进行“寻找所有W底股票”的筛选</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>B. 数据库模式优缺点</h4>
+    <ul>
+      <li>✅ 支持全市场扫描和多条件选股</li>
+      <li>✅ 页面加载速度极快（直接读库）</li>
+      <li>❌ 需要数据库存储与后台定时服务</li>
+      <li>❌ 仅能分析预设的股票池，无法分析任意输入的新股票</li>
+    </ul>
+  </div>
+</div>

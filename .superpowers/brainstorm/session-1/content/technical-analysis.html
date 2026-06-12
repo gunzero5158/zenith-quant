@@ -1,0 +1,70 @@
+<h2>技术分析算法实现方案 / Technical Analysis Engine Spec</h2>
+<p class="subtitle">我们在 Next.js 服务端将通过以下核心算法和逻辑进行指标计算与形态识别：</p>
+
+<div class="section">
+  <h3>1. 基础技术指标计算 (`lib/indicators.ts`)</h3>
+  <p>全部采用原生的 TypeScript 编写的高效递推算法，避免第三方库可能带来的多周期对齐Bug：</p>
+  <ul>
+    <li><strong>EMA</strong>：<code>EMA(today) = Price(today) * α + EMA(yesterday) * (1 - α)</code>，α = 2 / (N + 1)。</li>
+    <li><strong>BOLL</strong>：主线为 20 日 SMA，上下轨为 20 日标准差的两倍 (±2σ)。</li>
+    <li><strong>MACD</strong>：计算 12/26 日 EMA 差值 (DIF)，以及 DIF 的 9 日 EMA (DEA)。柱状图 <code>MACD = (DIF - DEA) * 2</code>。</li>
+    <li><strong>KDJ</strong>：基于 9 日未成熟随机值 RSV <code>(Close - L9) / (H9 - L9) * 100</code>。K = 2/3 * K(prev) + 1/3 * RSV，D = 2/3 * D(prev) + 1/3 * K，J = 3 * K - 2 * D。</li>
+    <li><strong>RSI</strong>：计算指定周期内上涨幅度的 EMA 与下跌幅度的 EMA 比例。</li>
+    <li><strong>力道指标 (OBV / CMF)</strong>：OBV 累计每日量能；CMF 累加 21 日资金流向乘数 <code>((C - L) - (H - C)) / (H - L) * Volume</code> 并除以 21 日量能总和。</li>
+    <li><strong>ATR</strong>：计算 True Range (TR) <code>Max(H-L, |H-C_prev|, |L-C_prev|)</code> 的 14 日 Wilder 移动平均。</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>2. 经典形态与背离检测算法 (`lib/patterns.ts`)</h3>
+  <ul>
+    <li><strong>神奇九转 (TD Sequential)</strong>：
+      扫描日线/周线 Close。连续 9 天 <code>Close(t) > Close(t-4)</code> 记为卖出 9 转；连续 9 天 <code>Close(t) < Close(t-4)</code> 记为买入 9 转。
+    </li>
+    <li><strong>金叉 / 死叉</strong>：
+      检测相邻两天指标数值的大小交叉。如 <code>Fast(t-1) < Slow(t-1) && Fast(t) > Slow(t)</code> 即为金叉。
+    </li>
+    <li><strong>顶/底背离 (Divergence)</strong>：
+      寻找过去 30 天的价格高点/低点。当价格创新高，而 MACD DIF 却形成更低的高点，即为“MACD顶背离”；底背离同理。KDJ 和 RSI 采用相同逻辑检测。
+    </li>
+    <li><strong>斐波那契回调 (Fibonacci Retracement)</strong>：
+      找出最近一波大波段（通过波点探测）的最高点 H 和最低点 L，计算 0.236, 0.382, 0.5, 0.618, 0.786 回撤位作为当前的价格支撑和压力区。
+    </li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>3. 高级结构与形态匹配算法</h3>
+  <ul>
+    <li><strong>极值点检测 (Pivots)</strong>：通过局部窗口（如 5-10 天）寻找局部高点 (Swing High) 和局部低点 (Swing Low)，作为后续几何形态和缠论的基础。</li>
+    <li><strong>W底 / 双底 (Double Bottom)</strong>：
+      检测近 60 天内是否出现两个局部的 Swing Low <code>L1</code> 和 <code>L2</code>，要求两者价格相差在 2% 以内，且中间有一个明显的反弹顶点 <code>H1</code>。当价格突破 <code>H1</code>（颈线）时，触发 W 底突破信号。
+    </li>
+    <li><strong>头肩顶/底 (Head & Shoulders)</strong>：
+      检测三个连续的波峰，中间波峰（头部）高于两侧波峰（左右肩），当价格跌破连接两个波谷的颈线时确立。
+    </li>
+    <li><strong>简版缠论 (Bi/Duan Segment)</strong>：
+      <ul>
+        <li><strong>包含处理</strong>：比较相邻 K 线的高低点关系，若 <code>H(t) <= H(t-1) && L(t) >= L(t-1)</code> 或反之，按当前方向合并高低点，消除包含关系。</li>
+        <li><strong>顶分型 / 底分型 (Fen Xing)</strong>：包含处理后的三根 K 线，中间高两边低为顶分型，中间低两边高为底分型。</li>
+        <li><strong>画笔 (Bi)</strong>：连接底分型和顶分型，要求中间至少隔着一根独立的 K 线（确保一笔至少由 5 根 K 线组成）。</li>
+      </ul>
+    </li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>4. 综合打分模型 (0-5分)</h3>
+  <p><strong>基础分 (日线分析，占 4 分)</strong>：</p>
+  <ul>
+    <li>趋势结构（EMA多头排列 / 突破）：最多 1.5 分</li>
+    <li>动能指标（MACD零轴位置、金叉、KDJ超卖金叉）：最多 1.0 分</li>
+    <li>量价与力道（OBV/CMF 强势、放量突破）：最多 0.8 分</li>
+    <li>经典形态与高级信号（W底突破、神奇九转买点、背离）：最多 0.7 分</li>
+  </ul>
+  <p><strong>共振调节分 (周线分析，占 1 分)</strong>：</p>
+  <ul>
+    <li>若周K也是多头排列，且与日K方向一致：<strong>+1.0 分</strong>（封顶 5.0 分）</li>
+    <li>若周K与日线冲突（例如周线属于强空头，日线只是反弹）：<strong>不加分甚至 -0.5 分</strong></li>
+  </ul>
+</div>
