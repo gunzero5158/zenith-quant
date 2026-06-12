@@ -1,8 +1,8 @@
-# Zenith-Quant (天顶量化) 📈
+# Zenith-Analysis (天顶分析) <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#00f5d4" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M3 3v18h18" /><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3" /></svg>
 
 [English](./README.md) | [日本語](./README.ja.md)
 
-Zenith-Quant 是一款专为股票投资者打造的**多维度、多指标、多形态技术面深度综合分析系统**。系统融合了经典的量化技术指标、高级趋势理论（艾略特波浪理论 & 缠论）、支撑压力筹码分布以及大语言模型（LLM）的智能研判，为您提供极具金融质感和专业度的股票深度技术研报。
+Zenith-Analysis (天顶分析) 是一款专为股票投资者打造的**多维度、多指标、多形态技术面深度综合分析系统**。系统融合了经典的量化技术指标、高级趋势理论（艾略特波浪理论 & 缠论）、支撑压力筹码分布以及大语言模型（LLM）的智能研判，为您提供极具金融质感和专业度的股票深度技术研报。
 
 ---
 

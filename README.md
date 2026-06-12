@@ -1,15 +1,15 @@
-# Zenith-Quant 📈
+# Zenith-Analysis <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#00f5d4" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;"><path d="M3 3v18h18" /><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3" /></svg>
 
 [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md)
 
-Zenith-Quant is a professional **multi-dimensional, multi-indicator, and multi-pattern deep technical analysis system** for stock investors. It integrates traditional technical indicators, advanced trend theories (Elliott Wave & Chanlun), volume profile-based support/resistance nodes, and Large Language Model (LLM) intelligence to generate institutional-grade technical analysis reports.
+Zenith-Analysis is a professional **multi-dimensional, multi-indicator, and multi-pattern deep technical analysis system** for stock investors. It integrates traditional technical indicators, advanced trend theories (Elliott Wave & Chanlun), volume profile-based support/resistance nodes, and Large Language Model (LLM) intelligence to generate institutional-grade technical analysis reports.
 
 ---
 
 ## 🌟 Key Features
 
 ### 1. Multi-Dimensional Algorithmic Analysis Matrix
-Instead of relying on a single indicator, Zenith-Quant analyzes stocks from 5 main dimensions:
+Instead of relying on a single indicator, Zenith-Analysis analyzes stocks from 5 main dimensions:
 * **Core Technical Indicators**: EMA system, Bollinger Bands, MACD, KDJ, RSI, and ATR.
 * **Volume & Capital Flow**: Integrates OBV (On-Balance Volume) and CMF (Chaikin Money Flow) with Volume 20SMA to detect capital movement and price-volume divergence.
 * **Trend & Chart Patterns**:
