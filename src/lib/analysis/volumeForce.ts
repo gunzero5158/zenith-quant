@@ -131,8 +131,8 @@ export function analyzePriceVolume(candles: Candle[]): VolumeAnalysisResult {
 
   // 3. Price-Volume Divergence check over last 15 days
   // Let's check if close price trended up, but OBV trended down (or vice versa)
-  let priceTrendUp = candles[latestIndex].close > candles[latestIndex - 10].close;
-  let obvTrendDown = obv[latestIndex] < obv[latestIndex - 10];
+  const priceTrendUp = candles[latestIndex].close > candles[latestIndex - 10].close;
+  const obvTrendDown = obv[latestIndex] < obv[latestIndex - 10];
   const hasPriceVolumeDivergence = priceTrendUp && obvTrendDown;
 
   // 4. Formulate volume description

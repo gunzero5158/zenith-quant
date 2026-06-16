@@ -77,9 +77,9 @@ function generateSimplifiedChineseReport(
     ? "当前价格在其上方运行，筹码结构对价格具有一定的安全托底作用" 
     : "当前价格在其下方运行，上方堆积的重仓套牢盘构成了反弹的持续抛压";
 
-  let srDesc = ` 价格在关键筹码位上，临近的横向核心支撑位见 $${nearestSupport}，横向主要阻力位见 $${nearestResistance}。筹码密集分布峰值区（POC）位于 $${sr.volumePOC}，这构成了目前最核心的多空强弱分水岭，${priceVsPoc}。`;
-  let flowDesc = ` 资金与动能层面，${volume.volumeDescription} 目前 MACD 能量柱呈现${volume.hasVolumeBreakout ? "放量" : "平缓"}。KDJ 指标在当前区间内${score.momentumScore >= 0.7 ? "表现出多头主导的动能释放" : "处于多空拉锯状态"}，主力资金流向（CMF）显示资金正处于${score.totalScore >= 3.0 ? "温和吸筹与净流入" : "流出与偏弱整理"}之中。`;
-  let waveChanDesc = ` 结合高级理论分析，目前日线波浪指向 **${wave.currentWave}**，形态特征为“${wave.waveDescription}”。缠论画笔当前正在形成 **${chanlun.currentStrokeDirection === "up" ? "向上笔" : "向下笔"}**，并在局部显现出“${chanlun.chanlunDescription}”的精细演变。`;
+  const srDesc = ` 价格在关键筹码位上，临近的横向核心支撑位见 $${nearestSupport}，横向主要阻力位见 $${nearestResistance}。筹码密集分布峰值区（POC）位于 $${sr.volumePOC}，这构成了目前最核心的多空强弱分水岭，${priceVsPoc}。`;
+  const flowDesc = ` 资金与动能层面，${volume.volumeDescription} 目前 MACD 能量柱呈现${volume.hasVolumeBreakout ? "放量" : "平缓"}。KDJ 指标在当前区间内${score.momentumScore >= 0.7 ? "表现出多头主导的动能释放" : "处于多空拉锯状态"}，主力资金流向（CMF）显示资金正处于${score.totalScore >= 3.0 ? "温和吸筹与净流入" : "流出与偏弱整理"}之中。`;
+  const waveChanDesc = ` 结合高级理论分析，目前日线波浪指向 **${wave.currentWave}**，形态特征为“${wave.waveDescription}”。缠论画笔当前正在形成 **${chanlun.currentStrokeDirection === "up" ? "向上笔" : "向下笔"}**，并在局部显现出“${chanlun.chanlunDescription}”的精细演变。`;
 
   const overview = `${trendDesc}\n\n${srDesc}\n\n${flowDesc}\n\n${waveChanDesc}\n\n综合研判，该股当前综合技术评级为 **${recommendation}**。`;
 
@@ -150,10 +150,10 @@ function generateTraditionalChineseReport(
     ? "當前價格在其上方運行，籌碼結構對價格具有一定的安全托底作用" 
     : "當前價格在其下方運行，上方堆積的重倉套牢盤構成了反彈的持續拋壓";
 
-  let srDesc = ` 價格在關鍵籌碼位上，臨近的橫向核心支撐位見 $${nearestSupport}，橫向主要阻力位見 $${nearestResistance}。籌碼密集分布峰值區（POC）位於 $${sr.volumePOC}，這構成了目前最核心的多空強弱分水嶺，${priceVsPoc}。`;
+  const srDesc = ` 價格在關鍵籌碼位上，臨近的橫向核心支撐位見 $${nearestSupport}，橫向主要阻力位見 $${nearestResistance}。籌碼密集分布峰值區（POC）位於 $${sr.volumePOC}，這構成了目前最核心的多空強弱分水嶺，${priceVsPoc}。`;
   
   // Convert basic volume description markers to Traditional Chinese
-  let volDescZhTW = volume.volumeDescription
+  const volDescZhTW = volume.volumeDescription
     .replace(/放量突破/g, "放量突破")
     .replace(/买盘/g, "買盤")
     .replace(/卖压/g, "賣壓")
@@ -162,8 +162,8 @@ function generateTraditionalChineseReport(
     .replace(/资金/g, "資金")
     .replace(/主力/g, "主力");
 
-  let flowDesc = ` 資金與動能層面，${volDescZhTW} 目前 MACD 能量柱呈現${volume.hasVolumeBreakout ? "放量" : "平緩"}。KDJ 指標在當前區間內${score.momentumScore >= 0.7 ? "表現出多頭主導的動能釋放" : "處於多空拉鋸狀態"}，主力資金流向（CMF）顯示資金正處於${score.totalScore >= 3.0 ? "溫和吸籌與淨流入" : "流出與偏弱整理"}之中。`;
-  let waveChanDesc = ` 結合高級理論分析，目前日線波浪指向 **${wave.currentWave}**，形態特徵為“${wave.waveDescription}”。纏論畫筆當前正在形成 **${chanlun.currentStrokeDirection === "up" ? "向上筆" : "向下筆"}**，並在局部顯現出“${chanlun.chanlunDescription}”的精細演變。`;
+  const flowDesc = ` 資金與動能層面，${volDescZhTW} 目前 MACD 能量柱呈現${volume.hasVolumeBreakout ? "放量" : "平緩"}。KDJ 指標在當前區間內${score.momentumScore >= 0.7 ? "表現出多頭主導的動能釋放" : "處於多空拉鋸狀態"}，主力資金流向（CMF）顯示資金正處於${score.totalScore >= 3.0 ? "溫和吸籌與淨流入" : "流出與偏弱整理"}之中。`;
+  const waveChanDesc = ` 結合高級理論分析，目前日線波浪指向 **${wave.currentWave}**，形態特徵為“${wave.waveDescription}”。纏論畫筆當前正在形成 **${chanlun.currentStrokeDirection === "up" ? "向上筆" : "向下筆"}**，並在局部顯現出“${chanlun.chanlunDescription}”的精細演變。`;
 
   const overview = `${trendDesc}\n\n${srDesc}\n\n${flowDesc}\n\n${waveChanDesc}\n\n綜合研判，該股當前綜合技術評級為 **${recommendation}**。`;
 
@@ -234,7 +234,7 @@ function generateEnglishReport(
     ? "Price is running above the POC level, meaning the major volume profile acts as a solid cushion." 
     : "Price is running below the POC level, meaning heavy overhead supply poses persistent selling pressure on rebounds.";
 
-  let srDesc = ` Price is hovering around critical volume structures, with near-term support at $${nearestSupport} and resistance at $${nearestResistance}. The Volume Profile Point of Control (POC) is at $${sr.volumePOC}, representing the key threshold. ${priceVsPoc}`;
+  const srDesc = ` Price is hovering around critical volume structures, with near-term support at $${nearestSupport} and resistance at $${nearestResistance}. The Volume Profile Point of Control (POC) is at $${sr.volumePOC}, representing the key threshold. ${priceVsPoc}`;
 
   // Local English volume description translator
   let volDescEn = "Volume action remains relatively flat.";
@@ -252,8 +252,8 @@ function generateEnglishReport(
     volDescEn += ` Chaikin Money Flow (CMF: ${latestCmf.toFixed(2)}) indicates institutional distribution.`;
   }
 
-  let flowDesc = ` In terms of volume and momentum, ${volDescEn} MACD histogram is ${volume.hasVolumeBreakout ? "expanding" : "flat"}. KDJ is currently ${score.momentumScore >= 0.7 ? "exhibiting bullish dominance" : "in a range-bound battle"}.`;
-  let waveChanDesc = ` Advanced theory analysis shows Elliot Wave currently points to **${wave.currentWave}** (${wave.waveDescription}). Chanlun Stroke is currently **${chanlun.currentStrokeDirection === "up" ? "Upward" : "Downward"}**, showing '${chanlun.chanlunDescription}' in local structures.`;
+  const flowDesc = ` In terms of volume and momentum, ${volDescEn} MACD histogram is ${volume.hasVolumeBreakout ? "expanding" : "flat"}. KDJ is currently ${score.momentumScore >= 0.7 ? "exhibiting bullish dominance" : "in a range-bound battle"}.`;
+  const waveChanDesc = ` Advanced theory analysis shows Elliot Wave currently points to **${wave.currentWave}** (${wave.waveDescription}). Chanlun Stroke is currently **${chanlun.currentStrokeDirection === "up" ? "Upward" : "Downward"}**, showing '${chanlun.chanlunDescription}' in local structures.`;
 
   const overview = `${trendDesc}\n\n${srDesc}\n\n${flowDesc}\n\n${waveChanDesc}\n\nIn conclusion, the current technical rating for this stock is **${recommendation}**.`;
 
@@ -324,7 +324,7 @@ function generateJapaneseReport(
     ? "現在の株価は出来高POCより上方にあり、下値でのクッションとして機能します。" 
     : "現在の株価は出来高POCより下方にあり、戻り待ちの売り圧力が強まりやすい状況です。";
 
-  let srDesc = ` 価格は出来高の節目付近を推移しており、近くの水平支持線は $${nearestSupport}、主要抵抗線は $${nearestResistance} です。出来高集中帯のピーク（POC）は $${sr.volumePOC} で、多空の攻防境界線として機能しています。${priceVsPoc}`;
+  const srDesc = ` 価格は出来高の節目付近を推移しており、近くの水平支持線は $${nearestSupport}、主要抵抗線は $${nearestResistance} です。出来高集中帯のピーク（POC）は $${sr.volumePOC} で、多空の攻防境界線として機能しています。${priceVsPoc}`;
 
   let volDescJa = "出来高は比較的横ばいで推移しています。";
   const latestCmf = volume.cmf[volume.cmf.length - 1];
@@ -341,8 +341,8 @@ function generateJapaneseReport(
     volDescJa += ` チャイキン・マネー・フロー (CMF: ${latestCmf.toFixed(2)}) は大口資金の売り越しを示唆。`;
   }
 
-  let flowDesc = ` 資金とモメンタム面では、${volDescJa} MACDヒストグラムは${volume.hasVolumeBreakout ? "拡大" : "安定"}しています。KDJ指標は現在、${score.momentumScore >= 0.7 ? "買い手優位の勢い" : "売り買い拮抗"}のレンジです。`;
-  let waveChanDesc = ` 高度な波形理論によると、エリオット波動は現在 **${wave.currentWave}** (${wave.waveDescription}) を示しています。纏論（チャンルン）のストロークは現在 **${chanlun.currentStrokeDirection === "up" ? "上向き" : "下向き"}** で、部分的に「${chanlun.chanlunDescription}」の局面に入っています。`;
+  const flowDesc = ` 資金とモメンタム面では、${volDescJa} MACDヒストグラムは${volume.hasVolumeBreakout ? "拡大" : "安定"}しています。KDJ指標は現在、${score.momentumScore >= 0.7 ? "買い手優位の勢い" : "売り買い拮抗"}のレンジです。`;
+  const waveChanDesc = ` 高度な波形理論によると、エリオット波動は現在 **${wave.currentWave}** (${wave.waveDescription}) を示しています。纏論（チャンルン）のストロークは現在 **${chanlun.currentStrokeDirection === "up" ? "上向き" : "下向き"}** で、部分的に「${chanlun.chanlunDescription}」の局面に入っています。`;
 
   const overview = `${trendDesc}\n\n${srDesc}\n\n${flowDesc}\n\n${waveChanDesc}\n\n総合判定として、本銘柄の現在の評価は **${recommendation}** です。`;
 

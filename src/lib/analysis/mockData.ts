@@ -57,7 +57,6 @@ export function generateMockCandles(symbol: string, days: number = 250, isWeekly
     date.setDate(date.getDate() + i * intervalDays);
 
     // Random walk + annual drift + sine wave to create cycles (pivots, W-bottoms)
-    const annualProgress = i / 250;
     const cycleEffect = Math.sin(i / 15) * 0.015 + Math.sin(i / 45) * 0.03;
     const randomShock = (Math.random() - 0.49) * 0.024; // volatility
 

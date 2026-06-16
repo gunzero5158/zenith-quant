@@ -13,8 +13,19 @@ export interface ScoreDetail {
   scoreReasons: string[];
 }
 
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+const isValid = (value: number | undefined) => typeof value === "number" && Number.isFinite(value);
+
+function pctDistance(price: number, base: number): number {
+  if (!base) return 0;
+  return ((price - base) / base) * 100;
+}
+
 /**
- * Computes the 0-5 stock score based on Daily indicators and Weekly resonance.
+ * Computes a 0-5 buy-attractiveness score.
+ *
+ * A high score means the setup is technically worth buying or accumulating now,
+ * not merely that trading activity is hot.
  */
 export function calculateStockScore(
   dailyCandles: Candle[],
@@ -33,12 +44,6 @@ export function calculateStockScore(
   const latestD = dailyCandles.length - 1;
   const latestW = weeklyCandles.length - 1;
 
-  let baseTrendScore = 0;
-  let momentumScore = 0;
-  let volumeScore = 0;
-  let patternsScore = 0;
-  let weeklyResonanceScore = 0;
-
   if (latestD < 0) {
     return {
       baseTrendScore: 0,
@@ -51,219 +56,252 @@ export function calculateStockScore(
     };
   }
 
-  // --- 1. Daily Trend Score (Max 1.5) ---
+  const currentPrice = dailyCandles[latestD].close;
+  const prevPrice = dailyCandles[latestD - 1]?.close ?? currentPrice;
+  const dayChangePct = prevPrice ? pctDistance(currentPrice, prevPrice) : 0;
+
   const de5 = dailyEMAs.ema5[latestD];
   const de10 = dailyEMAs.ema10[latestD];
   const de20 = dailyEMAs.ema20[latestD];
   const de60 = dailyEMAs.ema60[latestD];
-  const currentPrice = dailyCandles[latestD].close;
+  const distFromEma20 = isValid(de20) ? pctDistance(currentPrice, de20) : 0;
+  const distFromEma60 = isValid(de60) ? pctDistance(currentPrice, de60) : 0;
 
-  if (!isNaN(de5) && !isNaN(de10) && !isNaN(de20) && !isNaN(de60)) {
-    if (de5 > de10 && de10 > de20 && de20 > de60) {
-      baseTrendScore = 1.5;
-      scoreReasons.push("日K EMA 均线多头排列，处于极强上升通道中 (+1.5分)");
-    } else if (de5 > de10 && de10 > de20 && currentPrice > de20) {
-      baseTrendScore = 1.0;
-      scoreReasons.push("日K 均线温和上行，短期多头格局确立 (+1.0分)");
+  let baseTrendScore = 0;
+  if ([de5, de10, de20, de60].every(isValid)) {
+    if (de20 > de60 && currentPrice >= de60 && currentPrice <= de20 * 1.08) {
+      baseTrendScore = 1.3;
+      scoreReasons.push("日K中期趋势偏多，且价格未明显远离 EMA20，买入位置较健康 (+1.3)");
+    } else if (de5 > de10 && de10 > de20 && de20 > de60 && currentPrice <= de20 * 1.15) {
+      baseTrendScore = 1.1;
+      scoreReasons.push("日K EMA 多头排列，但仍控制追高溢价，趋势质量良好 (+1.1)");
     } else if (de20 > de60) {
-      baseTrendScore = 0.8;
-      scoreReasons.push("日K 20日均线上穿60日均线，中线趋势走好 (+0.8分)");
+      baseTrendScore = 0.9;
+      scoreReasons.push("日K 20EMA 位于 60EMA 上方，中线趋势改善 (+0.9)");
     } else if (currentPrice > de20 && currentPrice > de60) {
-      baseTrendScore = 0.6;
-      scoreReasons.push("日K 价格突破生命线 20/60 EMA (+0.6分)");
+      baseTrendScore = 0.5;
+      scoreReasons.push("价格重新站上 EMA20/EMA60，但趋势排列仍需确认 (+0.5)");
     } else if (de5 < de10 && de10 < de20 && de20 < de60) {
       baseTrendScore = 0;
-      scoreReasons.push("日K EMA 均线空头排列，处于下跌通道中 (0分)");
+      scoreReasons.push("日K EMA 空头排列，趋势仍处于下行通道 (0)");
     } else {
       baseTrendScore = 0.3;
-      scoreReasons.push("日K 均线缠绕，价格震荡筑底中 (+0.3分)");
+      scoreReasons.push("日K 均线纠缠，仍处于观察区 (+0.3)");
+    }
+
+    if (distFromEma20 > 15) {
+      baseTrendScore = Math.max(0, baseTrendScore - 0.4);
+      scoreReasons.push(`价格较 EMA20 偏离 ${distFromEma20.toFixed(1)}%，短线追高风险上升 (-0.4)`);
     }
   } else {
     baseTrendScore = 0.5;
   }
 
-  // --- 2. Daily Momentum Score (Max 1.0) ---
+  let momentumPoints = 0;
   const dif = dailyMACD.dif[latestD];
   const dea = dailyMACD.dea[latestD];
   const hist = dailyMACD.hist[latestD];
-  const k = dailyKDJ.k[latestD];
-  const d = dailyKDJ.d[latestD];
-  const j = dailyKDJ.j[latestD];
-  const rsi = dailyRSI[latestD];
+  const prevDif = dailyMACD.dif[latestD - 1];
+  const prevDea = dailyMACD.dea[latestD - 1];
+  const prevHist = dailyMACD.hist[latestD - 1];
 
-  let momPoints = 0;
-  if (!isNaN(dif) && !isNaN(dea)) {
-    const isGoldCross = dif > dea && dailyMACD.dif[latestD - 1] <= dailyMACD.dea[latestD - 1];
-    const isDeadCross = dif < dea && dailyMACD.dif[latestD - 1] >= dailyMACD.dea[latestD - 1];
+  if (isValid(dif) && isValid(dea)) {
+    const isGoldCross = dif > dea && isValid(prevDif) && isValid(prevDea) && prevDif <= prevDea;
+    const isDeadCross = dif < dea && isValid(prevDif) && isValid(prevDea) && prevDif >= prevDea;
 
     if (dif > 0) {
-      if (dif > dea) {
-        momPoints += 0.5;
-        scoreReasons.push("日K MACD 处于零轴上方多头市场，运行于红柱增能区 (+0.5分)");
+      if (dif > dea && hist > 0) {
+        const stillAccelerating = isValid(prevHist) ? hist >= prevHist : true;
+        momentumPoints += stillAccelerating ? 0.25 : 0.1;
+        scoreReasons.push(stillAccelerating
+          ? "MACD 位于零轴上方且红柱仍在扩张，动能配合趋势 (+0.25)"
+          : "MACD 位于零轴上方但红柱收缩，趋势仍在但买点不占优 (+0.1)");
       } else {
-        momPoints += 0.2;
-        scoreReasons.push("日K MACD 处于零轴上方，但快慢线发生死叉或红柱收缩 (+0.2分)");
+        momentumPoints += 0.05;
+        scoreReasons.push("MACD 零轴上方动能转弱，减少追涨加分 (+0.05)");
       }
-    } else {
-      if (isGoldCross) {
-        momPoints += 0.4;
-        scoreReasons.push("日K MACD 零轴下方发生「金叉」反弹信号 (+0.4分)");
-      } else if (isDeadCross) {
-        momPoints -= 0.3;
-        scoreReasons.push("日K MACD 零轴下方发生「死叉」，探底行情继续 (-0.3分)");
-      } else if (dif > dea) {
-        momPoints += 0.2;
-        scoreReasons.push("日K MACD 零轴下方弱势反弹，绿柱缩短中 (+0.2分)");
-      }
+    } else if (isGoldCross) {
+      momentumPoints += 0.35;
+      scoreReasons.push("MACD 零轴下方金叉，具备左侧修复信号 (+0.35)");
+    } else if (isDeadCross) {
+      momentumPoints -= 0.3;
+      scoreReasons.push("MACD 零轴下方死叉，弱势延续风险 (-0.3)");
+    } else if (dif > dea) {
+      momentumPoints += 0.2;
+      scoreReasons.push("MACD 零轴下方弱势反弹，空头动能收敛 (+0.2)");
     }
   }
 
-  if (!isNaN(k) && !isNaN(d)) {
+  const k = dailyKDJ.k[latestD];
+  const d = dailyKDJ.d[latestD];
+  if (isValid(k) && isValid(d)) {
     if (k > d && d < 30) {
-      momPoints += 0.3;
-      scoreReasons.push("日K KDJ 处于低位超卖区，形成金叉向上共振 (+0.3分)");
+      momentumPoints += 0.3;
+      scoreReasons.push("KDJ 低位金叉，左侧买点质量较好 (+0.3)");
     } else if (k < d && d > 80) {
-      momPoints -= 0.3;
-      scoreReasons.push("日K KDJ 处于高位超买区死叉，超买风险加剧 (-0.3分)");
+      momentumPoints -= 0.3;
+      scoreReasons.push("KDJ 高位死叉，超买回落风险加剧 (-0.3)");
+    } else if (k > d && d >= 30 && d <= 70) {
+      momentumPoints += 0.15;
+      scoreReasons.push("KDJ 中位金叉，动能温和改善 (+0.15)");
     }
   }
 
-  if (!isNaN(rsi)) {
-    if (rsi > 50 && rsi < 70) {
-      momPoints += 0.2;
-      scoreReasons.push("日K RSI 处于 50-70 强势买力区间 (+0.2分)");
+  const rsi = dailyRSI[latestD];
+  if (isValid(rsi)) {
+    if (rsi >= 40 && rsi <= 60) {
+      momentumPoints += 0.2;
+      scoreReasons.push("RSI 处于 40-60 中性修复区，买点不拥挤 (+0.2)");
+    } else if (rsi > 60 && rsi < 70) {
+      momentumPoints += 0.2;
+      scoreReasons.push("RSI 处于 60-70 强势区，但需控制追高 (+0.2)");
     } else if (rsi >= 70) {
-      momPoints += 0.1;
-      scoreReasons.push("日K RSI 指标已超买，需警惕短期抛压 (+0.1分)");
+      momentumPoints -= 0.25;
+      scoreReasons.push("RSI 已进入超买区，买入安全边际下降 (-0.25)");
     } else if (rsi < 30) {
-      momPoints += 0.1; // Rebound buy potential
-      scoreReasons.push("日K RSI 指标严重超卖，蕴含技术面反弹契机 (+0.1分)");
+      momentumPoints += 0.15;
+      scoreReasons.push("RSI 严重超卖，具备反弹观察价值 (+0.15)");
     }
   }
-  momentumScore = Math.max(0, Math.min(1.0, momPoints));
+  const momentumScore = clamp(momentumPoints, 0, 1);
 
-  // --- 3. Daily Volume & Force Score (Max 0.8) ---
-  let volPoints = 0;
+  let volumePoints = 0;
   const cmfVal = dailyVolumeAnalysis.cmf[latestD];
-
-  if (!isNaN(cmfVal)) {
+  if (isValid(cmfVal)) {
     if (cmfVal > 0.15) {
-      volPoints += 0.3;
-      scoreReasons.push(`CMF 主力资金呈强劲净流入状态 (CMF: ${cmfVal.toFixed(2)}) (+0.3分)`);
+      volumePoints += 0.2;
+      scoreReasons.push(`CMF 显示资金净流入 (CMF: ${cmfVal.toFixed(2)}) (+0.2)`);
     } else if (cmfVal > 0.05) {
-      volPoints += 0.15;
-      scoreReasons.push(`CMF 资金面呈温和净流入 (CMF: ${cmfVal.toFixed(2)}) (+0.15分)`);
+      volumePoints += 0.1;
+      scoreReasons.push(`CMF 温和净流入 (CMF: ${cmfVal.toFixed(2)}) (+0.1)`);
     } else if (cmfVal < -0.15) {
-      volPoints -= 0.2;
-      scoreReasons.push(`CMF 主力资金呈流出状态，筹码分散 (CMF: ${cmfVal.toFixed(2)}) (-0.2分)`);
+      volumePoints -= 0.25;
+      scoreReasons.push(`CMF 显示资金流出，筹码承接不足 (CMF: ${cmfVal.toFixed(2)}) (-0.25)`);
     }
   }
 
   const obv = dailyVolumeAnalysis.obv;
   if (obv.length >= 10) {
     let obvSum = 0;
-    for (let i = latestD - 1; i > latestD - 10; i--) obvSum += obv[i];
+    for (let i = latestD - 1; i > latestD - 10; i--) {
+      obvSum += obv[i] ?? 0;
+    }
     const obv10SMA = obvSum / 9;
-
     if (obv[latestD] > obv10SMA) {
-      volPoints += 0.2;
-      scoreReasons.push("OBV 能量潮处于均线上方，量能蓄势健康 (+0.2分)");
+      volumePoints += 0.15;
+      scoreReasons.push("OBV 位于短期均线上方，承接量能较健康 (+0.15)");
     }
   }
 
   if (dailyVolumeAnalysis.hasVolumeBreakout) {
-    volPoints += 0.3;
-    scoreReasons.push("伴随主力资金异动，价格触发「放量突破」成交量放大确认 (+0.3分)");
+    if (dayChangePct > 3 || distFromEma20 > 12) {
+      volumePoints -= 0.2;
+      scoreReasons.push("放量急涨且价格偏离均线，短线更偏交易热度而非低风险买点 (-0.2)");
+    } else if (dayChangePct > 0) {
+      volumePoints += 0.15;
+      scoreReasons.push("温和放量上行，突破质量尚可 (+0.15)");
+    } else {
+      volumePoints -= 0.15;
+      scoreReasons.push("放量下跌，卖压放大 (-0.15)");
+    }
   }
-  volumeScore = Math.max(0, Math.min(0.8, volPoints));
 
-  // --- 4. Special Patterns & Reversals (Max 0.7) ---
-  let patPoints = 0;
+  if ([de20, de60].every(isValid)) {
+    if (Math.abs(distFromEma20) <= 4 && de20 >= de60) {
+      volumePoints += 0.25;
+      scoreReasons.push("价格靠近 EMA20 且中期趋势未坏，具备较好的回踩买入位置 (+0.25)");
+    } else if (Math.abs(distFromEma60) <= 5 && de20 >= de60) {
+      volumePoints += 0.2;
+      scoreReasons.push("价格靠近 EMA60 支撑，风险收益比改善 (+0.2)");
+    }
+  }
 
+  if (dailyVolumeAnalysis.hasPriceVolumeDivergence) {
+    volumePoints -= 0.2;
+    scoreReasons.push("量价背离，买入确认度下降 (-0.2)");
+  }
+  const volumeScore = clamp(volumePoints, 0, 0.8);
+
+  let patternPoints = 0;
   if (dailyPatternResult.tdSignal === "Buy Setup 9") {
-    patPoints += 0.4;
-    scoreReasons.push("日K 触发神奇九转「买入九转（TD 9）」底部反转买点 (+0.4分)");
+    patternPoints += 0.35;
+    scoreReasons.push("TD Buy Setup 9，底部反转信号加分 (+0.35)");
   } else if (dailyPatternResult.tdSignal === "Sell Setup 9") {
-    patPoints -= 0.3;
-    scoreReasons.push("日K 触发神奇九转「卖出九转（TD 9）」趋势衰竭风险 (-0.3分)");
+    patternPoints -= 0.35;
+    scoreReasons.push("TD Sell Setup 9，趋势衰竭风险扣分 (-0.35)");
   }
 
-  // Divergences
-  if (dailyPatternResult.macdDivergence === "bottom" || dailyPatternResult.rsiDivergence === "bottom" || dailyPatternResult.kdjDivergence === "bottom") {
-    patPoints += 0.3;
-    scoreReasons.push("日K 发生底背离（价格创新低而动能指标不创新低），探底成功概率大 (+0.3分)");
-  }
-  if (dailyPatternResult.macdDivergence === "top" || dailyPatternResult.rsiDivergence === "top" || dailyPatternResult.kdjDivergence === "top") {
-    patPoints -= 0.3;
-    scoreReasons.push("日K 发生顶背离（价格创新高而动能指标衰退），谨防多头陷阱 (-0.3分)");
+  if (
+    dailyPatternResult.macdDivergence === "bottom" ||
+    dailyPatternResult.rsiDivergence === "bottom" ||
+    dailyPatternResult.kdjDivergence === "bottom"
+  ) {
+    patternPoints += 0.35;
+    scoreReasons.push("出现底背离，左侧性价比改善 (+0.35)");
   }
 
-  // Geometric breakout
+  if (
+    dailyPatternResult.macdDivergence === "top" ||
+    dailyPatternResult.rsiDivergence === "top" ||
+    dailyPatternResult.kdjDivergence === "top"
+  ) {
+    patternPoints -= 0.35;
+    scoreReasons.push("出现顶背离，追高风险上升 (-0.35)");
+  }
+
   if (dailyPatternResult.isDoubleBottom || dailyPatternResult.isCupAndHandle) {
-    patPoints += 0.3;
-    scoreReasons.push("经典几何形态确立「W底突破 / 杯柄向上突破」 (+0.3分)");
+    patternPoints += 0.25;
+    scoreReasons.push("经典底部/整理突破形态成立，买入结构改善 (+0.25)");
   }
   if (dailyPatternResult.isHeadAndShoulders || dailyPatternResult.isRoundingTop) {
-    patPoints -= 0.3;
-    scoreReasons.push("几何形态呈现「头肩顶 / 圆弧顶」压制，中线趋势承压 (-0.3分)");
+    patternPoints -= 0.3;
+    scoreReasons.push("头肩顶/圆弧顶压制，中线风险扣分 (-0.3)");
   }
 
-  // Wave Theory resonance
+  patternPoints += dailyWaveResult.waveScoreContribution;
   if (dailyWaveResult.waveScoreContribution > 0) {
-    patPoints += dailyWaveResult.waveScoreContribution;
-    scoreReasons.push(`艾略特波浪理论指向：「${dailyWaveResult.currentWave}」阶段 (+${dailyWaveResult.waveScoreContribution}分)`);
+    scoreReasons.push(`波浪结构指向 ${dailyWaveResult.currentWave}，结构贡献 (+${dailyWaveResult.waveScoreContribution})`);
   } else if (dailyWaveResult.waveScoreContribution < 0) {
-    patPoints += dailyWaveResult.waveScoreContribution; // negative
-    scoreReasons.push(`艾略特波浪理论指向：「${dailyWaveResult.currentWave}」阶段 (${dailyWaveResult.waveScoreContribution}分)`);
+    scoreReasons.push(`波浪结构指向 ${dailyWaveResult.currentWave}，结构风险 (${dailyWaveResult.waveScoreContribution})`);
   }
+  const patternsScore = clamp(patternPoints, 0, 0.7);
 
-  patternsScore = Math.max(0, Math.min(0.7, patPoints));
-
-  // --- 5. Weekly Resonance Score (Max 1.0) ---
+  let weeklyResonanceScore = 0.5;
   if (latestW >= 0) {
+    weeklyResonanceScore = 0;
     const we5 = weeklyEMAs.ema5[latestW];
     const we10 = weeklyEMAs.ema10[latestW];
     const we20 = weeklyEMAs.ema20[latestW];
     const we60 = weeklyEMAs.ema60[latestW];
+    const weeklyClose = weeklyCandles[latestW].close;
 
-    let weeklyPoints = 0;
-    
-    if (!isNaN(we5) && !isNaN(we10) && !isNaN(we20) && !isNaN(we60)) {
-      if (we5 > we10 && we10 > we20 && we20 > we60) {
-        weeklyPoints += 0.8;
-        scoreReasons.push("周K 长周期均线呈现多头排列，主趋势大牛格局 (+0.8分)");
-      } else if (we20 > we60) {
-        weeklyPoints += 0.5;
-        scoreReasons.push("周K 中线维持上升通道，大方向偏多 (+0.5分)");
+    if ([we5, we10, we20, we60].every(isValid)) {
+      if (we20 > we60 && weeklyClose >= we20) {
+        weeklyResonanceScore += 0.6;
+        scoreReasons.push("周K中期趋势向上，日线买点有大周期支撑 (+0.6)");
+      } else if (we5 > we10 && we10 > we20 && we20 > we60) {
+        weeklyResonanceScore += 0.5;
+        scoreReasons.push("周K EMA 多头排列，但需避免日线追高 (+0.5)");
       } else if (we5 < we10 && we10 < we20 && we20 < we60) {
-        // Weekly is strongly bearish, but Daily is bullish (pullback / bounce)
-        if (baseTrendScore >= 0.8) {
-          weeklyPoints -= 0.5;
-          scoreReasons.push("周期矛盾：日K反弹但周线大级别呈现绝对空头压制，谨防反弹结束 (-0.5分)");
-        } else {
-          weeklyPoints = 0;
-          scoreReasons.push("周K 长周期呈空头排列，大趋势处于熊市通道 (0分)");
-        }
+        weeklyResonanceScore -= baseTrendScore >= 0.8 ? 0.5 : 0;
+        scoreReasons.push(baseTrendScore >= 0.8
+          ? "日线反弹与周线空头冲突，需防反弹结束 (-0.5)"
+          : "周线空头排列，大趋势仍弱 (0)");
       }
     }
 
     const wdif = weeklyMACD.dif[latestW];
     const wdea = weeklyMACD.dea[latestW];
-    if (!isNaN(wdif) && !isNaN(wdea)) {
-      if (wdif > wdea) {
-        weeklyPoints += 0.2;
-        scoreReasons.push("周K MACD 维持金叉或红柱区间，大级别动能健康 (+0.2分)");
-      }
+    if (isValid(wdif) && isValid(wdea) && wdif > wdea) {
+      weeklyResonanceScore += 0.2;
+      scoreReasons.push("周K MACD 金叉或红柱区间，大级别动能配合 (+0.2)");
     }
 
-    weeklyResonanceScore = Math.max(-0.5, Math.min(1.0, weeklyPoints));
-  } else {
-    weeklyResonanceScore = 0.5; // Neutral default if weekly is empty
+    weeklyResonanceScore = clamp(weeklyResonanceScore, -0.5, 1);
   }
 
-  // Calculate final score
   const totalScore = Number(
-    Math.max(0, Math.min(5.0, baseTrendScore + momentumScore + volumeScore + patternsScore + weeklyResonanceScore)).toFixed(1)
+    clamp(baseTrendScore + momentumScore + volumeScore + patternsScore + weeklyResonanceScore, 0, 5).toFixed(1)
   );
 
   return {

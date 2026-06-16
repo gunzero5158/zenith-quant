@@ -1,9 +1,17 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
-import { Search, Settings, Star, TrendingUp, TrendingDown, RefreshCw, Plus, Trash2, HelpCircle, ExternalLink, Zap, X } from "lucide-react";
+import React, { useState, useEffect, useRef, useSyncExternalStore, useCallback } from "react";
+import { Search, Settings, Star, TrendingUp, TrendingDown, RefreshCw, Trash2, ExternalLink, Zap } from "lucide-react";
 import StockChart from "@/components/StockChart";
 import { LLMConfig } from "@/lib/analysis/llmProxy";
+import { formatMarketPrice, getMarketCurrencySymbol } from "@/lib/analysis/market";
+import { Candle } from "@/lib/analysis/indicators";
+import { ScoreDetail } from "@/lib/analysis/scoring";
+import { PatternResult } from "@/lib/analysis/patterns";
+import { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
+import { ChanLunResult } from "@/lib/analysis/chanlun";
+import { SupportResistanceResult } from "@/lib/analysis/supportResistance";
+import { VolumeAnalysisResult } from "@/lib/analysis/volumeForce";
 
 interface SearchSuggestion {
   symbol: string;
@@ -11,6 +19,78 @@ interface SearchSuggestion {
   exchDisp: string;
   typeDisp: string;
 }
+
+type AppLanguage = "auto" | "zh-CN" | "zh-TW" | "en" | "ja";
+type EffectiveLanguage = Exclude<AppLanguage, "auto">;
+
+interface TechnicalIndicators {
+  ema5: number[];
+  ema10: number[];
+  ema20: number[];
+  ema60: number[];
+  bollUpper: number[];
+  bollMiddle: number[];
+  bollLower: number[];
+  macdDif: number[];
+  macdDea: number[];
+  macdHist: number[];
+  kdjK: number[];
+  kdjD: number[];
+  kdjJ: number[];
+  rsi: number[];
+  atr: number[];
+}
+
+interface StockAnalysisData {
+  symbol: string;
+  companyName: string;
+  companyNameEn?: string;
+  price: number;
+  changePercent: number;
+  score: ScoreDetail;
+  dailyCandles: Candle[];
+  weeklyCandles: Candle[];
+  indicators: TechnicalIndicators;
+  patterns: PatternResult;
+  wave: WaveAnalysisResult;
+  chanlun: ChanLunResult;
+  sr: SupportResistanceResult;
+  volumeAnalysis: VolumeAnalysisResult;
+  reportOverview: string;
+  reportRecommendation: string;
+  reportTechnical: string;
+  isLLMUsed: boolean;
+  isMock?: boolean;
+  dataSource?: "yahoo" | "yahoo-chart" | "eastmoney" | "sina" | "kabutan" | "twelve-data" | "fmp" | "mock";
+  currencySymbol?: string;
+}
+
+interface AnalysisCacheEntry {
+  timestamp: number;
+  data: StockAnalysisData;
+}
+
+interface QuotesResponse {
+  quotes?: Record<string, { price: number; change: number }>;
+}
+
+interface SearchResponse {
+  quotes?: SearchSuggestion[];
+}
+
+interface ApiErrorResponse {
+  error?: string;
+}
+
+const APP_LANGUAGES: AppLanguage[] = ["auto", "zh-CN", "zh-TW", "en", "ja"];
+
+const isAppLanguage = (value: string): value is AppLanguage => APP_LANGUAGES.includes(value as AppLanguage);
+
+const getErrorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
+
+const subscribeMounted = () => () => undefined;
+const getClientMountedSnapshot = () => true;
+const getServerMountedSnapshot = () => false;
 
 const TRANSLATIONS: Record<string, Record<string, string>> = {
   "zh-CN": {
@@ -302,14 +382,14 @@ const isNonTradingHours = (symbol: string): boolean => {
 };
 
 export default function Home() {
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(subscribeMounted, getClientMountedSnapshot, getServerMountedSnapshot);
   const [activeSymbol, setActiveSymbol] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   
   const [loading, setLoading] = useState(false);
-  const [stockData, setStockData] = useState<any>(null);
+  const [stockData, setStockData] = useState<StockAnalysisData | null>(null);
   const [chartPeriod, setChartPeriod] = useState<"daily" | "weekly">("daily");
   const [showMockWarning, setShowMockWarning] = useState(true);
   const [loadingStep, setLoadingStep] = useState(0);
@@ -317,6 +397,7 @@ export default function Home() {
 
   const pendingLogsRef = useRef<string[]>([]);
   const terminalRef = useRef<HTMLDivElement>(null);
+  const lastRequestedSymbolRef = useRef("");
 
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [watchlistQuotes, setWatchlistQuotes] = useState<Record<string, { price: number; change: number }>>({});
@@ -338,10 +419,10 @@ export default function Home() {
     modelName: "gemini-1.5-flash",
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [appLanguage, setAppLanguage] = useState<"auto" | "zh-CN" | "zh-TW" | "en" | "ja">("auto");
+  const [appLanguage, setAppLanguage] = useState<AppLanguage>("auto");
   const [useFallback, setUseFallback] = useState(true);
 
-  const getEffectiveLang = () => {
+  const getEffectiveLang = (): EffectiveLanguage => {
     if (!mounted) return "zh-CN"; // SSR and first hydration render must be identical to avoid mismatch
     if (appLanguage !== "auto") return appLanguage;
     if (typeof navigator === "undefined") return "zh-CN";
@@ -457,73 +538,78 @@ export default function Home() {
 
   // Initialize client settings from localStorage & cookies
   useEffect(() => {
-    setMounted(true);
-    // 0. Load color mode (isRedUp)
-    const savedColorMode = localStorage.getItem("zenith_chart_color_mode");
-    if (savedColorMode === "green-up") {
-      setIsRedUp(false);
-    } else {
-      setIsRedUp(true);
-    }
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
 
-    // 1. Load Analysis History from cookie
-    const savedHistory = getCookie("analysis_history");
-    if (savedHistory) {
-      try {
-        const parsed = JSON.parse(savedHistory);
-        if (Array.isArray(parsed)) {
-          setWatchlist(parsed);
-        }
-      } catch (e) {
-        console.error("Parse analysis history cookie failed:", e);
+      // 0. Load color mode (isRedUp)
+      const savedColorMode = localStorage.getItem("zenith_chart_color_mode");
+      if (savedColorMode === "green-up") {
+        setIsRedUp(false);
+      } else {
+        setIsRedUp(true);
       }
-    } else {
-      // Migrate from old localStorage watchlist if exists
-      const oldWatchlist = localStorage.getItem("watchlist");
-      if (oldWatchlist) {
+
+      // 1. Load Analysis History from cookie
+      const savedHistory = getCookie("analysis_history");
+      if (savedHistory) {
         try {
-          const parsed = JSON.parse(oldWatchlist);
+          const parsed = JSON.parse(savedHistory) as unknown;
           if (Array.isArray(parsed)) {
             setWatchlist(parsed);
-            setCookie("analysis_history", JSON.stringify(parsed));
           }
         } catch (e) {
-          // Fallback to default
+          console.error("Parse analysis history cookie failed:", e);
         }
       } else {
-        const defaultHistory = ["AAPL", "0700.HK", "600519.SS", "9984.T"];
-        setWatchlist(defaultHistory);
-        setCookie("analysis_history", JSON.stringify(defaultHistory));
+        // Migrate from old localStorage watchlist if exists
+        const oldWatchlist = localStorage.getItem("watchlist");
+        if (oldWatchlist) {
+          try {
+            const parsed = JSON.parse(oldWatchlist) as unknown;
+            if (Array.isArray(parsed)) {
+              setWatchlist(parsed);
+              setCookie("analysis_history", JSON.stringify(parsed));
+            }
+          } catch {
+            // Fallback to default
+          }
+        } else {
+          const defaultHistory = ["AAPL", "0700.HK", "600519.SS", "9984.T"];
+          setWatchlist(defaultHistory);
+          setCookie("analysis_history", JSON.stringify(defaultHistory));
+        }
       }
-    }
 
-    // 1.5 Load Watchlist Quotes Cache
-    const savedQuotes = localStorage.getItem("watchlistQuotes");
-    if (savedQuotes) {
-      try {
-        setWatchlistQuotes(JSON.parse(savedQuotes));
-      } catch (e) {
-        console.error("Parse cached watchlist quotes failed:", e);
+      // 1.5 Load Watchlist Quotes Cache
+      const savedQuotes = localStorage.getItem("watchlistQuotes");
+      if (savedQuotes) {
+        try {
+          const parsedQuotes = JSON.parse(savedQuotes) as Record<string, { price: number; change: number }>;
+          setWatchlistQuotes(parsedQuotes);
+        } catch (e) {
+          console.error("Parse cached watchlist quotes failed:", e);
+        }
       }
-    }
 
-    // 2. Load LLM Config
-    const savedConfig = localStorage.getItem("llmConfig");
-    if (savedConfig) {
-      setLlmConfig(JSON.parse(savedConfig));
-    }
+      // 2. Load LLM Config
+      const savedConfig = localStorage.getItem("llmConfig");
+      if (savedConfig) {
+        setLlmConfig(JSON.parse(savedConfig) as LLMConfig);
+      }
 
-    // 3. Load Language
-    const savedLanguage = localStorage.getItem("appLanguage");
-    if (savedLanguage) {
-      setAppLanguage(savedLanguage as any);
-    }
+      // 3. Load Language
+      const savedLanguage = localStorage.getItem("appLanguage");
+      if (savedLanguage && isAppLanguage(savedLanguage)) {
+        setAppLanguage(savedLanguage);
+      }
 
-    // 4. Load Fallback toggle
-    const savedFallback = localStorage.getItem("zenith_use_fallback");
-    if (savedFallback === "false") {
-      setUseFallback(false);
-    }
+      // 4. Load Fallback toggle
+      const savedFallback = localStorage.getItem("zenith_use_fallback");
+      if (savedFallback === "false") {
+        setUseFallback(false);
+      }
+    });
 
     // Load APIMax banner - default always visible
 
@@ -534,7 +620,10 @@ export default function Home() {
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
   }, []);
 
   // Fetch Watchlist simple quotes on load and when watchlist changes
@@ -545,7 +634,7 @@ export default function Home() {
       try {
         const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(watchlist.join(","))}`);
         if (res.ok) {
-          const data = await res.json();
+          const data = await res.json() as QuotesResponse;
           const newQuotes = data.quotes || {};
           setWatchlistQuotes(newQuotes);
           localStorage.setItem("watchlistQuotes", JSON.stringify(newQuotes));
@@ -557,12 +646,6 @@ export default function Home() {
 
     fetchWatchlistQuotes();
   }, [watchlist]);
-
-  // Main fetch call for active stock data
-  useEffect(() => {
-    if (!activeSymbol) return;
-    fetchActiveStockData();
-  }, [activeSymbol]);
 
   // Update pending logs when loadingStep changes
   useEffect(() => {
@@ -579,7 +662,7 @@ export default function Home() {
     }
   }, [terminalLogs]);
 
-  const fetchActiveStockData = async (forceFetch: boolean | React.MouseEvent = false) => {
+  const fetchActiveStockData = useCallback(async (forceFetch: boolean | React.MouseEvent = false) => {
     const isForce = forceFetch === true || (forceFetch && typeof forceFetch === "object" && "nativeEvent" in forceFetch);
     
     if (!isForce) {
@@ -587,13 +670,25 @@ export default function Home() {
       const cachedStr = localStorage.getItem(cacheKey);
       if (cachedStr) {
         try {
-          const cachedObj = JSON.parse(cachedStr);
+          const cachedObj = JSON.parse(cachedStr) as AnalysisCacheEntry;
           const cacheDate = new Date(cachedObj.timestamp);
           const now = new Date();
           const isSameDay = cacheDate.toDateString() === now.toDateString();
           if (isSameDay && isNonTradingHours(activeSymbol)) {
             console.log("[CACHE] Using cached analysis for", activeSymbol);
-            setStockData(cachedObj.data);
+            const cachedData = cachedObj.data;
+            const resolvedSymbol = cachedData.symbol || activeSymbol;
+            setStockData(cachedData);
+            if (resolvedSymbol !== activeSymbol) {
+              lastRequestedSymbolRef.current = resolvedSymbol;
+              setActiveSymbol(resolvedSymbol);
+            }
+            setWatchlist((prev) => {
+              const filtered = prev.filter((item) => item !== activeSymbol && item !== resolvedSymbol);
+              const updated = [resolvedSymbol, ...filtered].slice(0, 15);
+              setCookie("analysis_history", JSON.stringify(updated));
+              return updated;
+            });
             return;
           }
         } catch (e) {
@@ -620,7 +715,7 @@ export default function Home() {
     }, 120);
 
     try {
-      let effectiveLang = appLanguage;
+      let effectiveLang: EffectiveLanguage = appLanguage === "auto" ? "zh-CN" : appLanguage;
       if (appLanguage === "auto") {
         const navLang = typeof navigator !== "undefined" ? navigator.language.toLowerCase() : "zh-cn";
         if (navLang.includes("zh-tw") || navLang.includes("zh-hk") || navLang.includes("zh-mo")) {
@@ -646,17 +741,22 @@ export default function Home() {
       });
 
       if (!res.ok) {
-        const err = await res.json();
+        const err = await res.json() as ApiErrorResponse;
         alert(`查询失败: ${err.error || "未知错误"}`);
         return;
       }
 
-      const data = await res.json();
+      const data = await res.json() as StockAnalysisData;
+      const resolvedSymbol = data.symbol || activeSymbol;
       setStockData(data);
+      if (resolvedSymbol !== activeSymbol) {
+        lastRequestedSymbolRef.current = resolvedSymbol;
+        setActiveSymbol(resolvedSymbol);
+      }
       setShowMockWarning(true);
       
       try {
-        localStorage.setItem(`zenith_analysis_${activeSymbol}`, JSON.stringify({
+        localStorage.setItem(`zenith_analysis_${resolvedSymbol}`, JSON.stringify({
           timestamp: Date.now(),
           data
         }));
@@ -666,12 +766,13 @@ export default function Home() {
       
       // Update analysis history cookie
       setWatchlist((prev) => {
-        const filtered = prev.filter((item) => item !== activeSymbol);
-        const updated = [activeSymbol, ...filtered].slice(0, 15);
+        const filtered = prev.filter((item) => item !== activeSymbol && item !== resolvedSymbol);
+        const updated = [resolvedSymbol, ...filtered].slice(0, 15);
         setCookie("analysis_history", JSON.stringify(updated));
         return updated;
       });
-    } catch (e: any) {
+    } catch (caught: unknown) {
+      const e = { message: getErrorMessage(caught) };
       console.error(e);
       alert(`查询出错: ${e.message || e}`);
     } finally {
@@ -683,29 +784,54 @@ export default function Home() {
       }
       setLoading(false);
     }
-  };
+  }, [activeSymbol, appLanguage, llmConfig, useFallback]);
+
+  const fetchActiveStockDataRef = useRef(fetchActiveStockData);
+  useEffect(() => {
+    fetchActiveStockDataRef.current = fetchActiveStockData;
+  }, [fetchActiveStockData]);
+
+  // Main fetch call for active stock data
+  useEffect(() => {
+    if (!activeSymbol) return;
+    if (lastRequestedSymbolRef.current === activeSymbol) {
+      lastRequestedSymbolRef.current = "";
+      return;
+    }
+    queueMicrotask(() => {
+      fetchActiveStockDataRef.current();
+    });
+  }, [activeSymbol]);
 
   // Autocomplete suggestion fetcher
   useEffect(() => {
-    if (searchQuery.trim().length === 0) {
-      setSuggestions([]);
+    const query = searchQuery.trim();
+    if (query.length === 0) {
       return;
     }
 
+    const controller = new AbortController();
     const delayDebounceFn = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
+        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
+          signal: controller.signal,
+        });
         if (res.ok) {
-          const data = await res.json();
+          const data = await res.json() as SearchResponse;
           setSuggestions(data.quotes || []);
           setShowSuggestions(true);
         }
       } catch (e) {
-        console.error("Fetch autocomplete suggestions failed:", e);
+        if ((e as Error).name !== "AbortError") {
+          console.error("Fetch autocomplete suggestions failed:", e);
+        }
       }
     }, 300);
 
-    return () => clearTimeout(delayDebounceFn);
+    return () => {
+      controller.abort();
+      clearTimeout(delayDebounceFn);
+    };
   }, [searchQuery]);
 
   const handleSelectSymbol = (sym: string) => {
@@ -936,13 +1062,20 @@ export default function Home() {
             className="search-input-glow"
             placeholder={t.searchPlaceholder}
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setSearchQuery(value);
+              if (value.trim().length === 0) {
+                setSuggestions([]);
+                setShowSuggestions(false);
+              }
+            }}
             onFocus={() => {
               if (suggestions.length > 0) setShowSuggestions(true);
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && searchQuery.trim()) {
-                handleSelectSymbol(searchQuery.trim().toUpperCase());
+                handleSelectSymbol((showSuggestions && suggestions[0]?.symbol) || searchQuery.trim().toUpperCase());
               }
             }}
             style={styles.searchInput}
@@ -972,7 +1105,8 @@ export default function Home() {
             <select
               value={appLanguage}
               onChange={(e) => {
-                const newLang = e.target.value as any;
+                const newLang = e.target.value;
+                if (!isAppLanguage(newLang)) return;
                 setAppLanguage(newLang);
                 localStorage.setItem("appLanguage", newLang);
               }}
@@ -1002,10 +1136,10 @@ export default function Home() {
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <span style={{ fontSize: "16px" }}>⚠️</span>
             <span>
-              {effectiveLang === "zh-CN" && "当前因网络连接受阻（如地区网络限制），无法直连雅虎财经获取实时数据。系统已自动降级为本地模拟演示模式（数据为算法实时模拟生成）。请检查您的网络连接或代理设置。"}
-              {effectiveLang === "zh-TW" && "當前因網絡連接受阻（如地區網絡限制），無法直連雅虎財經獲取實時數據。系統已自動降級為本地模擬演示模式（數據為算法實時模擬生成）。請檢查您的網絡連接或代理設置。"}
-              {effectiveLang === "en" && "Due to network restrictions, Yahoo Finance is unreachable. The system has fallen back to offline demo mode with algorithmic simulation."}
-              {effectiveLang === "ja" && "ネットワーク接続制限のため、Yahoo Financeに接続できません。システムは自动的にオフラインデモモード（アルゴリズムによるシミュレーションデータ）にフォールバックしました。"}
+              {effectiveLang === "zh-CN" && "当前真实行情源不可用或暂不支持该代码，系统已自动降级为本地模拟演示模式（数据为算法实时模拟生成）。请检查代码、网络连接或代理设置。"}
+              {effectiveLang === "zh-TW" && "當前真實行情源不可用或暫不支援該代碼，系統已自動降級為本地模擬演示模式（數據為算法即時模擬生成）。請檢查代碼、網絡連接或代理設定。"}
+              {effectiveLang === "en" && "Live market data sources are unavailable or do not support this ticker. The system has fallen back to offline demo mode with algorithmic simulation."}
+              {effectiveLang === "ja" && "リアルタイムの市場データソースが利用できない、またはこのコードに対応していないため、オフラインデモモード（シミュレーションデータ）にフォールバックしました。"}
             </span>
           </div>
           <button 
@@ -1040,7 +1174,7 @@ export default function Home() {
                   </div>
                   {quote ? (
                     <div style={styles.watchItemRight}>
-                      <span style={styles.watchPrice}>${quote.price.toFixed(2)}</span>
+                      <span style={styles.watchPrice}>{formatMarketPrice(sym, quote.price)}</span>
                       <span
                         style={{
                           ...styles.watchChange,
@@ -1344,15 +1478,24 @@ export default function Home() {
                     {stockData.dataSource === "sina" && (
                       <span style={styles.sinaBadge}>⚡ 新浪财经</span>
                     )}
-                    {stockData.dataSource === "yahoo" && (
+                    {(stockData.dataSource === "yahoo" || stockData.dataSource === "yahoo-chart") && (
                       <span style={styles.yahooBadge}>🌐 雅虎财经</span>
+                    )}
+                    {stockData.dataSource === "kabutan" && (
+                      <span style={styles.kabutanBadge}>🌐 株探</span>
+                    )}
+                    {stockData.dataSource === "twelve-data" && (
+                      <span style={styles.providerBadge}>🌐 Twelve Data</span>
+                    )}
+                    {stockData.dataSource === "fmp" && (
+                      <span style={styles.providerBadge}>🌐 FMP</span>
                     )}
                     {stockData.dataSource === "mock" && (
                       <span style={styles.mockBadge}>⚠️ 模拟演示</span>
                     )}
                   </div>
                   <div style={styles.priceContainer}>
-                    <span style={styles.currentPrice}>${stockData.price.toFixed(2)}</span>
+                    <span style={styles.currentPrice}>{formatMarketPrice(stockData.symbol || activeSymbol, stockData.price)}</span>
                     <span
                       style={{
                         ...styles.priceChange,
@@ -1382,7 +1525,7 @@ export default function Home() {
                   <div style={styles.statItem}>
                     <span style={styles.statLabel}>{t.supportLabel}</span>
                     <span style={{ ...styles.statValue, color: "#089981" }}>
-                      {stockData.sr.horizontalSupports[0] ? `$${stockData.sr.horizontalSupports[0].toFixed(2)}` : t.noSupport}
+                      {stockData.sr.horizontalSupports[0] ? `${stockData.currencySymbol || getMarketCurrencySymbol(stockData.symbol || activeSymbol)}${stockData.sr.horizontalSupports[0].toFixed(2)}` : t.noSupport}
                     </span>
                   </div>
 
@@ -1391,7 +1534,7 @@ export default function Home() {
                   <div style={styles.statItem}>
                     <span style={styles.statLabel}>{t.resistanceLabel}</span>
                     <span style={{ ...styles.statValue, color: "#f23645" }}>
-                      {stockData.sr.horizontalResistances[0] ? `$${stockData.sr.horizontalResistances[0].toFixed(2)}` : t.noResistance}
+                      {stockData.sr.horizontalResistances[0] ? `${stockData.currencySymbol || getMarketCurrencySymbol(stockData.symbol || activeSymbol)}${stockData.sr.horizontalResistances[0].toFixed(2)}` : t.noResistance}
                     </span>
                   </div>
 
@@ -1400,7 +1543,7 @@ export default function Home() {
                   <div style={styles.statItem}>
                     <span style={styles.statLabel}>{t.pocLabel}</span>
                     <span style={{ ...styles.statValue, color: "#fbbf24" }}>
-                      ${stockData.sr.volumePOC.toFixed(2)}
+                      {stockData.currencySymbol || getMarketCurrencySymbol(stockData.symbol || activeSymbol)}{stockData.sr.volumePOC.toFixed(2)}
                     </span>
                   </div>
                 </div>
@@ -1988,7 +2131,12 @@ export default function Home() {
                 <label style={styles.label}>{t.languageLabel}</label>
                 <select
                   value={appLanguage}
-                  onChange={(e) => setAppLanguage(e.target.value as any)}
+                  onChange={(e) => {
+                    const newLang = e.target.value;
+                    if (isAppLanguage(newLang)) {
+                      setAppLanguage(newLang);
+                    }
+                  }}
                   style={styles.select}
                 >
                   <option value="auto">{t.langAuto}</option>
@@ -2719,6 +2867,26 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "11px",
     color: "#2962ff",
     backgroundColor: "rgba(41,98,255,0.15)",
+    padding: "2px 6px",
+    borderRadius: "10px",
+    fontWeight: "bold",
+    marginLeft: "8px",
+    display: "inline-block",
+  },
+  kabutanBadge: {
+    fontSize: "11px",
+    color: "#38bdf8",
+    backgroundColor: "rgba(56,189,248,0.15)",
+    padding: "2px 6px",
+    borderRadius: "10px",
+    fontWeight: "bold",
+    marginLeft: "8px",
+    display: "inline-block",
+  },
+  providerBadge: {
+    fontSize: "11px",
+    color: "#a78bfa",
+    backgroundColor: "rgba(167,139,250,0.15)",
     padding: "2px 6px",
     borderRadius: "10px",
     fontWeight: "bold",

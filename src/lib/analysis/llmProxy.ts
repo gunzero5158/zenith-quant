@@ -5,6 +5,27 @@ export interface LLMConfig {
   modelName: string;
 }
 
+const OFFICIAL_PROVIDER_TIMEOUT_MS = 60_000;
+
+async function fetchWithTimeout(url: string, init: RequestInit, provider: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error: unknown) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`${provider} API timeout after ${timeoutMs / 1000}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /**
  * Dynamically forwards the generated analysis prompt to the specified LLM provider using standard HTTP fetch.
  */
@@ -33,11 +54,11 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
       ]
     };
 
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
-    });
+    }, "Gemini", OFFICIAL_PROVIDER_TIMEOUT_MS);
 
     if (!res.ok) {
       const errText = await res.text();
@@ -66,7 +87,7 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
       ]
     };
 
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -74,7 +95,7 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
         "anthropic-version": "2023-06-01"
       },
       body: JSON.stringify(payload)
-    });
+    }, "Anthropic", OFFICIAL_PROVIDER_TIMEOUT_MS);
 
     if (!res.ok) {
       const errText = await res.text();
@@ -105,14 +126,18 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
     temperature: 0.3
   };
 
-  const res = await fetch(openaiUrl, {
+  const requestInit: RequestInit = {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`
     },
     body: JSON.stringify(payload)
-  });
+  };
+
+  const res = provider === "custom"
+    ? await fetch(openaiUrl, requestInit)
+    : await fetchWithTimeout(openaiUrl, requestInit, provider.toUpperCase(), OFFICIAL_PROVIDER_TIMEOUT_MS);
 
   if (!res.ok) {
     const errText = await res.text();

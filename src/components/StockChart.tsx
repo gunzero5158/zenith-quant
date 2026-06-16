@@ -1,7 +1,22 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { createChart, IChartApi, ISeriesApi, LineStyle, SeriesMarker, CandlestickSeries, LineSeries, HistogramSeries, createSeriesMarkers } from "lightweight-charts";
+import {
+  createChart,
+  IChartApi,
+  ISeriesApi,
+  LineStyle,
+  SeriesMarker,
+  SeriesType,
+  CandlestickSeries,
+  LineSeries,
+  HistogramSeries,
+  createSeriesMarkers,
+  LogicalRange,
+  MouseEventParams,
+  Time,
+  LineData,
+} from "lightweight-charts";
 import { Candle } from "@/lib/analysis/indicators";
 
 interface StockChartProps {
@@ -44,6 +59,21 @@ interface StockChartProps {
 }
 
 type IndicatorTab = "volume" | "macd" | "kdj" | "rsi";
+type IndicatorPoint = LineData<Time>;
+
+const mapIndicatorData = (candles: Candle[], values: number[]): IndicatorPoint[] => {
+  if (!values) return [];
+  return candles
+    .map((c, i) => {
+      const time = new Date(c.date).toISOString().split("T")[0];
+      const val = values[i];
+      return {
+        time,
+        value: typeof val === "number" ? val : NaN,
+      };
+    })
+    .filter((item) => !isNaN(item.value));
+};
 
 export default function StockChart({ candles, indicators, patterns, sr, wave, isRedUp }: StockChartProps) {
   const priceContainerRef = useRef<HTMLDivElement>(null);
@@ -64,13 +94,13 @@ export default function StockChart({ candles, indicators, patterns, sr, wave, is
     if (priceChartRef.current) {
       try {
         priceChartRef.current.remove();
-      } catch (e) {}
+      } catch {}
       priceChartRef.current = null;
     }
     if (indChartRef.current) {
       try {
         indChartRef.current.remove();
-      } catch (e) {}
+      } catch {}
       indChartRef.current = null;
     }
 
@@ -97,7 +127,7 @@ export default function StockChart({ candles, indicators, patterns, sr, wave, is
     // ----------------------------------------------------
     // 1. Initialize Price Chart (Top Pane)
     // ----------------------------------------------------
-    const priceChart: any = createChart(priceContainerRef.current, {
+    const priceChart = createChart(priceContainerRef.current, {
       ...commonChartOptions,
       width: priceWidth,
       height: 380,
@@ -264,26 +294,28 @@ export default function StockChart({ candles, indicators, patterns, sr, wave, is
     // ----------------------------------------------------
     // 2. Initialize Indicator Chart (Bottom Pane)
     // ----------------------------------------------------
-    const indChart: any = createChart(indContainerRef.current, {
+    const indChart = createChart(indContainerRef.current, {
       ...commonChartOptions,
       width: priceWidth,
       height: 180,
     });
     indChartRef.current = indChart;
 
+    let indicatorCrosshairSeries: ISeriesApi<SeriesType> | null = null;
+
     if (indTab === "macd") {
-      const difSeries = indChart.addSeries(LineSeries, { color: "#2962ff", lineWidth: 1.5, title: "DIF" });
-      const deaSeries = indChart.addSeries(LineSeries, { color: "#fbbf24", lineWidth: 1.5, title: "DEA" });
+      const difSeries = indChart.addSeries(LineSeries, { color: "#2962ff", lineWidth: 1, title: "DIF" });
+      const deaSeries = indChart.addSeries(LineSeries, { color: "#fbbf24", lineWidth: 1, title: "DEA" });
       const histSeries = indChart.addSeries(HistogramSeries, {
-        upColor: upColor,
-        downColor: downColor,
+        color: upColor,
         title: "MACD Hist",
       });
+      indicatorCrosshairSeries = difSeries;
 
       difSeries.setData(mapIndicatorData(candles, indicators.macdDif));
       deaSeries.setData(mapIndicatorData(candles, indicators.macdDea));
       
-      const histData = mapIndicatorData(candles, indicators.macdHist).map((item: any) => ({
+      const histData = mapIndicatorData(candles, indicators.macdHist).map((item) => ({
         ...item,
         color: item.value >= 0 ? upColor : downColor,
       }));
@@ -291,9 +323,10 @@ export default function StockChart({ candles, indicators, patterns, sr, wave, is
     } 
     
     else if (indTab === "kdj") {
-      const kSeries = indChart.addSeries(LineSeries, { color: "#2962ff", lineWidth: 1.2, title: "K" });
-      const dSeries = indChart.addSeries(LineSeries, { color: "#fbbf24", lineWidth: 1.2, title: "D" });
-      const jSeries = indChart.addSeries(LineSeries, { color: "#e040fb", lineWidth: 1.2, title: "J" });
+      const kSeries = indChart.addSeries(LineSeries, { color: "#2962ff", lineWidth: 1, title: "K" });
+      const dSeries = indChart.addSeries(LineSeries, { color: "#fbbf24", lineWidth: 1, title: "D" });
+      const jSeries = indChart.addSeries(LineSeries, { color: "#e040fb", lineWidth: 1, title: "J" });
+      indicatorCrosshairSeries = kSeries;
 
       kSeries.setData(mapIndicatorData(candles, indicators.kdjK));
       dSeries.setData(mapIndicatorData(candles, indicators.kdjD));
@@ -305,7 +338,8 @@ export default function StockChart({ candles, indicators, patterns, sr, wave, is
     } 
     
     else if (indTab === "rsi") {
-      const rsiSeries = indChart.addSeries(LineSeries, { color: "#9575cd", lineWidth: 1.5, title: "RSI" });
+      const rsiSeries = indChart.addSeries(LineSeries, { color: "#9575cd", lineWidth: 1, title: "RSI" });
+      indicatorCrosshairSeries = rsiSeries;
       rsiSeries.setData(mapIndicatorData(candles, indicators.rsi));
 
       // Overbought/oversold boundaries
@@ -319,10 +353,10 @@ export default function StockChart({ candles, indicators, patterns, sr, wave, is
       const downColorRgb = isRedUp ? "rgba(8, 153, 129, 0.6)" : "rgba(242, 54, 69, 0.6)";
 
       const volSeries = indChart.addSeries(HistogramSeries, {
-        upColor: upColorRgb,
-        downColor: downColorRgb,
+        color: upColorRgb,
         title: "Volume",
       });
+      indicatorCrosshairSeries = volSeries;
 
       const mappedVol = candles.map((c, idx) => {
         const time = new Date(c.date).toISOString().split("T")[0];
@@ -345,14 +379,14 @@ export default function StockChart({ candles, indicators, patterns, sr, wave, is
     let isSyncingPrice = false;
     let isSyncingInd = false;
 
-    priceTimeScale.subscribeVisibleLogicalRangeChange((range: any) => {
+    priceTimeScale.subscribeVisibleLogicalRangeChange((range: LogicalRange | null) => {
       if (isSyncingInd || !range) return;
       isSyncingPrice = true;
       indTimeScale.setVisibleLogicalRange(range);
       isSyncingPrice = false;
     });
 
-    indTimeScale.subscribeVisibleLogicalRangeChange((range: any) => {
+    indTimeScale.subscribeVisibleLogicalRangeChange((range: LogicalRange | null) => {
       if (isSyncingPrice || !range) return;
       isSyncingInd = true;
       priceTimeScale.setVisibleLogicalRange(range);
@@ -360,17 +394,17 @@ export default function StockChart({ candles, indicators, patterns, sr, wave, is
     });
 
     // Link Crosshair
-    priceChart.subscribeCrosshairMove((param: any) => {
-      if (param.time) {
-        indChart.setCrosshairPosition(param.point ? param.point.x : 0, param.time, {} as any);
+    priceChart.subscribeCrosshairMove((param: MouseEventParams<Time>) => {
+      if (param.time && indicatorCrosshairSeries) {
+        indChart.setCrosshairPosition(param.point ? param.point.x : 0, param.time, indicatorCrosshairSeries);
       } else {
         indChart.clearCrosshairPosition();
       }
     });
 
-    indChart.subscribeCrosshairMove((param: any) => {
+    indChart.subscribeCrosshairMove((param: MouseEventParams<Time>) => {
       if (param.time) {
-        priceChart.setCrosshairPosition(param.point ? param.point.x : 0, param.time, {} as any);
+        priceChart.setCrosshairPosition(param.point ? param.point.x : 0, param.time, candlestickSeries);
       } else {
         priceChart.clearCrosshairPosition();
       }
@@ -392,32 +426,44 @@ export default function StockChart({ candles, indicators, patterns, sr, wave, is
       if (priceChartRef.current) {
         try {
           priceChartRef.current.remove();
-        } catch (e) {}
+        } catch {}
         priceChartRef.current = null;
       }
       if (indChartRef.current) {
         try {
           indChartRef.current.remove();
-        } catch (e) {}
+        } catch {}
         indChartRef.current = null;
       }
     };
-  }, [candles, indTab, showEMA, showBOLL, isRedUp]);
-
-  // Map backend indicators (which are close-aligned array of numbers) to lightweight-charts time objects
-  const mapIndicatorData = (candles: Candle[], values: number[]) => {
-    if (!values) return [];
-    return candles
-      .map((c, i) => {
-        const time = new Date(c.date).toISOString().split("T")[0];
-        const val = values[i];
-        return {
-          time,
-          value: typeof val === "number" ? val : NaN,
-        };
-      })
-      .filter((item) => !isNaN(item.value));
-  };
+  }, [
+    candles,
+    indicators.bollLower,
+    indicators.bollMiddle,
+    indicators.bollUpper,
+    indicators.ema10,
+    indicators.ema20,
+    indicators.ema5,
+    indicators.ema60,
+    indicators.kdjD,
+    indicators.kdjJ,
+    indicators.kdjK,
+    indicators.macdDea,
+    indicators.macdDif,
+    indicators.macdHist,
+    indicators.rsi,
+    indTab,
+    isRedUp,
+    patterns.isCupAndHandle,
+    patterns.isDoubleBottom,
+    patterns.tdSequential,
+    showBOLL,
+    showEMA,
+    sr.horizontalResistances,
+    sr.horizontalSupports,
+    sr.volumePOC,
+    wave.wavePoints,
+  ]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, backgroundColor: "#131722" }}>

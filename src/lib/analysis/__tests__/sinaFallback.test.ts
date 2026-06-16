@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { convertSymbolToSina, fetchSinaAShareKlines } from "@/app/api/analyze/sinaUtils";
 
 describe("Sina Finance A-share API Helper", () => {
+  const mockedFetch = () => fetch as ReturnType<typeof vi.fn>;
+
   describe("convertSymbolToSina", () => {
     it("should convert SS and SH suffix tickers correctly", () => {
       expect(convertSymbolToSina("600519.SS")).toBe("sh600519");
@@ -43,7 +45,7 @@ describe("Sina Finance A-share API Helper", () => {
         { day: "2026-06-02", open: "1305.00", high: "1320.00", low: "1300.00", close: "1315.00", volume: "5000000" }
       ];
 
-      (fetch as any).mockResolvedValue({
+      mockedFetch().mockResolvedValue({
         ok: true,
         json: async () => mockSinaResponse
       });
@@ -72,7 +74,7 @@ describe("Sina Finance A-share API Helper", () => {
     });
 
     it("should fetch Sina weekly K-line when requested", async () => {
-      (fetch as any).mockResolvedValue({
+      mockedFetch().mockResolvedValue({
         ok: true,
         json: async () => [{ day: "2026-06-01", open: "10", high: "12", low: "9", close: "11", volume: "100" }]
       });
@@ -85,7 +87,7 @@ describe("Sina Finance A-share API Helper", () => {
     });
 
     it("should throw error if fetch failed", async () => {
-      (fetch as any).mockResolvedValue({
+      mockedFetch().mockResolvedValue({
         ok: false,
         status: 500
       });
@@ -94,7 +96,7 @@ describe("Sina Finance A-share API Helper", () => {
     });
 
     it("should throw error if data is empty or invalid", async () => {
-      (fetch as any).mockResolvedValue({
+      mockedFetch().mockResolvedValue({
         ok: true,
         json: async () => []
       });

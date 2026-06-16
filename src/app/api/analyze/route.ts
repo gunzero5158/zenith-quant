@@ -4,40 +4,209 @@ import { Candle, calculateEMA, calculateBOLL, calculateMACD, calculateKDJ, calcu
 import { convertSymbolToSina, fetchSinaAShareKlines } from "./sinaUtils";
 
 const yahooFinance = new YahooFinance();
-import { analyzePriceVolume } from "@/lib/analysis/volumeForce";
-import { calculateSupportResistance } from "@/lib/analysis/supportResistance";
-import { analyzeWaveTheory } from "@/lib/analysis/waveTheory";
-import { analyzeChanLun } from "@/lib/analysis/chanlun";
-import { analyzePatterns } from "@/lib/analysis/patterns";
-import { calculateStockScore } from "@/lib/analysis/scoring";
+import { analyzePriceVolume, VolumeAnalysisResult } from "@/lib/analysis/volumeForce";
+import { calculateSupportResistance, SupportResistanceResult } from "@/lib/analysis/supportResistance";
+import { analyzeWaveTheory, WaveAnalysisResult } from "@/lib/analysis/waveTheory";
+import { analyzeChanLun, ChanLunResult } from "@/lib/analysis/chanlun";
+import { analyzePatterns, PatternResult } from "@/lib/analysis/patterns";
+import { calculateStockScore, ScoreDetail } from "@/lib/analysis/scoring";
 import { generateFallbackReport } from "@/lib/analysis/fallbackReport";
 import { generateLLMReport, LLMConfig } from "@/lib/analysis/llmProxy";
 import { generateMockCandles } from "@/lib/analysis/mockData";
+import { getMarketCurrencySymbol, replaceDollarPriceSymbols } from "@/lib/analysis/market";
+import { fetchKabutanMarketData, getKabutanCode } from "@/lib/analysis/kabutan";
+import { fetchProviderMarketData } from "@/lib/analysis/marketDataProviders";
 
 // Simple in-memory cache for technical analysis data (1 hour TTL)
+interface TechnicalIndicators {
+  ema5: number[];
+  ema10: number[];
+  ema20: number[];
+  ema60: number[];
+  bollUpper: number[];
+  bollMiddle: number[];
+  bollLower: number[];
+  macdDif: number[];
+  macdDea: number[];
+  macdHist: number[];
+  kdjK: number[];
+  kdjD: number[];
+  kdjJ: number[];
+  rsi: number[];
+  atr: number[];
+}
+
 interface CacheEntry {
   timestamp: number;
   data: {
     dailyCandles: Candle[];
     weeklyCandles: Candle[];
-    indicators: any;
-    patterns: any;
-    wave: any;
-    chanlun: any;
-    sr: any;
-    score: any;
+    indicators: TechnicalIndicators;
+    patterns: PatternResult;
+    wave: WaveAnalysisResult;
+    chanlun: ChanLunResult;
+    sr: SupportResistanceResult;
+    score: ScoreDetail;
     price: number;
     changePercent: number;
     companyName: string;
     companyNameEn?: string;
-    volumeAnalysis: any;
+    volumeAnalysis: VolumeAnalysisResult;
     isMock?: boolean;
-    dataSource?: 'yahoo' | 'eastmoney' | 'sina' | 'mock';
+    dataSource?: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'sina' | 'kabutan' | 'twelve-data' | 'fmp' | 'provider' | 'mock';
   };
 }
 
 const techCache: Record<string, CacheEntry> = {};
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+interface YahooQuote {
+  longName?: string;
+  shortName?: string;
+  regularMarketPrice?: number;
+  regularMarketChangePercent?: number;
+}
+
+interface YahooHistoricalCandle {
+  date: Date | string;
+  open?: number;
+  high?: number;
+  low?: number;
+  close?: number;
+  volume?: number;
+}
+
+interface EastMoneyNameResponse {
+  data?: {
+    f58?: string;
+  };
+}
+
+interface EastMoneySuggestItem {
+  Code?: string;
+  Name?: string;
+  QuoteID?: string;
+  SecurityTypeName?: string;
+  Classify?: string;
+}
+
+interface EastMoneySuggestResponse {
+  QuotationCodeTable?: {
+    Data?: EastMoneySuggestItem[];
+  };
+}
+
+interface YahooChartResponse {
+  chart?: {
+    result?: Array<{
+      meta?: {
+        longName?: string;
+        shortName?: string;
+        regularMarketPrice?: number;
+        chartPreviousClose?: number;
+      };
+      timestamp?: number[];
+      indicators?: {
+        quote?: Array<{
+          open?: Array<number | null>;
+          high?: Array<number | null>;
+          low?: Array<number | null>;
+          close?: Array<number | null>;
+          volume?: Array<number | null>;
+        }>;
+      };
+    }>;
+    error?: {
+      description?: string;
+    } | null;
+  };
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isYahooHistoricalCandle(candle: YahooHistoricalCandle): candle is Required<YahooHistoricalCandle> {
+  return (
+    candle.open !== undefined &&
+    candle.high !== undefined &&
+    candle.low !== undefined &&
+    candle.close !== undefined &&
+    candle.volume !== undefined
+  );
+}
+
+async function resolveInputSymbol(input: string): Promise<string> {
+  const clean = input.trim().toUpperCase();
+  if (isTickerLike(clean)) {
+    return clean;
+  }
+
+  const resolved = await resolveSymbolFromEastMoney(clean);
+  return resolved || clean;
+}
+
+function isTickerLike(symbol: string): boolean {
+  return (
+    /^[A-Z]{1,5}$/.test(symbol) ||
+    /^\d{3}[0-9A-Z](?:\.T)?$/.test(symbol) ||
+    /^\d{4,5}(?:\.HK)?$/.test(symbol) ||
+    /^\d{6}(?:\.(?:SS|SH|SZ))?$/.test(symbol)
+  );
+}
+
+async function resolveSymbolFromEastMoney(query: string): Promise<string | null> {
+  try {
+    const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(query)}&type=14&token=D43BF722C8E33EFC408CAFD32D7DAD7C`;
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+    });
+    if (!res.ok) {
+      return null;
+    }
+
+    const data = await res.json() as EastMoneySuggestResponse;
+    const match = (data.QuotationCodeTable?.Data || []).find((item) =>
+      item.Code && isSupportedEastMoneySuggestion(item)
+    );
+
+    return match ? normalizeEastMoneySymbol(match) : null;
+  } catch (error: unknown) {
+    console.warn("EastMoney symbol resolution failed:", error);
+    return null;
+  }
+}
+
+function isSupportedEastMoneySuggestion(item: EastMoneySuggestItem): boolean {
+  const classify = item.Classify || "";
+  const type = item.SecurityTypeName || "";
+  return (
+    classify === "UsStock" ||
+    classify === "HKStock" ||
+    classify === "AStock" ||
+    type.includes("美股") ||
+    type.includes("港股") ||
+    type.includes("A股")
+  );
+}
+
+function normalizeEastMoneySymbol(item: EastMoneySuggestItem): string {
+  const code = item.Code || "";
+  const quoteId = item.QuoteID || "";
+  const classify = item.Classify || "";
+
+  if (classify === "HKStock" || quoteId.startsWith("116.")) {
+    return `${code.padStart(4, "0")}.HK`;
+  }
+  if (classify === "AStock" || quoteId.startsWith("1.") || quoteId.startsWith("0.")) {
+    if (/^\d{6}$/.test(code)) {
+      return code.startsWith("6") ? `${code}.SS` : `${code}.SZ`;
+    }
+  }
+  return code;
+}
 
 export async function POST(request: Request) {
   try {
@@ -49,8 +218,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Missing stock symbol" }, { status: 400 });
     }
 
-    const cleanSymbol = symbol.trim().toUpperCase();
+    const requestedSymbol = symbol.trim().toUpperCase();
+    const cleanSymbol = await resolveInputSymbol(requestedSymbol);
     const cacheKey = `${cleanSymbol}_${effectiveLang}`;
+    const currencySymbol = getMarketCurrencySymbol(cleanSymbol);
     const now = Date.now();
 
     let techData: CacheEntry["data"];
@@ -67,14 +238,15 @@ export async function POST(request: Request) {
       let currentPrice = 0;
       let changePercent = 0;
       let isMock = false;
-      let dataSource: 'yahoo' | 'eastmoney' | 'sina' | 'mock' = 'yahoo';
+      let dataSource: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'sina' | 'kabutan' | 'twelve-data' | 'fmp' | 'provider' | 'mock' = 'yahoo';
 
       try {
-        let quote: any = null;
+        let quote: YahooQuote | null = null;
         try {
-          quote = (await yahooFinance.quote(cleanSymbol)) as any;
-        } catch (err: any) {
-          console.error("Yahoo Quote error for:", cleanSymbol, err);
+          quote = await yahooFinance.quote(cleanSymbol) as YahooQuote;
+        } catch (caught: unknown) {
+          console.error("Yahoo Quote error for:", cleanSymbol, caught);
+          const err = { message: getErrorMessage(caught) };
           throw new Error(`无法获取股票 [${cleanSymbol}] 的实时报价: ${err?.message || err}`);
         }
 
@@ -87,7 +259,7 @@ export async function POST(request: Request) {
               headers: { "Referer": "https://quote.eastmoney.com/" }
             });
             if (nameRes.ok) {
-              const nameData = await nameRes.json();
+              const nameData = await nameRes.json() as EastMoneyNameResponse;
               companyName = nameData?.data?.f58 || companyNameEn || cleanSymbol;
             } else {
               companyName = companyNameEn || cleanSymbol;
@@ -95,7 +267,7 @@ export async function POST(request: Request) {
           } else {
             companyName = companyNameEn || cleanSymbol;
           }
-        } catch (e) {
+        } catch {
           companyName = companyNameEn || cleanSymbol;
         }
 
@@ -113,21 +285,21 @@ export async function POST(request: Request) {
           period1: oneYearAgo,
           period2: today,
           interval: "1d",
-        })) as any[];
+        })) as YahooHistoricalCandle[];
 
         const weeklyRaw = (await yahooFinance.historical(cleanSymbol, {
           period1: threeYearsAgo,
           period2: today,
           interval: "1wk",
-        })) as any[];
+        })) as YahooHistoricalCandle[];
 
         if (!dailyRaw || dailyRaw.length < 65) {
           throw new Error("雅虎财经返回的K线数据长度不足(少于65天)");
         }
 
         dailyCandles = dailyRaw
-          .filter((c: any) => c.open !== undefined && c.high !== undefined && c.low !== undefined && c.close !== undefined && c.volume !== undefined)
-          .map((c: any) => ({
+          .filter(isYahooHistoricalCandle)
+          .map((c) => ({
             date: c.date,
             open: c.open,
             high: c.high,
@@ -137,8 +309,8 @@ export async function POST(request: Request) {
           }));
 
         weeklyCandles = weeklyRaw
-          .filter((c: any) => c.open !== undefined && c.high !== undefined && c.low !== undefined && c.close !== undefined && c.volume !== undefined)
-          .map((c: any) => ({
+          .filter(isYahooHistoricalCandle)
+          .map((c) => ({
             date: c.date,
             open: c.open,
             high: c.high,
@@ -148,12 +320,49 @@ export async function POST(request: Request) {
           }));
 
         dataSource = "yahoo";
-      } catch (networkErr: any) {
-        console.warn("Yahoo Finance fetch failed, attempting EastMoney API:", networkErr);
+      } catch (networkErr: unknown) {
+        console.warn("Yahoo Finance fetch failed, attempting Yahoo Chart API:", networkErr);
+        let realDataSuccess = false;
+
+        try {
+          const chartData = await fetchYahooChartCandles(cleanSymbol);
+          dailyCandles = chartData.dailyCandles;
+          weeklyCandles = chartData.weeklyCandles;
+          companyName = chartData.companyName || cleanSymbol;
+          companyNameEn = chartData.companyNameEn || "";
+          currentPrice = chartData.price;
+          changePercent = chartData.changePercent;
+          isMock = false;
+          dataSource = "yahoo-chart";
+          realDataSuccess = true;
+          console.log(`Successfully loaded real data from Yahoo Chart API for: ${companyName}`);
+        } catch (chartErr: unknown) {
+          console.warn("Yahoo Chart API failed, attempting EastMoney API:", chartErr);
+        }
+
+        if (!realDataSuccess && getKabutanCode(cleanSymbol)) {
+          try {
+            console.log(`Fetching Kabutan daily candles for symbol: ${cleanSymbol}`);
+            const kabutanData = await fetchKabutanMarketData(cleanSymbol);
+            dailyCandles = kabutanData.dailyCandles;
+            weeklyCandles = kabutanData.weeklyCandles;
+            companyName = kabutanData.companyName || cleanSymbol;
+            companyNameEn = "";
+            currentPrice = kabutanData.price;
+            changePercent = kabutanData.changePercent;
+            isMock = false;
+            dataSource = "kabutan";
+            realDataSuccess = true;
+            console.log(`Successfully loaded real data from Kabutan for: ${companyName}`);
+          } catch (kabutanErr: unknown) {
+            console.warn("Kabutan API failed, attempting EastMoney API:", kabutanErr);
+          }
+        }
+
         const secid = convertSymbolToEastMoneySecid(cleanSymbol);
         let eastMoneySuccess = false;
 
-        if (secid) {
+        if (!realDataSuccess && secid) {
           try {
             console.log(`Fetching EastMoney klines for secid: ${secid}`);
             const dailyRaw = await fetchEastMoneyKlines(secid, false);
@@ -175,12 +384,12 @@ export async function POST(request: Request) {
                   headers: { "Referer": "https://quote.eastmoney.com/" }
                 });
                 if (nameRes.ok) {
-                  const nameData = await nameRes.json();
+                  const nameData = await nameRes.json() as EastMoneyNameResponse;
                   companyName = nameData?.data?.f58 || cleanSymbol;
                 } else {
                   companyName = cleanSymbol;
                 }
-              } catch (e) {
+              } catch {
                 companyName = cleanSymbol;
               }
 
@@ -189,12 +398,10 @@ export async function POST(request: Request) {
               eastMoneySuccess = true;
               console.log(`Successfully loaded real data from EastMoney for: ${companyName}`);
             }
-          } catch (emErr: any) {
+          } catch (emErr: unknown) {
             console.error("EastMoney API failed as well:", emErr);
           }
         }
-
-        let realDataSuccess = false;
 
         if (eastMoneySuccess) {
           realDataSuccess = true;
@@ -223,14 +430,35 @@ export async function POST(request: Request) {
                 realDataSuccess = true;
                 console.log(`Successfully loaded real data from Sina for: ${cleanSymbol}`);
               }
-            } catch (sinaErr: any) {
+            } catch (sinaErr: unknown) {
               console.error("Sina API failed as well:", sinaErr);
             }
           }
         }
 
         if (!realDataSuccess) {
-          console.warn("All real data APIs (Yahoo, EastMoney, Sina) failed, rolling back to mock data.");
+          try {
+            console.log(`Fetching optional provider market data for symbol: ${cleanSymbol}`);
+            const providerData = await fetchProviderMarketData(cleanSymbol);
+            if (providerData) {
+              dailyCandles = providerData.dailyCandles;
+              weeklyCandles = providerData.weeklyCandles;
+              companyName = providerData.companyName || cleanSymbol;
+              companyNameEn = "";
+              currentPrice = providerData.price;
+              changePercent = providerData.changePercent;
+              isMock = false;
+              dataSource = providerData.source;
+              realDataSuccess = true;
+              console.log(`Successfully loaded real data from optional provider for: ${companyName}`);
+            }
+          } catch (providerErr: unknown) {
+            console.warn("Optional provider APIs failed as well:", providerErr);
+          }
+        }
+
+        if (!realDataSuccess) {
+          console.warn("All real data APIs (Yahoo, Kabutan, EastMoney, Sina, optional providers) failed, rolling back to mock data.");
           isMock = true;
           dataSource = "mock";
           const mockDaily = generateMockCandles(cleanSymbol, 250, false);
@@ -352,7 +580,10 @@ export async function POST(request: Request) {
 
     if (llmConfig && llmConfig.apiKey) {
       try {
-        const prompt = buildAnalystPrompt(cleanSymbol, techData, effectiveLang);
+        const prompt = replaceDollarPriceSymbols(
+          buildAnalystPrompt(cleanSymbol, techData, effectiveLang, currencySymbol),
+          currencySymbol
+        );
         const reportText = await generateLLMReport(prompt, llmConfig);
         
         // Clean markdown blocks if LLM accidentally outputted them
@@ -367,12 +598,16 @@ export async function POST(request: Request) {
         }
         cleanedText = cleanedText.trim();
 
-        const parsed = JSON.parse(cleanedText);
+        const parsed = JSON.parse(cleanedText) as Partial<{
+          overview: string;
+          recommendation: string;
+          technicalAnalysis: string;
+        }>;
         reportOverview = parsed.overview || "";
         reportRecommendation = parsed.recommendation || "";
         reportTechnical = parsed.technicalAnalysis || "";
         isLLMUsed = true;
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("LLM Generation or parsing failed:", err);
         // Only fallback to local engine if useFallback is explicitly enabled
         if (useFallback) {
@@ -393,13 +628,13 @@ export async function POST(request: Request) {
           else if (effectiveLang === "en") errorPrefix = "⚠️ **AI analysis failed, fallback report generated by local engine.**\n";
           else if (effectiveLang === "ja") errorPrefix = "⚠️ **AI分析が失敗したため、ローカルルールエンジンによってレポートが生成されました。**\n";
           
-          reportOverview = `${errorPrefix}*(Error: ${err?.message || err})*\n\n` + fallback.overview;
+          reportOverview = `${errorPrefix}*(Error: ${summarizeLLMError(err)})*\n\n` + fallback.overview;
           reportRecommendation = fallback.recommendation;
           reportTechnical = fallback.technicalAnalysis;
         } else {
           // No fallback allowed: return the raw LLM error
           return NextResponse.json({
-            error: `AI 分析失败: ${err?.message || err}。请检查您的 API Key 与模型配置，或在“大模型配置”中开启本地算法兜底。`,
+            error: `AI 分析失败: ${summarizeLLMError(err)}。请检查您的 API Key 与模型配置，或在“大模型配置”中开启本地算法兜底。`,
           }, { status: 500 });
         }
       }
@@ -430,6 +665,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: errMsg }, { status: 400 });
     }
 
+    reportOverview = replaceDollarPriceSymbols(reportOverview, currencySymbol);
+    reportRecommendation = replaceDollarPriceSymbols(reportRecommendation, currencySymbol);
+    reportTechnical = replaceDollarPriceSymbols(reportTechnical, currencySymbol);
+
     return NextResponse.json({
       symbol: cleanSymbol,
       companyName: techData.companyName,
@@ -451,23 +690,42 @@ export async function POST(request: Request) {
       isLLMUsed,
       isMock: techData.isMock,
       dataSource: techData.dataSource,
+      currencySymbol,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("API Analyze main thread error:", error);
-    return NextResponse.json({ error: error?.message || "Internal Server Error" }, { status: 500 });
+    return NextResponse.json({ error: getErrorMessage(error) || "Internal Server Error" }, { status: 500 });
   }
 }
 
-function buildAnalystPrompt(symbol: string, data: CacheEntry["data"], language: string = "zh-CN"): string {
+function summarizeLLMError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const withoutHtml = raw
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (/524|timeout occurred|cloudflare/i.test(withoutHtml)) {
+    return "LLM endpoint timeout (524). The local fallback report was generated instead.";
+  }
+
+  return withoutHtml.slice(0, 240) || "LLM request failed. The local fallback report was generated instead.";
+}
+
+function buildAnalystPrompt(symbol: string, data: CacheEntry["data"], language: string = "zh-CN", currencySymbol = "$"): string {
   const score = data.score;
   const sr = data.sr;
   const wave = data.wave;
   const chan = data.chanlun;
+  const money = (value: number) => `${currencySymbol}${value}`;
+  const moneyFixed = (value: number) => `${currencySymbol}${value.toFixed(2)}`;
 
   // --- 1. ENGLISH PROMPT ---
   if (language === "en") {
     return `Please act as a senior Wall Street quantitative analyst specializing in TradingView stock ideas. Write a professional, highly insightful, and comprehensive stock analysis report.
-The stock to analyze is: **${data.companyName} (${symbol})**, currently priced at **$${data.price.toFixed(2)}** with a daily change of **${data.changePercent.toFixed(2)}%**.
+The stock to analyze is: **${data.companyName} (${symbol})**, currently priced at **${moneyFixed(data.price)}** with a daily change of **${data.changePercent.toFixed(2)}%**.
 
 We have computed technical metrics and patterns using mathematical algorithms. Based on the objective data below, write a professional technical report.
 
@@ -477,10 +735,10 @@ We have computed technical metrics and patterns using mathematical algorithms. B
 ${score.scoreReasons.map((r: string) => `  * ${r}`).join("\n")}
 
 ### 2. Support, Resistance & Volume Profile POC
-- **Horizontal Support Levels (Historical Extreme Points)**: ${sr.horizontalSupports.map((p: number) => `$${p}`).join(", ") || "None"}
-- **Horizontal Resistance Levels (Historical Extreme Points)**: ${sr.horizontalResistances.map((p: number) => `$${p}`).join(", ") || "None"}
-- **Point of Control (POC)**: $${sr.volumePOC}
-- **Dynamic Moving Average Support**: 20EMA=$${sr.dynamicSupportEMA20}, 60EMA=$${sr.dynamicSupportEMA60}, BOLL Lower Band=$${sr.dynamicBOLLLower}
+- **Horizontal Support Levels (Historical Extreme Points)**: ${sr.horizontalSupports.map((p: number) => money(p)).join(", ") || "None"}
+- **Horizontal Resistance Levels (Historical Extreme Points)**: ${sr.horizontalResistances.map((p: number) => money(p)).join(", ") || "None"}
+- **Point of Control (POC)**: ${money(sr.volumePOC)}
+- **Dynamic Moving Average Support**: 20EMA=${money(sr.dynamicSupportEMA20)}, 60EMA=${money(sr.dynamicSupportEMA60)}, BOLL Lower Band=${money(sr.dynamicBOLLLower)}
 
 ### 3. Momentum & Oscillator Indicators (MACD/KDJ/RSI)
 - **Latest MACD**: DIF=${data.indicators.macdDif[data.indicators.macdDif.length-1]?.toFixed(2)}, DEA=${data.indicators.macdDea[data.indicators.macdDea.length-1]?.toFixed(2)}
@@ -703,6 +961,99 @@ JSON 格式要求如下：
 **特别注意**：请严格区分“买卖力道（量价与主力资金，由 CMF 和 OBV 体现）”和“动能/超买超卖（由 RSI/KDJ/MACD 震荡指标体现）”，严禁在分析中将它们混淆。`;
 }
 
+async function fetchYahooChartCandles(symbol: string): Promise<{
+  dailyCandles: Candle[];
+  weeklyCandles: Candle[];
+  companyName: string;
+  companyNameEn: string;
+  price: number;
+  changePercent: number;
+}> {
+  const [daily, weekly] = await Promise.all([
+    fetchYahooChartRange(symbol, "1y", "1d"),
+    fetchYahooChartRange(symbol, "3y", "1wk"),
+  ]);
+
+  if (daily.candles.length < 65) {
+    throw new Error(`Yahoo Chart returned insufficient daily data for ${symbol}`);
+  }
+
+  const lastCandle = daily.candles[daily.candles.length - 1];
+  const prevCandle = daily.candles[daily.candles.length - 2] || lastCandle;
+  const price = daily.meta.regularMarketPrice || lastCandle.close;
+  const changePercent = prevCandle.close ? ((price - prevCandle.close) / prevCandle.close) * 100 : 0;
+  const companyName = daily.meta.longName || daily.meta.shortName || symbol;
+
+  return {
+    dailyCandles: daily.candles,
+    weeklyCandles: weekly.candles,
+    companyName,
+    companyNameEn: companyName,
+    price,
+    changePercent,
+  };
+}
+
+async function fetchYahooChartRange(
+  symbol: string,
+  range: "1y" | "3y",
+  interval: "1d" | "1wk"
+): Promise<{ candles: Candle[]; meta: NonNullable<NonNullable<YahooChartResponse["chart"]>["result"]>[number]["meta"] & {} }> {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`;
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Accept": "application/json",
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Yahoo Chart request failed (${res.status})`);
+  }
+
+  const data = await res.json() as YahooChartResponse;
+  const result = data.chart?.result?.[0];
+  const quote = result?.indicators?.quote?.[0];
+  const timestamps = result?.timestamp || [];
+
+  if (!result || !quote || timestamps.length === 0) {
+    throw new Error(data.chart?.error?.description || `Yahoo Chart returned empty data for ${symbol}`);
+  }
+
+  const candles: Candle[] = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    const open = quote.open?.[i];
+    const high = quote.high?.[i];
+    const low = quote.low?.[i];
+    const close = quote.close?.[i];
+    const volume = quote.volume?.[i];
+
+    if (
+      typeof open !== "number" ||
+      typeof high !== "number" ||
+      typeof low !== "number" ||
+      typeof close !== "number" ||
+      typeof volume !== "number"
+    ) {
+      continue;
+    }
+
+    candles.push({
+      date: new Date(timestamps[i] * 1000).toISOString().split("T")[0],
+      open,
+      high,
+      low,
+      close,
+      volume,
+    });
+  }
+
+  return {
+    candles,
+    meta: result.meta || {},
+  };
+}
+
 function convertSymbolToEastMoneySecid(symbol: string): string | null {
   const clean = symbol.trim().toUpperCase();
 
@@ -738,12 +1089,6 @@ function convertSymbolToEastMoneySecid(symbol: string): string | null {
   // 3. US stock (e.g. AAPL, TSLA, MSFT)
   if (/^[A-Z]{1,5}$/.test(clean)) {
     return `105.${clean}`;
-  }
-
-  // 4. Japan stock (e.g. 9984.T)
-  if (clean.endsWith(".T")) {
-    const code = clean.split(".")[0];
-    return `200.${code}`;
   }
 
   return null;
@@ -783,4 +1128,3 @@ async function fetchEastMoneyKlines(secid: string, isWeekly: boolean = false): P
     };
   });
 }
-

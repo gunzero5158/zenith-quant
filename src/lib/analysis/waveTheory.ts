@@ -116,8 +116,6 @@ export function analyzeWaveTheory(candles: Candle[]): WaveAnalysisResult {
 
     // Case 1: p0(Low) -> p1(High) -> p2(Low) -> p3(High)
     if (p0.type === "low" && p1.type === "high" && p2.type === "low" && p3.type === "high") {
-      const wave1Len = p1.price - p0.price;
-      const wave2Len = p1.price - p2.price;
       const wave3Len = p3.price - p2.price;
 
       // Rules: 
@@ -201,8 +199,6 @@ export function analyzeWaveTheory(candles: Candle[]): WaveAnalysisResult {
   if (wavePoints.length === 0) {
     const latest = getFromEnd(0);
     const prev = getFromEnd(1);
-    const waveLen = Math.abs(latest.price - prev.price);
-
     wavePoints.push(
       { ...prev, label: prev.type === "high" ? "波峰" : "波谷" },
       { ...latest, label: latest.type === "high" ? "阻力峰值" : "支撑谷值" }

@@ -5,7 +5,6 @@ import { VolumeAnalysisResult } from '../volumeForce';
 import { PatternResult } from '../patterns';
 import { WaveAnalysisResult } from '../waveTheory';
 
-// Helper to construct basic Candle
 function makeCandle(close: number): Candle {
   return {
     date: '2026-06-11',
@@ -17,7 +16,6 @@ function makeCandle(close: number): Candle {
   };
 }
 
-// Helper to construct default VolumeAnalysisResult
 function makeDefaultVolumeAnalysis(): VolumeAnalysisResult {
   return {
     obv: [100],
@@ -30,7 +28,6 @@ function makeDefaultVolumeAnalysis(): VolumeAnalysisResult {
   };
 }
 
-// Helper to construct default PatternResult
 function makeDefaultPattern(): PatternResult {
   return {
     tdSequential: [0],
@@ -47,7 +44,6 @@ function makeDefaultPattern(): PatternResult {
   };
 }
 
-// Helper to construct default WaveAnalysisResult
 function makeDefaultWave(): WaveAnalysisResult {
   return {
     currentWave: 'Consolidation',
@@ -70,121 +66,147 @@ describe('scoring', () => {
       makeDefaultWave(),
       [],
       { ema5: [], ema10: [], ema20: [], ema60: [] },
-      { dif: [], dea: [] }
+      { dif: [], dea: [], hist: [] }
     );
 
     expect(score.totalScore).toBe(0);
     expect(score.scoreReasons).toContain('数据不足');
   });
 
-  it('should return correct fields and values when input is valid', () => {
-    const dailyCandles = [makeCandle(10)];
-    const weeklyCandles = [makeCandle(10)];
-
-    const dailyEMAs = { ema5: [10.5], ema10: [10.3], ema20: [10.1], ema60: [9.8] }; // Bullish alignment
-    const dailyMACD = { dif: [0.5], dea: [0.3], hist: [0.4] };
-    const dailyKDJ = { k: [60], d: [50], j: [80] };
-    const dailyRSI = [55]; // RSI in 50-70 range -> momPoints += 0.2
-
+  it('should return populated fields when input is valid', () => {
     const volumeAnalysis = makeDefaultVolumeAnalysis();
-    volumeAnalysis.cmf = [0.2]; // CMF > 0.15 -> volPoints += 0.3
+    volumeAnalysis.cmf = [0.2];
     volumeAnalysis.obv = Array(15).fill(100);
 
     const pattern = makeDefaultPattern();
-    pattern.tdSignal = 'Buy Setup 9'; // -> patPoints += 0.4
-    const wave = makeDefaultWave();
-
-    const weeklyEMAs = { ema5: [10.5], ema10: [10.3], ema20: [10.1], ema60: [9.8] }; // Weekly bullish -> weeklyPoints += 0.8
-    const weeklyMACD = { dif: [0.2], dea: [0.1] }; // Weekly MACD golden cross -> weeklyPoints += 0.2
+    pattern.tdSignal = 'Buy Setup 9';
 
     const score = calculateStockScore(
-      dailyCandles,
-      dailyEMAs,
-      dailyMACD,
-      dailyKDJ,
-      dailyRSI,
+      [makeCandle(10)],
+      { ema5: [10.5], ema10: [10.3], ema20: [10.1], ema60: [9.8] },
+      { dif: [0.5], dea: [0.3], hist: [0.4] },
+      { k: [60], d: [50], j: [80] },
+      [55],
       volumeAnalysis,
       pattern,
-      wave,
-      weeklyCandles,
-      weeklyEMAs,
-      weeklyMACD
+      makeDefaultWave(),
+      [makeCandle(10)],
+      { ema5: [10.5], ema10: [10.3], ema20: [10.1], ema60: [9.8] },
+      { dif: [0.2], dea: [0.1], hist: [0.1] }
     );
 
-    expect(score.baseTrendScore).toBe(1.5);
+    expect(score.baseTrendScore).toBe(1.3);
     expect(score.momentumScore).toBeGreaterThan(0);
     expect(score.volumeScore).toBeGreaterThan(0);
     expect(score.patternsScore).toBeGreaterThan(0);
-    expect(score.weeklyResonanceScore).toBe(1.0); // clamped at 1.0
+    expect(score.weeklyResonanceScore).toBeGreaterThan(0.5);
     expect(score.totalScore).toBeGreaterThan(0);
     expect(score.totalScore).toBeLessThanOrEqual(5.0);
     expect(score.scoreReasons.length).toBeGreaterThan(0);
   });
 
-  it('should clamp totalScore between 0 and 5.0', () => {
-    // Let's create an extremely bullish setup with 10 days of data to satisfy OBV SMA calculations
+  it('should avoid giving a perfect score to overheated breakouts', () => {
     const dailyCandles = Array(10).fill(null).map(() => makeCandle(100));
-    const weeklyCandles = [makeCandle(100)];
+    dailyCandles[9] = makeCandle(160);
 
-    const dailyEMAs = {
-      ema5: Array(10).fill(150),
-      ema10: Array(10).fill(140),
-      ema20: Array(10).fill(130),
-      ema60: Array(10).fill(120)
-    }; // baseTrendScore = 1.5
-
-    const dailyMACD = {
-      dif: Array(10).fill(10),
-      dea: Array(10).fill(5),
-      hist: Array(10).fill(10)
-    }; // dif > 0 and dif > dea -> momPoints += 0.5
-    
-    const dailyKDJ = {
-      k: Array(10).fill(20),
-      d: Array(10).fill(15),
-      j: Array(10).fill(30)
-    }; // k>d and d<30 -> momPoints += 0.3
-    
-    const dailyRSI = Array(10).fill(60); // momPoints += 0.2. Total momPoints = 1.0 (clamped momentumScore = 1.0)
-    
     const volumeAnalysis = makeDefaultVolumeAnalysis();
-    volumeAnalysis.cmf = Array(10).fill(0.5); // volPoints += 0.3
-    volumeAnalysis.hasVolumeBreakout = true; // volPoints += 0.3
+    volumeAnalysis.cmf = Array(10).fill(0.5);
+    volumeAnalysis.hasVolumeBreakout = true;
     volumeAnalysis.obv = Array(10).fill(100);
-    volumeAnalysis.obv[9] = 200; // latest OBV (200) > obv10SMA (100) -> volPoints += 0.2. Total volPoints = 0.8 (clamped volumeScore = 0.8)
+    volumeAnalysis.obv[9] = 200;
 
     const pattern = makeDefaultPattern();
-    pattern.tdSignal = 'Buy Setup 9'; // patPoints += 0.4
-    pattern.isDoubleBottom = true; // patPoints += 0.3
-    
+    pattern.tdSignal = 'Buy Setup 9';
+    pattern.isDoubleBottom = true;
+
     const wave = makeDefaultWave();
-    wave.waveScoreContribution = 0.5; // patPoints += 0.5. Total patPoints = 1.2 (clamped patternsScore = 0.7)
+    wave.waveScoreContribution = 0.5;
 
-    const weeklyEMAs = { ema5: [150], ema10: [140], ema20: [130], ema60: [120] }; // weeklyPoints += 0.8
-    const weeklyMACD = { dif: [5], dea: [2] }; // weeklyPoints += 0.2. Total weeklyPoints = 1.0 (clamped weeklyResonanceScore = 1.0)
-
-    // Sum of scores: 1.5 + 1.0 + 0.8 + 0.7 + 1.0 = 5.0
     const score = calculateStockScore(
       dailyCandles,
-      dailyEMAs,
-      dailyMACD,
-      dailyKDJ,
-      dailyRSI,
+      {
+        ema5: Array(10).fill(150),
+        ema10: Array(10).fill(140),
+        ema20: Array(10).fill(130),
+        ema60: Array(10).fill(120)
+      },
+      { dif: Array(10).fill(10), dea: Array(10).fill(5), hist: Array(10).fill(10) },
+      { k: Array(10).fill(20), d: Array(10).fill(15), j: Array(10).fill(30) },
+      Array(10).fill(82),
       volumeAnalysis,
       pattern,
       wave,
-      weeklyCandles,
-      weeklyEMAs,
-      weeklyMACD
+      [makeCandle(160)],
+      { ema5: [150], ema10: [140], ema20: [130], ema60: [120] },
+      { dif: [5], dea: [2], hist: [3] }
     );
 
-    expect(score.totalScore).toBe(5.0);
+    expect(score.totalScore).toBeLessThan(4.2);
+    expect(score.scoreReasons.some((reason) => reason.includes('追高风险'))).toBe(true);
+  });
+
+  it('should rate a healthy pullback above a hot but extended setup', () => {
+    const baseCandles = Array(10).fill(null).map(() => makeCandle(100));
+    const healthyCandles = baseCandles.map((c) => ({ ...c }));
+    healthyCandles[9] = makeCandle(103);
+
+    const extendedCandles = baseCandles.map((c) => ({ ...c }));
+    extendedCandles[9] = makeCandle(145);
+
+    const healthyScore = calculateStockScore(
+      healthyCandles,
+      {
+        ema5: Array(10).fill(104),
+        ema10: Array(10).fill(103),
+        ema20: Array(10).fill(101),
+        ema60: Array(10).fill(96)
+      },
+      { dif: Array(10).fill(0.4), dea: Array(10).fill(0.2), hist: Array(10).fill(0.2) },
+      { k: Array(10).fill(45), d: Array(10).fill(40), j: Array(10).fill(55) },
+      Array(10).fill(55),
+      {
+        ...makeDefaultVolumeAnalysis(),
+        cmf: Array(10).fill(0.12),
+        obv: Array(10).fill(120)
+      },
+      makeDefaultPattern(),
+      makeDefaultWave(),
+      [makeCandle(103)],
+      { ema5: [105], ema10: [103], ema20: [100], ema60: [96] },
+      { dif: [0.2], dea: [0.1], hist: [0.1] }
+    );
+
+    const hotVolume = makeDefaultVolumeAnalysis();
+    hotVolume.hasVolumeBreakout = true;
+    hotVolume.cmf = Array(10).fill(0.3);
+    hotVolume.obv = Array(10).fill(100);
+    hotVolume.obv[9] = 200;
+
+    const hotScore = calculateStockScore(
+      extendedCandles,
+      {
+        ema5: Array(10).fill(135),
+        ema10: Array(10).fill(125),
+        ema20: Array(10).fill(110),
+        ema60: Array(10).fill(95)
+      },
+      { dif: Array(10).fill(1.4), dea: Array(10).fill(1.0), hist: Array(10).fill(0.2) },
+      { k: Array(10).fill(88), d: Array(10).fill(82), j: Array(10).fill(95) },
+      Array(10).fill(82),
+      hotVolume,
+      makeDefaultPattern(),
+      makeDefaultWave(),
+      [makeCandle(145)],
+      { ema5: [135], ema10: [125], ema20: [110], ema60: [95] },
+      { dif: [0.2], dea: [0.1], hist: [0.1] }
+    );
+
+    expect(healthyScore.totalScore).toBeGreaterThan(hotScore.totalScore);
   });
 
   it('should return weeklyResonanceScore as 0.5 if weeklyCandles is empty', () => {
-    const dailyCandles = [makeCandle(10)];
     const score = calculateStockScore(
-      dailyCandles,
+      [makeCandle(10)],
       { ema5: [10], ema10: [10], ema20: [10], ema60: [10] },
       { dif: [0], dea: [0], hist: [0] },
       { k: [50], d: [50], j: [50] },
@@ -192,9 +214,9 @@ describe('scoring', () => {
       makeDefaultVolumeAnalysis(),
       makeDefaultPattern(),
       makeDefaultWave(),
-      [], // Empty weekly candles
+      [],
       { ema5: [], ema10: [], ema20: [], ema60: [] },
-      { dif: [], dea: [] }
+      { dif: [], dea: [], hist: [] }
     );
 
     expect(score.weeklyResonanceScore).toBe(0.5);

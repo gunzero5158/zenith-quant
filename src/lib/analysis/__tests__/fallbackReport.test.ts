@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateFallbackReport, StructuredReport } from '../fallbackReport';
+import { generateFallbackReport } from '../fallbackReport';
 import { ScoreDetail } from '../scoring';
 import { VolumeAnalysisResult } from '../volumeForce';
 import { PatternResult } from '../patterns';

@@ -1,5 +1,14 @@
 import { Candle } from "@/lib/analysis/indicators";
 
+interface SinaKlineItem {
+  day: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+}
+
 export function convertSymbolToSina(symbol: string): string | null {
   const clean = symbol.trim().toUpperCase();
   if (clean.endsWith(".SS") || clean.endsWith(".SH")) {
@@ -35,12 +44,12 @@ export async function fetchSinaAShareKlines(sinaSymbol: string, isWeekly: boolea
     throw new Error(`新浪K线接口请求失败, status: ${res.status}`);
   }
 
-  const data = await res.json();
+  const data = await res.json() as SinaKlineItem[];
   if (!data || !Array.isArray(data) || data.length === 0) {
     throw new Error(`新浪K线数据返回为空或格式不正确 (symbol: ${sinaSymbol})`);
   }
 
-  return data.map((c: any) => ({
+  return data.map((c) => ({
     date: c.day,
     open: parseFloat(c.open),
     high: parseFloat(c.high),

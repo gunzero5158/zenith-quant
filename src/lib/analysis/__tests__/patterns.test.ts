@@ -3,8 +3,7 @@ import {
   calculateTDSequential,
   detectDivergence,
   calculateFibonacci,
-  detectPatterns,
-  analyzePatterns
+  detectPatterns
 } from '../patterns';
 import { calculateSupportResistance } from '../supportResistance';
 import { Candle } from '../indicators';
