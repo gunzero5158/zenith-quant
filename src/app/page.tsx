@@ -5,7 +5,7 @@ import { Search, Settings, Star, TrendingUp, TrendingDown, RefreshCw, Trash2, Ex
 import StockChart from "@/components/StockChart";
 import { LLMConfig } from "@/lib/analysis/llmProxy";
 import { formatMarketPrice, getMarketCurrencySymbol } from "@/lib/analysis/market";
-import { Candle } from "@/lib/analysis/indicators";
+import { Candle, IchimokuResult } from "@/lib/analysis/indicators";
 import { ScoreDetail } from "@/lib/analysis/scoring";
 import { PatternResult } from "@/lib/analysis/patterns";
 import { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
@@ -39,6 +39,7 @@ interface TechnicalIndicators {
   kdjJ: number[];
   rsi: number[];
   atr: number[];
+  ichimoku: IchimokuResult;
 }
 
 interface StockAnalysisData {
@@ -61,7 +62,7 @@ interface StockAnalysisData {
   reportTechnical: string;
   isLLMUsed: boolean;
   isMock?: boolean;
-  dataSource?: "yahoo" | "yahoo-chart" | "eastmoney" | "sina" | "kabutan" | "twelve-data" | "fmp" | "mock";
+  dataSource?: "yahoo" | "yahoo-chart" | "eastmoney" | "sina" | "kabutan" | "twelve-data" | "fmp" | "provider" | "mock";
   currencySymbol?: string;
 }
 

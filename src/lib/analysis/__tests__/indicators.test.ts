@@ -6,6 +6,7 @@ import {
   calculateKDJ,
   calculateRSI,
   calculateATR,
+  calculateIchimoku,
   Candle
 } from '../indicators';
 
@@ -197,6 +198,26 @@ describe('indicators', () => {
       });
       const atr = calculateATR(candles, 3);
       expect(atr[2]).toBe(3);
+    });
+  });
+
+  describe('calculateIchimoku', () => {
+    it('should calculate aligned Ichimoku arrays and a cloud signal', () => {
+      const closes = Array.from({ length: 60 }, (_, i) => 100 + i);
+      const candles = makeCandles(closes, {
+        highs: closes.map((c) => c + 2),
+        lows: closes.map((c) => c - 2)
+      });
+
+      const ichimoku = calculateIchimoku(candles);
+
+      expect(ichimoku.tenkanSen).toHaveLength(60);
+      expect(ichimoku.kijunSen).toHaveLength(60);
+      expect(ichimoku.senkouSpanA).toHaveLength(60);
+      expect(ichimoku.senkouSpanB).toHaveLength(60);
+      expect(Number.isFinite(ichimoku.tenkanSen[59])).toBe(true);
+      expect(Number.isFinite(ichimoku.senkouSpanB[59])).toBe(true);
+      expect(['bullish', 'bearish', 'neutral']).toContain(ichimoku.cloudSignal);
     });
   });
 });

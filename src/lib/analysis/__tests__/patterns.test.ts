@@ -111,6 +111,36 @@ describe('patterns and supportResistance', () => {
       expect(res.isCupAndHandle).toBe(false);
       expect(res.isRoundingTop).toBe(false);
     });
+
+    it('should detect a confirmed double top', () => {
+      const closes = Array(36).fill(100);
+      for (let i = 9; i < 16; i++) closes[i] = 99;
+      for (let i = 17; i < 24; i++) closes[i] = 99;
+      for (let i = 25; i < 35; i++) closes[i] = 98 - (i - 25) * 0.5;
+      closes[8] = 122;
+      closes[16] = 94;
+      closes[24] = 121;
+      closes[35] = 93;
+      const highs = closes.map((c, idx) => idx === 8 || idx === 24 ? c + 2 : c + 0.5);
+      const lows = closes.map((c, idx) => idx === 16 ? c - 2 : c - 0.5);
+      const candles = makeCandles(closes, { highs, lows });
+
+      const res = detectPatterns(candles);
+      expect(res.isDoubleTop).toBe(true);
+      expect(res.activePatterns.some((p) => p.key === 'doubleTop')).toBe(true);
+    });
+
+    it('should detect a rectangle consolidation when price remains inside the box', () => {
+      const closes: number[] = Array.from({ length: 50 }, (_, i) => i % 10 < 5 ? 101 : 109);
+      const highs = closes.map((c, idx) => idx % 10 === 5 ? 112 : c + 0.5);
+      const lows = closes.map((c, idx) => idx % 10 === 0 ? 98 : c - 0.5);
+      closes[49] = 105;
+      const candles = makeCandles(closes, { highs, lows });
+
+      const res = detectPatterns(candles);
+      expect(res.isRectangle).toBe(true);
+      expect(res.activePatterns.some((p) => p.key === 'rectangle')).toBe(true);
+    });
   });
 
   describe('calculateSupportResistance', () => {
@@ -139,6 +169,9 @@ describe('patterns and supportResistance', () => {
 
       const res = calculateSupportResistance(candles, 10, 10.5, 9.8, 12.1, 7.9);
       expect(res.volumePOC).toBeDefined();
+      expect(res.volumeProfile.poc).toBe(res.volumePOC);
+      expect(res.volumeProfile.valueAreaHigh).toBeGreaterThanOrEqual(res.volumeProfile.valueAreaLow);
+      expect(res.volumeProfile.nodes.length).toBeGreaterThan(0);
       expect(res.horizontalSupports).toBeDefined();
       expect(res.horizontalResistances).toBeDefined();
     });

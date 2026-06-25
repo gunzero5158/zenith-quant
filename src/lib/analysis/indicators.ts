@@ -276,3 +276,84 @@ export function calculateATR(candles: Candle[], period: number = 14): number[] {
 
   return atr;
 }
+
+export interface IchimokuResult {
+  tenkanSen: number[];
+  kijunSen: number[];
+  senkouSpanA: number[];
+  senkouSpanB: number[];
+  chikouSpan: number[];
+  cloudSignal: "bullish" | "bearish" | "neutral";
+  cloudDescription: string;
+}
+
+function midpointOfRange(candles: Candle[], endIndex: number, period: number): number {
+  if (endIndex < period - 1) return NaN;
+
+  let high = -Infinity;
+  let low = Infinity;
+  for (let i = endIndex - period + 1; i <= endIndex; i++) {
+    high = Math.max(high, candles[i].high);
+    low = Math.min(low, candles[i].low);
+  }
+
+  return Number(((high + low) / 2).toFixed(4));
+}
+
+/**
+ * Calculates Ichimoku Cloud lines without forward-shifting spans.
+ * Keeping arrays aligned to candle indexes makes scoring/reporting cheap and deterministic.
+ */
+export function calculateIchimoku(candles: Candle[]): IchimokuResult {
+  const tenkanSen: number[] = [];
+  const kijunSen: number[] = [];
+  const senkouSpanA: number[] = [];
+  const senkouSpanB: number[] = [];
+  const chikouSpan: number[] = [];
+
+  for (let i = 0; i < candles.length; i++) {
+    const tenkan = midpointOfRange(candles, i, 9);
+    const kijun = midpointOfRange(candles, i, 26);
+    const spanB = midpointOfRange(candles, i, 52);
+
+    tenkanSen.push(tenkan);
+    kijunSen.push(kijun);
+    senkouSpanA.push(Number.isFinite(tenkan) && Number.isFinite(kijun) ? Number(((tenkan + kijun) / 2).toFixed(4)) : NaN);
+    senkouSpanB.push(spanB);
+    chikouSpan.push(i >= 26 ? candles[i - 26].close : NaN);
+  }
+
+  const latestIdx = candles.length - 1;
+  const price = candles[latestIdx]?.close ?? NaN;
+  const tenkan = tenkanSen[latestIdx];
+  const kijun = kijunSen[latestIdx];
+  const spanA = senkouSpanA[latestIdx];
+  const spanB = senkouSpanB[latestIdx];
+  const cloudTop = Math.max(spanA, spanB);
+  const cloudBottom = Math.min(spanA, spanB);
+
+  let cloudSignal: IchimokuResult["cloudSignal"] = "neutral";
+  let cloudDescription = "Ichimoku data is insufficient for a clear cloud signal.";
+
+  if ([price, tenkan, kijun, spanA, spanB].every(Number.isFinite)) {
+    if (price > cloudTop && tenkan >= kijun && spanA >= spanB) {
+      cloudSignal = "bullish";
+      cloudDescription = `Price is above the cloud, Tenkan is above Kijun, and the cloud bias is bullish. Cloud support zone: ${cloudBottom.toFixed(2)}-${cloudTop.toFixed(2)}.`;
+    } else if (price < cloudBottom && tenkan <= kijun && spanA <= spanB) {
+      cloudSignal = "bearish";
+      cloudDescription = `Price is below the cloud, Tenkan is below Kijun, and the cloud bias is bearish. Cloud resistance zone: ${cloudBottom.toFixed(2)}-${cloudTop.toFixed(2)}.`;
+    } else {
+      cloudDescription = `Price is interacting with the Ichimoku cloud or the signals are mixed. Cloud zone: ${cloudBottom.toFixed(2)}-${cloudTop.toFixed(2)}.`;
+    }
+  }
+
+  return {
+    tenkanSen,
+    kijunSen,
+    senkouSpanA,
+    senkouSpanB,
+    chikouSpan,
+    cloudSignal,
+    cloudDescription,
+  };
+}

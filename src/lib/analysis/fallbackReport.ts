@@ -4,11 +4,18 @@ import { PatternResult } from "./patterns";
 import { WaveAnalysisResult } from "./waveTheory";
 import { ChanLunResult } from "./chanlun";
 import { SupportResistanceResult } from "./supportResistance";
+import { IchimokuResult } from "./indicators";
 
 export interface StructuredReport {
   overview: string;
   recommendation: string;
   technicalAnalysis: string;
+}
+
+export interface FallbackAnalysisExtras {
+  atr?: number;
+  atrPct?: number;
+  ichimoku?: IchimokuResult;
 }
 
 /**
@@ -25,19 +32,67 @@ export function generateFallbackReport(
   wave: WaveAnalysisResult,
   chanlun: ChanLunResult,
   sr: SupportResistanceResult,
-  lang: string = "zh-CN"
+  lang: string = "zh-CN",
+  extras?: FallbackAnalysisExtras
 ): StructuredReport {
   const effectiveLang = (lang === "zh-HK" || lang === "zh-TW") ? "zh-TW" : lang;
 
+  let report: StructuredReport;
   if (effectiveLang === "en") {
-    return generateEnglishReport(symbol, price, changePercent, score, volume, patterns, wave, chanlun, sr);
+    report = generateEnglishReport(symbol, price, changePercent, score, volume, patterns, wave, chanlun, sr);
   } else if (effectiveLang === "ja") {
-    return generateJapaneseReport(symbol, price, changePercent, score, volume, patterns, wave, chanlun, sr);
+    report = generateJapaneseReport(symbol, price, changePercent, score, volume, patterns, wave, chanlun, sr);
   } else if (effectiveLang === "zh-TW") {
-    return generateTraditionalChineseReport(symbol, price, changePercent, score, volume, patterns, wave, chanlun, sr);
+    report = generateTraditionalChineseReport(symbol, price, changePercent, score, volume, patterns, wave, chanlun, sr);
   } else {
-    return generateSimplifiedChineseReport(symbol, price, changePercent, score, volume, patterns, wave, chanlun, sr);
+    report = generateSimplifiedChineseReport(symbol, price, changePercent, score, volume, patterns, wave, chanlun, sr);
   }
+
+  return appendAdvancedSections(report, patterns, sr, effectiveLang, extras);
+}
+
+function appendAdvancedSections(
+  report: StructuredReport,
+  patterns: PatternResult,
+  sr: SupportResistanceResult,
+  lang: string,
+  extras?: FallbackAnalysisExtras
+): StructuredReport {
+  const isEnglish = lang === "en";
+  const fibText = patterns.fibonacciLevels.map((level) => `${level.label}: $${level.price}`).join(", ");
+  const patternText = patterns.activePatterns.length > 0
+    ? patterns.activePatterns.map((p) => `${p.name}(${p.bias}, ${Math.round(p.confidence * 100)}%)`).join(", ")
+    : (isEnglish ? "No actionable confirmed classical pattern." : "暂无具备实质指向意义的已确认经典形态。");
+  const vpvrNodes = sr.volumeProfile.nodes.map((node) => `$${node.price} ${(node.volumeShare * 100).toFixed(1)}%`).join(", ");
+  const atrText = typeof extras?.atr === "number"
+    ? `$${extras.atr.toFixed(2)}${typeof extras.atrPct === "number" ? ` (${extras.atrPct.toFixed(2)}%)` : ""}`
+    : "N/A";
+  const ichimokuText = extras?.ichimoku
+    ? `${extras.ichimoku.cloudSignal}; ${extras.ichimoku.cloudDescription}`
+    : "N/A";
+
+  const section = isEnglish
+    ? `
+
+### Additional Quant Context
+- **Fibonacci**: ${fibText}
+- **VPVR**: POC $${sr.volumeProfile.poc}, value area $${sr.volumeProfile.valueAreaLow}-$${sr.volumeProfile.valueAreaHigh}; major nodes ${vpvrNodes || "None"}
+- **ATR Risk Unit**: ${atrText}
+- **Ichimoku Cloud**: ${ichimokuText}
+- **Actionable Classical Patterns**: ${patternText}`
+    : `
+
+### 补充量化上下文
+- **斐波纳契**: ${fibText}
+- **VPVR**: POC $${sr.volumeProfile.poc}，价值区 $${sr.volumeProfile.valueAreaLow}-$${sr.volumeProfile.valueAreaHigh}；主要成交节点 ${vpvrNodes || "无"}
+- **ATR 风险单位**: ${atrText}
+- **Ichimoku 云图**: ${ichimokuText}
+- **有实质意义的经典形态**: ${patternText}`;
+
+  return {
+    ...report,
+    technicalAnalysis: `${report.technicalAnalysis}${section}`,
+  };
 }
 
 function generateSimplifiedChineseReport(

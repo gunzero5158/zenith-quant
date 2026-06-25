@@ -37,20 +37,47 @@ interface StockChartProps {
     kdjJ: number[];
     rsi: number[];
     atr: number[];
+    ichimoku?: {
+      tenkanSen: number[];
+      kijunSen: number[];
+      senkouSpanA: number[];
+      senkouSpanB: number[];
+      chikouSpan: number[];
+      cloudSignal: "bullish" | "bearish" | "neutral";
+      cloudDescription: string;
+    };
   };
   patterns: {
     tdSequential: number[];
     tdSignal: string;
     fibonacciLevels: { label: string; price: number }[];
+    activePatterns?: { key: string; name: string; bias: "bullish" | "bearish" | "neutral"; confidence: number; description: string }[];
     isDoubleBottom: boolean;
+    isDoubleTop?: boolean;
+    isTripleBottom?: boolean;
+    isTripleTop?: boolean;
     isHeadAndShoulders: boolean;
     isCupAndHandle: boolean;
     isRoundingTop: boolean;
+    isBullFlag?: boolean;
+    isBearFlag?: boolean;
+    isRectangle?: boolean;
+    isTrianglePennant?: boolean;
+    isRisingWedge?: boolean;
+    isFallingWedge?: boolean;
   };
   sr: {
     horizontalSupports: number[];
     horizontalResistances: number[];
     volumePOC: number;
+    volumeSupportNodes?: number[];
+    volumeResistanceNodes?: number[];
+    volumeProfile?: {
+      poc: number;
+      valueAreaHigh: number;
+      valueAreaLow: number;
+      nodes: { price: number; volume: number; volumeShare: number }[];
+    };
   };
   wave: {
     wavePoints: { index: number; price: number; type: "high" | "low"; label: string }[];
@@ -221,6 +248,42 @@ export default function StockChart({ candles, indicators, patterns, sr, wave, is
       });
     }
 
+    patterns.fibonacciLevels?.forEach((level) => {
+      candlestickSeries.createPriceLine({
+        price: level.price,
+        color: "rgba(168, 85, 247, 0.35)",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dotted,
+        axisLabelVisible: false,
+        title: `FIB ${level.label}`,
+      });
+    });
+
+    if (sr.volumeProfile) {
+      [sr.volumeProfile.valueAreaLow, sr.volumeProfile.valueAreaHigh].forEach((price, idx) => {
+        candlestickSeries.createPriceLine({
+          price,
+          color: "rgba(59, 130, 246, 0.35)",
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: idx === 0 ? "VAL" : "VAH",
+        });
+      });
+
+      sr.volumeProfile.nodes.slice(0, 3).forEach((node) => {
+        if (node.price === sr.volumePOC) return;
+        candlestickSeries.createPriceLine({
+          price: node.price,
+          color: "rgba(14, 165, 233, 0.28)",
+          lineWidth: 1,
+          lineStyle: LineStyle.Dotted,
+          axisLabelVisible: false,
+          title: "VPVR",
+        });
+      });
+    }
+
     // 5. Draw Markers on Candlestick for TD 9 and Geometric Patterns
     const markers: SeriesMarker<string>[] = [];
 
@@ -268,6 +331,20 @@ export default function StockChart({ candles, indicators, patterns, sr, wave, is
         color: "#00b0ff",
         shape: "square",
         text: "杯柄突破",
+      });
+    }
+
+    if (patterns.activePatterns && patterns.activePatterns.length > 0) {
+      const lastCandleTime = new Date(candles[candles.length - 1].date).toISOString().split("T")[0];
+      patterns.activePatterns.slice(0, 3).forEach((pattern) => {
+        if (pattern.key === "doubleBottom" || pattern.key === "cupAndHandle") return;
+        markers.push({
+          time: lastCandleTime,
+          position: pattern.bias === "bearish" ? "aboveBar" : "belowBar",
+          color: pattern.bias === "bearish" ? "#f23645" : pattern.bias === "bullish" ? "#089981" : "#fbbf24",
+          shape: pattern.bias === "bearish" ? "arrowDown" : pattern.bias === "bullish" ? "arrowUp" : "circle",
+          text: pattern.name,
+        });
       });
     }
 
@@ -454,6 +531,8 @@ export default function StockChart({ candles, indicators, patterns, sr, wave, is
     indicators.rsi,
     indTab,
     isRedUp,
+    patterns.activePatterns,
+    patterns.fibonacciLevels,
     patterns.isCupAndHandle,
     patterns.isDoubleBottom,
     patterns.tdSequential,
@@ -462,6 +541,7 @@ export default function StockChart({ candles, indicators, patterns, sr, wave, is
     sr.horizontalResistances,
     sr.horizontalSupports,
     sr.volumePOC,
+    sr.volumeProfile,
     wave.wavePoints,
   ]);
 

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import YahooFinance from "yahoo-finance2";
-import { Candle, calculateEMA, calculateBOLL, calculateMACD, calculateKDJ, calculateRSI, calculateATR } from "@/lib/analysis/indicators";
+import { Candle, IchimokuResult, calculateEMA, calculateBOLL, calculateMACD, calculateKDJ, calculateRSI, calculateATR, calculateIchimoku } from "@/lib/analysis/indicators";
 import { convertSymbolToSina, fetchSinaAShareKlines } from "./sinaUtils";
 
 const yahooFinance = new YahooFinance();
@@ -34,6 +34,7 @@ interface TechnicalIndicators {
   kdjJ: number[];
   rsi: number[];
   atr: number[];
+  ichimoku: IchimokuResult;
 }
 
 interface CacheEntry {
@@ -208,6 +209,116 @@ function normalizeEastMoneySymbol(item: EastMoneySuggestItem): string {
   return code;
 }
 
+const KNOWN_COMPANY_NAMES: Record<string, string> = {
+  AAPL: "Apple Inc.",
+  APP: "AppLovin",
+  "0700.HK": "腾讯控股",
+  "700.HK": "腾讯控股",
+  "600519.SS": "贵州茅台",
+  "600519.SH": "贵州茅台",
+  "600519": "贵州茅台",
+  "9984.T": "ソフトバンクグループ",
+};
+
+function stripMockNameSuffix(name: string): string {
+  return name
+    .replace(/\s*\([^)]*(?:模拟数据|模拟股票)[^)]*\)\s*$/u, "")
+    .trim();
+}
+
+function companyNameLooksLikeSymbol(symbol: string, name: string): boolean {
+  const stripped = stripMockNameSuffix(name);
+  if (!stripped) return true;
+  if (/模拟股票/u.test(name)) return true;
+
+  const cleanSymbol = symbol.trim().toUpperCase();
+  const baseSymbol = cleanSymbol.replace(/\.(SS|SH|SZ|HK|T)$/u, "").replace(/^0+(?=\d)/u, "");
+  const normalizedName = stripped.toUpperCase().replace(/[\s._-]/gu, "");
+  const normalizedSymbol = cleanSymbol.replace(/[\s._-]/gu, "");
+  const normalizedBase = baseSymbol.replace(/[\s._-]/gu, "");
+
+  return normalizedName === normalizedSymbol || normalizedName === normalizedBase;
+}
+
+function knownCompanyName(symbol: string): string | null {
+  const clean = symbol.trim().toUpperCase();
+  const hkPadded = clean.endsWith(".HK") ? `${clean.split(".")[0].padStart(4, "0")}.HK` : clean;
+  const hkUnpadded = clean.endsWith(".HK") ? `${String(Number(clean.split(".")[0]))}.HK` : clean;
+
+  return KNOWN_COMPANY_NAMES[clean]
+    || KNOWN_COMPANY_NAMES[hkPadded]
+    || KNOWN_COMPANY_NAMES[hkUnpadded]
+    || null;
+}
+
+async function fetchEastMoneyCompanyName(symbol: string): Promise<string | null> {
+  const clean = symbol.trim().toUpperCase();
+  const secid = convertSymbolToEastMoneySecid(clean);
+
+  if (secid) {
+    try {
+      const res = await fetch(`https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f58`, {
+        signal: AbortSignal.timeout(2500),
+        headers: {
+          "Referer": "https://quote.eastmoney.com/",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+      });
+      if (res.ok) {
+        const data = await res.json() as EastMoneyNameResponse;
+        const name = data?.data?.f58?.trim();
+        if (name && !companyNameLooksLikeSymbol(clean, name)) return name;
+      }
+    } catch {
+      // The search endpoint below is a lightweight backup for display names.
+    }
+  }
+
+  const base = clean.replace(/\.(SS|SH|SZ|HK|T)$/u, "");
+  const queries = Array.from(new Set([clean, base, base.replace(/^0+(?=\d)/u, "")].filter(Boolean)));
+
+  for (const query of queries) {
+    try {
+      const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(query)}&type=14&token=D43BF722C8E33EFC408CAFD32D7DAD7C`;
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(2500),
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+      });
+      if (!res.ok) continue;
+
+      const data = await res.json() as EastMoneySuggestResponse;
+      const match = (data.QuotationCodeTable?.Data || []).find((item) =>
+        item.Name && isSupportedEastMoneySuggestion(item) && normalizeEastMoneySymbol(item) === clean
+      );
+      if (match?.Name) return match.Name.trim();
+    } catch {
+      // Keep falling through to known-name map.
+    }
+  }
+
+  return null;
+}
+
+async function improveCompanyName(symbol: string, currentName: string, englishName: string, isMock: boolean): Promise<string> {
+  const currentBase = stripMockNameSuffix(currentName);
+  const englishBase = stripMockNameSuffix(englishName);
+  let resolved = companyNameLooksLikeSymbol(symbol, currentName) ? "" : currentBase;
+
+  if (!resolved && englishBase && !companyNameLooksLikeSymbol(symbol, englishBase)) {
+    resolved = englishBase;
+  }
+  if (!resolved) {
+    resolved = await fetchEastMoneyCompanyName(symbol) || knownCompanyName(symbol) || currentBase || symbol;
+  }
+
+  if (isMock && !/模拟/u.test(resolved)) {
+    return `${resolved} (模拟数据)`;
+  }
+  return resolved;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -226,10 +337,15 @@ export async function POST(request: Request) {
 
     let techData: CacheEntry["data"];
 
-    // Check if technical data is cached
-    if (techCache[cacheKey] && now - techCache[cacheKey].timestamp < CACHE_TTL) {
+    // Check if technical data is cached. Mock/demo data is intentionally not reused:
+    // a temporary provider outage should not poison later real-data analyses.
+    if (techCache[cacheKey] && now - techCache[cacheKey].timestamp < CACHE_TTL && !techCache[cacheKey].data.isMock) {
       techData = techCache[cacheKey].data;
     } else {
+      if (techCache[cacheKey]?.data.isMock) {
+        delete techCache[cacheKey];
+      }
+
       // 1. Fetch stock data with fallback to EastMoney and mock data
       let dailyCandles: Candle[] = [];
       let weeklyCandles: Candle[] = [];
@@ -473,6 +589,7 @@ export async function POST(request: Request) {
       }
 
       const latestPrice = currentPrice || dailyCandles[dailyCandles.length - 1].close;
+      companyName = await improveCompanyName(cleanSymbol, companyName, companyNameEn, isMock);
 
       // 3. Run Technical Calculations
       // Daily Indicators
@@ -486,6 +603,7 @@ export async function POST(request: Request) {
       const dailyKdj = calculateKDJ(dailyCandles, 9, 3, 3);
       const dailyRsi = calculateRSI(dailyCandles, 14);
       const dailyAtr = calculateATR(dailyCandles, 14);
+      const dailyIchimoku = calculateIchimoku(dailyCandles);
 
       // Weekly Indicators (for resonance)
       const weeklyEma5 = calculateEMA(weeklyCandles, 5);
@@ -522,9 +640,12 @@ export async function POST(request: Request) {
         dailyMacd,
         dailyKdj,
         dailyRsi,
+        dailyAtr,
+        dailyIchimoku,
         dailyVolumeAnalysis,
         dailyPatterns,
         dailyWaveResult,
+        dailySupportResistance,
         weeklyCandles,
         { ema5: weeklyEma5, ema10: weeklyEma10, ema20: weeklyEma20, ema60: weeklyEma60 },
         weeklyMacd
@@ -554,6 +675,7 @@ export async function POST(request: Request) {
           kdjJ: dailyKdj.j,
           rsi: dailyRsi,
           atr: dailyAtr,
+          ichimoku: dailyIchimoku,
         },
         patterns: dailyPatterns,
         wave: dailyWaveResult,
@@ -565,11 +687,13 @@ export async function POST(request: Request) {
         dataSource,
       };
 
-      // Write to cache
-      techCache[cacheKey] = {
-        timestamp: now,
-        data: techData,
-      };
+      // Write to cache only for real market data. Demo/mock data should be retried next time.
+      if (!techData.isMock) {
+        techCache[cacheKey] = {
+          timestamp: now,
+          data: techData,
+        };
+      }
     }
 
     // 4. Generate Report (Either LLM or Fallback)
@@ -578,7 +702,31 @@ export async function POST(request: Request) {
     let reportTechnical = "";
     let isLLMUsed = false;
 
-    if (llmConfig && llmConfig.apiKey) {
+    if (techData.isMock && useFallback) {
+      const fallback = generateFallbackReport(
+        `${techData.companyName} (${cleanSymbol})`,
+        techData.price,
+        techData.changePercent,
+        techData.score,
+        techData.volumeAnalysis,
+        techData.patterns,
+        techData.wave,
+        techData.chanlun,
+        techData.sr,
+        effectiveLang,
+        buildFallbackExtras(techData)
+      );
+      const mockPrefix = effectiveLang === "en"
+        ? "⚠️ **Live market data is unavailable; this is an offline demo report based on simulated candles. LLM analysis was skipped to avoid analyzing mock data.**\n\n"
+        : effectiveLang === "ja"
+          ? "⚠️ **リアルタイム市場データを取得できないため、これはシミュレーション足に基づくデモレポートです。模擬データをAIに分析させないため、LLM分析はスキップしました。**\n\n"
+          : effectiveLang === "zh-TW"
+            ? "⚠️ **真實行情暫不可用，以下為基於模擬K線的離線演示報告。為避免讓 AI 分析模擬數據，本次已跳過大模型分析。**\n\n"
+            : "⚠️ **真实行情暂不可用，以下为基于模拟K线的离线演示报告。为避免让 AI 分析模拟数据，本次已跳过大模型分析。**\n\n";
+      reportOverview = mockPrefix + fallback.overview;
+      reportRecommendation = fallback.recommendation;
+      reportTechnical = fallback.technicalAnalysis;
+    } else if (llmConfig && llmConfig.apiKey) {
       try {
         const prompt = replaceDollarPriceSymbols(
           buildAnalystPrompt(cleanSymbol, techData, effectiveLang, currencySymbol),
@@ -621,7 +769,8 @@ export async function POST(request: Request) {
             techData.wave,
             techData.chanlun,
             techData.sr,
-            effectiveLang
+            effectiveLang,
+            buildFallbackExtras(techData)
           );
           let errorPrefix = "⚠️ **大模型分析失败，已自动使用本地规则引擎兜底生成。**\n";
           if (effectiveLang === "zh-TW") errorPrefix = "⚠️ **大模型分析失敗，已自動使用本地規則引擎兜底生成。**\n";
@@ -650,7 +799,8 @@ export async function POST(request: Request) {
         techData.wave,
         techData.chanlun,
         techData.sr,
-        effectiveLang
+        effectiveLang,
+        buildFallbackExtras(techData)
       );
       reportOverview = fallback.overview;
       reportRecommendation = fallback.recommendation;
@@ -714,7 +864,134 @@ function summarizeLLMError(err: unknown): string {
   return withoutHtml.slice(0, 240) || "LLM request failed. The local fallback report was generated instead.";
 }
 
+function latestValue(values: number[]): number | undefined {
+  for (let i = values.length - 1; i >= 0; i--) {
+    if (typeof values[i] === "number" && Number.isFinite(values[i])) return values[i];
+  }
+  return undefined;
+}
+
+function formatMaybe(value: number | undefined, digits: number = 2): string {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "N/A";
+}
+
+function joinMoneyLevels(values: number[], currencySymbol: string): string {
+  return values.length > 0 ? values.map((p) => `${currencySymbol}${p}`).join(", ") : "None";
+}
+
+function buildFallbackExtras(data: CacheEntry["data"]) {
+  const atr = latestValue(data.indicators.atr);
+  return {
+    atr,
+    atrPct: atr && data.price ? (atr / data.price) * 100 : undefined,
+    ichimoku: data.indicators.ichimoku,
+  };
+}
+
+function buildUnifiedAnalystPrompt(symbol: string, data: CacheEntry["data"], language: string, currencySymbol: string): string {
+  const score = data.score;
+  const sr = data.sr;
+  const wave = data.wave;
+  const chan = data.chanlun;
+  const ichimoku = data.indicators.ichimoku;
+  const money = (value: number) => `${currencySymbol}${value}`;
+  const moneyFixed = (value: number | undefined) => typeof value === "number" && Number.isFinite(value) ? `${currencySymbol}${value.toFixed(2)}` : "N/A";
+  const atr = latestValue(data.indicators.atr);
+  const atrPct = atr && data.price ? (atr / data.price) * 100 : undefined;
+  const activePatterns = data.patterns.activePatterns.length > 0
+    ? data.patterns.activePatterns.map((p) => `${p.name} (${p.bias}, confidence ${Math.round(p.confidence * 100)}%): ${p.description}`).join("\n")
+    : "No confirmed actionable classical pattern. Do not force a pattern interpretation.";
+  const fibLevels = data.patterns.fibonacciLevels.map((level) => `${level.label}: ${money(level.price)}`).join(", ");
+  const vpvrNodes = sr.volumeProfile.nodes.map((node) => `${money(node.price)} (${(node.volumeShare * 100).toFixed(1)}%)`).join(", ") || "None";
+  const targetLanguage = language === "en"
+    ? "English"
+    : language === "ja"
+      ? "Japanese"
+      : language === "zh-TW"
+        ? "Traditional Chinese"
+        : "Simplified Chinese";
+
+  return `You are a senior quantitative technical analyst. Produce a detailed TradingView-style stock analysis report with clear trading logic.
+
+Output language: ${targetLanguage}.
+Output format: valid JSON only, no markdown code fence. The JSON keys must be exactly "overview", "recommendation", and "technicalAnalysis".
+
+Stock: ${data.companyName} (${symbol})
+Current price: ${moneyFixed(data.price)}
+Daily change: ${data.changePercent.toFixed(2)}%
+
+Scoring semantics:
+- The 0-5 score means current buy/accumulate attractiveness, not recent heat.
+- Higher score means better current entry expectancy: higher win-rate, better reward/risk, acceptable stop distance, and stronger confirmation.
+- Lower score means avoid buying now, reduce exposure, or wait.
+
+### 1. Buy-Attractiveness Score
+- Total score: ${score.totalScore.toFixed(1)} / 5.0
+- Reasons:
+${score.scoreReasons.map((r) => `  * ${r}`).join("\n")}
+
+### 2. Trend, Volatility, and Ichimoku
+- EMA5/10/20/60: ${moneyFixed(latestValue(data.indicators.ema5))}, ${moneyFixed(latestValue(data.indicators.ema10))}, ${moneyFixed(latestValue(data.indicators.ema20))}, ${moneyFixed(latestValue(data.indicators.ema60))}
+- Bollinger upper/middle/lower: ${moneyFixed(latestValue(data.indicators.bollUpper))}, ${moneyFixed(latestValue(data.indicators.bollMiddle))}, ${moneyFixed(latestValue(data.indicators.bollLower))}
+- ATR14: ${formatMaybe(atr)} (${formatMaybe(atrPct)}% of price)
+- Ichimoku signal: ${ichimoku.cloudSignal}
+- Ichimoku lines: Tenkan=${moneyFixed(latestValue(ichimoku.tenkanSen))}, Kijun=${moneyFixed(latestValue(ichimoku.kijunSen))}, SpanA=${moneyFixed(latestValue(ichimoku.senkouSpanA))}, SpanB=${moneyFixed(latestValue(ichimoku.senkouSpanB))}
+- Ichimoku description: ${ichimoku.cloudDescription}
+
+### 3. Support, Resistance, Fibonacci, and VPVR
+- Horizontal supports: ${joinMoneyLevels(sr.horizontalSupports, currencySymbol)}
+- Horizontal resistances: ${joinMoneyLevels(sr.horizontalResistances, currencySymbol)}
+- Dynamic supports/resistance: EMA20=${money(sr.dynamicSupportEMA20)}, EMA60=${money(sr.dynamicSupportEMA60)}, BOLL upper=${money(sr.dynamicBOLLUpper)}, BOLL lower=${money(sr.dynamicBOLLLower)}
+- Fibonacci levels: ${fibLevels}
+- VPVR POC: ${money(sr.volumeProfile.poc)}
+- VPVR value area: ${money(sr.volumeProfile.valueAreaLow)} - ${money(sr.volumeProfile.valueAreaHigh)}
+- VPVR high-volume nodes: ${vpvrNodes}
+- Volume support nodes: ${joinMoneyLevels(sr.volumeSupportNodes, currencySymbol)}
+- Volume resistance nodes: ${joinMoneyLevels(sr.volumeResistanceNodes, currencySymbol)}
+
+### 4. Momentum and Smart Money
+- MACD: DIF=${formatMaybe(latestValue(data.indicators.macdDif))}, DEA=${formatMaybe(latestValue(data.indicators.macdDea))}, Hist=${formatMaybe(latestValue(data.indicators.macdHist))}
+- RSI14: ${formatMaybe(latestValue(data.indicators.rsi))}
+- KDJ: K=${formatMaybe(latestValue(data.indicators.kdjK))}, D=${formatMaybe(latestValue(data.indicators.kdjD))}, J=${formatMaybe(latestValue(data.indicators.kdjJ))}
+- CMF: ${formatMaybe(latestValue(data.volumeAnalysis.cmf), 4)}
+- OBV: ${formatMaybe(latestValue(data.volumeAnalysis.obv), 0)}
+- Volume 20SMA: ${formatMaybe(latestValue(data.volumeAnalysis.volume20SMA), 0)}
+- Volume expanding: ${data.volumeAnalysis.isVolumeExpanding ? "Yes" : "No"}
+- Volume breakout: ${data.volumeAnalysis.hasVolumeBreakout ? "Yes" : "No"}
+- Price-volume divergence: ${data.volumeAnalysis.hasPriceVolumeDivergence ? "Yes" : "No"}
+- Volume description: ${data.volumeAnalysis.volumeDescription}
+
+### 5. Patterns, TD, Wave, and Chanlun
+- Active classical patterns:
+${activePatterns}
+- Pattern summary: ${data.patterns.patternDescription}
+- TD signal: ${data.patterns.tdSignal || "None"}
+- Elliott wave: ${wave.currentWave}; ${wave.waveDescription}
+- Wave points: ${wave.wavePoints.length > 0 ? wave.wavePoints.map((p) => `${p.label}@${money(p.price)}`).join(", ") : "None"}
+- Chanlun stroke direction: ${chan.currentStrokeDirection}
+- Chanlun structure: ${chan.chanlunDescription}
+
+Writing requirements:
+- Use only the provided metrics. Do not invent fundamentals, news, targets, or unseen price levels.
+- If a pattern or indicator has no actionable meaning, say it is not actionable and do not overemphasize it.
+- The overview must be rich: write 3-4 short paragraphs covering the bull/bear state, trend quality, position of the current price, main risk, and market outlook. Do not just repeat the score reasons.
+- The recommendation must use a structured markdown list and cover four dimensions: existing holders, new/left-side entry, add-on/right-side breakout, and risk exit/stop. Cite concrete price levels from EMA/SR/Fibonacci/VPVR/ATR where relevant.
+- Clearly distinguish momentum indicators (MACD/KDJ/RSI) from smart-money/volume indicators (CMF/OBV/VPVR).
+- The technicalAnalysis field must be detailed and cover these modules in order: 1. MA trend and multi-period resonance, 2. support/resistance, Fibonacci, VPVR and ATR risk unit, 3. momentum indicators (MACD/KDJ/RSI), 4. volume and smart-money flow (CMF/OBV/volume), 5. Ichimoku Cloud, 6. classical chart patterns and divergences, 7. TD Sequential, 8. Elliott Wave, 9. Chanlun structure.
+- Keep inactive or non-significant indicators brief, but do not omit the modules above. The final text should read like a full analyst report, not a short summary.
+
+Return JSON only:
+{
+  "overview": "(3-4 short paragraphs, separated by double newlines.)",
+  "recommendation": "(Structured markdown list covering existing holders, left-side entry, right-side/add-on entry, and risk exit/stop.)",
+  "technicalAnalysis": "(Detailed module-by-module technical analysis covering all required modules.)"
+}`;
+}
+
 function buildAnalystPrompt(symbol: string, data: CacheEntry["data"], language: string = "zh-CN", currencySymbol = "$"): string {
+  const unifiedPrompt = buildUnifiedAnalystPrompt(symbol, data, language, currencySymbol);
+  if (unifiedPrompt) return unifiedPrompt;
+
   const score = data.score;
   const sr = data.sr;
   const wave = data.wave;

@@ -1,11 +1,25 @@
 import { Candle } from "./indicators";
 
+export interface VolumeProfileNode {
+  price: number;
+  volume: number;
+  volumeShare: number;
+}
+
+export interface VolumeProfileRange {
+  poc: number;
+  valueAreaHigh: number;
+  valueAreaLow: number;
+  nodes: VolumeProfileNode[];
+}
+
 export interface SupportResistanceResult {
   horizontalSupports: number[];    // Pivot-based support levels below current price
   horizontalResistances: number[];  // Pivot-based resistance levels above current price
   volumePOC: number;               // Point of Control (highest volume price)
   volumeSupportNodes: number[];    // High-volume bins below current price acting as support
   volumeResistanceNodes: number[];  // High-volume bins above current price acting as resistance
+  volumeProfile: VolumeProfileRange;
   dynamicSupportEMA20: number;
   dynamicSupportEMA60: number;
   dynamicBOLLUpper: number;
@@ -145,6 +159,41 @@ export function calculateSupportResistance(
     }
   }
   const volumePOC = Number(((bins[pocIdx].min + bins[pocIdx].max) / 2).toFixed(2));
+  const totalProfileVolume = bins.reduce((sum, bin) => sum + bin.volume, 0);
+  const profileNodes = bins
+    .map((bin) => ({
+      price: Number(((bin.min + bin.max) / 2).toFixed(2)),
+      volume: bin.volume,
+      volumeShare: totalProfileVolume > 0 ? Number((bin.volume / totalProfileVolume).toFixed(4)) : 0,
+    }))
+    .sort((a, b) => b.volume - a.volume)
+    .slice(0, 5);
+
+  const valueAreaTarget = totalProfileVolume * 0.7;
+  let valueAreaVolume = bins[pocIdx]?.volume || 0;
+  let valueAreaLowIdx = pocIdx;
+  let valueAreaHighIdx = pocIdx;
+
+  while (valueAreaVolume < valueAreaTarget && (valueAreaLowIdx > 0 || valueAreaHighIdx < numBins - 1)) {
+    const lowerVol = valueAreaLowIdx > 0 ? bins[valueAreaLowIdx - 1].volume : -1;
+    const upperVol = valueAreaHighIdx < numBins - 1 ? bins[valueAreaHighIdx + 1].volume : -1;
+    if (upperVol >= lowerVol && valueAreaHighIdx < numBins - 1) {
+      valueAreaHighIdx++;
+      valueAreaVolume += bins[valueAreaHighIdx].volume;
+    } else if (valueAreaLowIdx > 0) {
+      valueAreaLowIdx--;
+      valueAreaVolume += bins[valueAreaLowIdx].volume;
+    } else {
+      break;
+    }
+  }
+
+  const volumeProfile: VolumeProfileRange = {
+    poc: volumePOC,
+    valueAreaHigh: Number(bins[valueAreaHighIdx].max.toFixed(2)),
+    valueAreaLow: Number(bins[valueAreaLowIdx].min.toFixed(2)),
+    nodes: profileNodes,
+  };
 
   // Find other high-volume nodes (e.g. volume > 70% of maxVolume) as additional S/R
   const volumeSupportNodes: number[] = [];
@@ -204,6 +253,7 @@ export function calculateSupportResistance(
     volumePOC,
     volumeSupportNodes: volumeSupportNodes.slice(0, 2),
     volumeResistanceNodes: volumeResistanceNodes.slice(0, 2),
+    volumeProfile,
     dynamicSupportEMA20,
     dynamicSupportEMA60,
     dynamicBOLLUpper,
