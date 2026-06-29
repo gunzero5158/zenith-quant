@@ -257,6 +257,21 @@ function knownCompanyName(symbol: string): string | null {
     || null;
 }
 
+function isChineseMarketSymbol(symbol: string): boolean {
+  const clean = symbol.trim().toUpperCase();
+  return (
+    clean.endsWith(".SS") ||
+    clean.endsWith(".SH") ||
+    clean.endsWith(".SZ") ||
+    clean.endsWith(".HK") ||
+    /^\d{6}$/.test(clean)
+  );
+}
+
+function containsCjk(value: string): boolean {
+  return /[\u3400-\u9FFF]/u.test(value);
+}
+
 async function fetchEastMoneyCompanyName(symbol: string): Promise<string | null> {
   const clean = symbol.trim().toUpperCase();
   const secid = convertSymbolToEastMoneySecid(clean);
@@ -310,6 +325,17 @@ async function fetchEastMoneyCompanyName(symbol: string): Promise<string | null>
 async function improveCompanyName(symbol: string, currentName: string, englishName: string, isMock: boolean): Promise<string> {
   const currentBase = stripMockNameSuffix(currentName);
   const englishBase = stripMockNameSuffix(englishName);
+  const shouldPreferLocalName = isChineseMarketSymbol(symbol);
+
+  if (shouldPreferLocalName && currentBase && containsCjk(currentBase) && !companyNameLooksLikeSymbol(symbol, currentBase)) {
+    return isMock && !/模拟/u.test(currentBase) ? `${currentBase} (模拟数据)` : currentBase;
+  }
+
+  const localMarketName = shouldPreferLocalName ? await fetchEastMoneyCompanyName(symbol) : null;
+  if (localMarketName) {
+    return isMock && !/模拟/u.test(localMarketName) ? `${localMarketName} (模拟数据)` : localMarketName;
+  }
+
   let resolved = companyNameLooksLikeSymbol(symbol, currentName) ? "" : currentBase;
 
   if (!resolved && englishBase && !companyNameLooksLikeSymbol(symbol, englishBase)) {
