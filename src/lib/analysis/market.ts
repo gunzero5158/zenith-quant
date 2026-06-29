@@ -21,6 +21,38 @@ export function getMarketCurrencySymbol(symbol: string): string {
   return "$";
 }
 
+export function normalizeManualSymbolInput(symbol: string): string {
+  const clean = symbol.trim().toUpperCase();
+  if (!clean) return "";
+
+  const aShare = clean.match(/^(\d{6})\.(SS|SH|SZ)$/);
+  if (aShare) {
+    const [, code, market] = aShare;
+    return market === "SZ" ? `${code}.SZ` : `${code}.SS`;
+  }
+
+  if (/^\d{6}$/.test(clean)) {
+    return clean.startsWith("60") || clean.startsWith("68") || clean.startsWith("90")
+      ? `${clean}.SS`
+      : `${clean}.SZ`;
+  }
+
+  const hk = clean.match(/^(\d{1,5})(?:\.HK)?$/);
+  if (hk) {
+    const rawCode = hk[1];
+    const code = rawCode.length === 5 && rawCode.startsWith("0") && !rawCode.startsWith("00")
+      ? rawCode
+      : String(Number(rawCode)).padStart(4, "0");
+    return `${code}.HK`;
+  }
+
+  if (/^\d{3}[A-Z](?:\.T)?$/.test(clean)) {
+    return clean.endsWith(".T") ? clean : `${clean}.T`;
+  }
+
+  return clean;
+}
+
 export function formatMarketPrice(symbol: string, price: number): string {
   const currency = getMarketCurrencySymbol(symbol);
   return `${currency}${price.toFixed(2)}`;

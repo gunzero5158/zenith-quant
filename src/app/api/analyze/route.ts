@@ -13,7 +13,7 @@ import { calculateStockScore, ScoreDetail } from "@/lib/analysis/scoring";
 import { generateFallbackReport } from "@/lib/analysis/fallbackReport";
 import { generateLLMReport, LLMConfig } from "@/lib/analysis/llmProxy";
 import { generateMockCandles } from "@/lib/analysis/mockData";
-import { getMarketCurrencySymbol, replaceDollarPriceSymbols } from "@/lib/analysis/market";
+import { getMarketCurrencySymbol, normalizeManualSymbolInput, replaceDollarPriceSymbols } from "@/lib/analysis/market";
 import { fetchKabutanMarketData, getKabutanCode } from "@/lib/analysis/kabutan";
 import { fetchProviderMarketData } from "@/lib/analysis/marketDataProviders";
 
@@ -60,6 +60,7 @@ interface CacheEntry {
 
 const techCache: Record<string, CacheEntry> = {};
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
+const MIN_REAL_DAILY_CANDLES = 20;
 
 interface YahooQuote {
   longName?: string;
@@ -139,6 +140,11 @@ function isYahooHistoricalCandle(candle: YahooHistoricalCandle): candle is Requi
 
 async function resolveInputSymbol(input: string): Promise<string> {
   const clean = input.trim().toUpperCase();
+  const normalized = normalizeManualSymbolInput(clean);
+  if (normalized !== clean) {
+    return normalized;
+  }
+
   if (isTickerLike(clean)) {
     return clean;
   }
@@ -409,8 +415,8 @@ export async function POST(request: Request) {
           interval: "1wk",
         })) as YahooHistoricalCandle[];
 
-        if (!dailyRaw || dailyRaw.length < 65) {
-          throw new Error("雅虎财经返回的K线数据长度不足(少于65天)");
+        if (!dailyRaw || dailyRaw.length < MIN_REAL_DAILY_CANDLES) {
+          throw new Error(`雅虎财经返回的K线数据长度不足(少于${MIN_REAL_DAILY_CANDLES}天)`);
         }
 
         dailyCandles = dailyRaw
@@ -484,7 +490,7 @@ export async function POST(request: Request) {
             const dailyRaw = await fetchEastMoneyKlines(secid, false);
             const weeklyRaw = await fetchEastMoneyKlines(secid, true);
 
-            if (dailyRaw.length >= 65) {
+            if (dailyRaw.length >= MIN_REAL_DAILY_CANDLES) {
               dailyCandles = dailyRaw;
               weeklyCandles = weeklyRaw;
 
@@ -530,7 +536,7 @@ export async function POST(request: Request) {
               const dailyRaw = await fetchSinaAShareKlines(sinaSymbol, false);
               const weeklyRaw = await fetchSinaAShareKlines(sinaSymbol, true);
 
-              if (dailyRaw.length >= 65) {
+              if (dailyRaw.length >= MIN_REAL_DAILY_CANDLES) {
                 dailyCandles = dailyRaw;
                 weeklyCandles = weeklyRaw;
 
@@ -1251,7 +1257,7 @@ async function fetchYahooChartCandles(symbol: string): Promise<{
     fetchYahooChartRange(symbol, "3y", "1wk"),
   ]);
 
-  if (daily.candles.length < 65) {
+  if (daily.candles.length < MIN_REAL_DAILY_CANDLES) {
     throw new Error(`Yahoo Chart returned insufficient daily data for ${symbol}`);
   }
 

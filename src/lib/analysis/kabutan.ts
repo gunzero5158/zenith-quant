@@ -18,6 +18,7 @@ export interface KabutanMarketData {
 }
 
 const KABUTAN_MAX_PAGES = 10;
+const MIN_REAL_DAILY_CANDLES = 20;
 
 export function getKabutanCode(symbol: string): string | null {
   const clean = symbol.trim().toUpperCase();
@@ -92,7 +93,7 @@ export async function fetchKabutanMarketData(symbol: string): Promise<KabutanMar
     String(a.date).localeCompare(String(b.date))
   );
 
-  if (dailyRows.length < 65) {
+  if (dailyRows.length < MIN_REAL_DAILY_CANDLES) {
     throw new Error(`Kabutan returned insufficient daily data for ${symbol}`);
   }
 

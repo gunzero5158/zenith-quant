@@ -80,6 +80,7 @@ interface FmpSearchResponse {
 }
 
 const PROVIDER_TIMEOUT_MS = 4500;
+const MIN_REAL_DAILY_CANDLES = 20;
 
 export async function fetchProviderQuote(symbol: string): Promise<ProviderQuote | null> {
   const twelve = await fetchTwelveDataQuote(symbol);
@@ -137,7 +138,7 @@ async function fetchTwelveDataMarketData(symbol: string): Promise<ProviderMarket
 
   try {
     const daily = await fetchTwelveDataTimeSeries(symbol, "1day", 260, apiKey);
-    if (daily.candles.length < 65) return null;
+    if (daily.candles.length < MIN_REAL_DAILY_CANDLES) return null;
 
     const weekly = await fetchTwelveDataTimeSeries(symbol, "1week", 170, apiKey);
     const weeklyCandles = weekly.candles.length > 0 ? weekly.candles : buildWeeklyCandles(daily.candles);
@@ -251,7 +252,7 @@ async function fetchFmpMarketData(symbol: string): Promise<ProviderMarketData | 
       .sort((a, b) => String(a.date).localeCompare(String(b.date)))
       .slice(-260);
 
-    if (dailyCandles.length < 65) return null;
+    if (dailyCandles.length < MIN_REAL_DAILY_CANDLES) return null;
 
     const last = dailyCandles[dailyCandles.length - 1];
     const prev = dailyCandles[dailyCandles.length - 2] || last;

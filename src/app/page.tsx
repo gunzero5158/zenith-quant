@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useSyncExternalStore, useCallback }
 import { Search, Settings, Star, TrendingUp, TrendingDown, RefreshCw, Trash2, ExternalLink, Zap } from "lucide-react";
 import StockChart from "@/components/StockChart";
 import { LLMConfig } from "@/lib/analysis/llmProxy";
-import { formatMarketPrice, getMarketCurrencySymbol } from "@/lib/analysis/market";
+import { formatMarketPrice, getMarketCurrencySymbol, normalizeManualSymbolInput } from "@/lib/analysis/market";
 import { Candle, IchimokuResult } from "@/lib/analysis/indicators";
 import { ScoreDetail } from "@/lib/analysis/scoring";
 import { PatternResult } from "@/lib/analysis/patterns";
@@ -353,9 +353,9 @@ const isNonTradingHours = (symbol: string): boolean => {
   
   if (day === 0 || day === 6) return true; // Weekend
   
-  const isA = /^(SH|SZ|BJ)\d{6}$/i.test(symbol) || /^\d{6}$/.test(symbol);
+  const isA = /^(SH|SZ|BJ)\d{6}$/i.test(symbol) || /^\d{6}(?:\.(?:SS|SH|SZ))?$/i.test(symbol);
   const isHK = /^(HK\d{4}|\d{4}\.HK)$/i.test(symbol);
-  const isJP = /^\d{4}\.T$/i.test(symbol);
+  const isJP = /^\d{3}[0-9A-Z]\.T$/i.test(symbol) || /^\d{3}[A-Z]$/i.test(symbol);
   
   if (isA) {
     if (hour < 9 || hour >= 15) return true;
@@ -678,19 +678,23 @@ export default function Home() {
           if (isSameDay && isNonTradingHours(activeSymbol)) {
             console.log("[CACHE] Using cached analysis for", activeSymbol);
             const cachedData = cachedObj.data;
-            const resolvedSymbol = cachedData.symbol || activeSymbol;
-            setStockData(cachedData);
-            if (resolvedSymbol !== activeSymbol) {
-              lastRequestedSymbolRef.current = resolvedSymbol;
-              setActiveSymbol(resolvedSymbol);
+            if (cachedData.isMock) {
+              localStorage.removeItem(cacheKey);
+            } else {
+              const resolvedSymbol = cachedData.symbol || activeSymbol;
+              setStockData(cachedData);
+              if (resolvedSymbol !== activeSymbol) {
+                lastRequestedSymbolRef.current = resolvedSymbol;
+                setActiveSymbol(resolvedSymbol);
+              }
+              setWatchlist((prev) => {
+                const filtered = prev.filter((item) => item !== activeSymbol && item !== resolvedSymbol);
+                const updated = [resolvedSymbol, ...filtered].slice(0, 15);
+                setCookie("analysis_history", JSON.stringify(updated));
+                return updated;
+              });
+              return;
             }
-            setWatchlist((prev) => {
-              const filtered = prev.filter((item) => item !== activeSymbol && item !== resolvedSymbol);
-              const updated = [resolvedSymbol, ...filtered].slice(0, 15);
-              setCookie("analysis_history", JSON.stringify(updated));
-              return updated;
-            });
-            return;
           }
         } catch (e) {
           console.error("Cache parse error", e);
@@ -757,10 +761,12 @@ export default function Home() {
       setShowMockWarning(true);
       
       try {
-        localStorage.setItem(`zenith_analysis_${resolvedSymbol}`, JSON.stringify({
-          timestamp: Date.now(),
-          data
-        }));
+        if (!data.isMock) {
+          localStorage.setItem(`zenith_analysis_${resolvedSymbol}`, JSON.stringify({
+            timestamp: Date.now(),
+            data
+          }));
+        }
       } catch (e) {
         console.error("Failed to save cache", e);
       }
@@ -836,7 +842,7 @@ export default function Home() {
   }, [searchQuery]);
 
   const handleSelectSymbol = (sym: string) => {
-    setActiveSymbol(sym);
+    setActiveSymbol(normalizeManualSymbolInput(sym));
     setSearchQuery("");
     setShowSuggestions(false);
   };
@@ -2444,8 +2450,9 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     display: "flex",
     flexDirection: "column",
-    overflow: "hidden",
+    overflowY: "auto",
     position: "relative",
+    minHeight: 0,
   },
   loadingContainer: {
     position: "absolute",
@@ -2471,7 +2478,7 @@ const styles: Record<string, React.CSSProperties> = {
   dashboardGrid: {
     display: "flex",
     flexDirection: "column",
-    height: "100%",
+    minHeight: "100%",
   },
   topRow: {
     backgroundColor: "#1c2030",
@@ -2522,6 +2529,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRight: "1px solid #2a2e39",
     overflow: "hidden",
     height: "100%",
+    minHeight: 0,
   },
   rightColumn: {
     display: "flex",
@@ -2529,18 +2537,27 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: "#171b26",
     overflow: "hidden",
     height: "100%",
+    minHeight: 0,
   },
   summaryCard: {
     backgroundColor: "#171b26",
     borderBottom: "1px solid #2a2e39",
     display: "flex",
     flexDirection: "column",
+    flex: "0 1 auto",
+    maxHeight: "32vh",
+    minHeight: "104px",
+    overflow: "hidden",
   },
   recommendationCard: {
     backgroundColor: "#171b26",
     borderBottom: "1px solid #2a2e39",
     display: "flex",
     flexDirection: "column",
+    flex: "0 1 auto",
+    maxHeight: "32vh",
+    minHeight: "104px",
+    overflow: "hidden",
   },
   cardHeader: {
     backgroundColor: "#1c2030",
@@ -2562,7 +2579,10 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#d1d4dc",
   },
   cardBodyAutoScroll: {
+    flex: 1,
     padding: "12px 16px",
+    overflowY: "auto",
+    minHeight: 0,
     fontSize: "14.5px",
     lineHeight: "1.6",
     color: "#d1d4dc",
@@ -2626,13 +2646,15 @@ const styles: Record<string, React.CSSProperties> = {
     display: "grid",
     gridTemplateColumns: "3fr 2fr",
     flex: 1,
+    minHeight: "620px",
     overflow: "hidden",
   },
   chartArea: {
     display: "flex",
     flexDirection: "column",
-    overflow: "hidden",
+    overflow: "auto",
     flex: 1,
+    minHeight: "460px",
   },
   chartSelector: {
     backgroundColor: "#1c2030",
