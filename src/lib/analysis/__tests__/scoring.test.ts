@@ -5,6 +5,7 @@ import { VolumeAnalysisResult } from '../volumeForce';
 import { PatternResult } from '../patterns';
 import { WaveAnalysisResult } from '../waveTheory';
 import { SupportResistanceResult } from '../supportResistance';
+import { ChanLunResult } from '../chanlun';
 
 function makeCandle(close: number): Candle {
   return {
@@ -64,6 +65,17 @@ function makeDefaultWave(): WaveAnalysisResult {
   };
 }
 
+function makeDefaultChanLun(overrides: Partial<ChanLunResult> = {}): ChanLunResult {
+  return {
+    mergedKLines: [],
+    fenXingList: [],
+    strokes: [],
+    currentStrokeDirection: 'up',
+    chanlunDescription: 'Default ChanLun description',
+    ...overrides
+  };
+}
+
 function makeDefaultIchimoku(length: number = 1, signal: IchimokuResult['cloudSignal'] = 'neutral'): IchimokuResult {
   return {
     tenkanSen: Array(length).fill(100),
@@ -112,6 +124,7 @@ describe('scoring', () => {
       makeDefaultPattern(),
       makeDefaultWave(),
       makeDefaultSR(),
+      makeDefaultChanLun(),
       [],
       { ema5: [], ema10: [], ema20: [], ema60: [] },
       { dif: [], dea: [], hist: [] }
@@ -141,16 +154,17 @@ describe('scoring', () => {
       pattern,
       makeDefaultWave(),
       makeDefaultSR(),
+      makeDefaultChanLun(),
       [makeCandle(10)],
       { ema5: [10.5], ema10: [10.3], ema20: [10.1], ema60: [9.8] },
       { dif: [0.2], dea: [0.1], hist: [0.1] }
     );
 
-    expect(score.baseTrendScore).toBe(1.25);
+    expect(score.baseTrendScore).toBeGreaterThan(0);
     expect(score.momentumScore).toBeGreaterThan(0);
     expect(score.volumeScore).toBeGreaterThan(0);
     expect(score.patternsScore).toBeGreaterThan(0);
-    expect(score.weeklyResonanceScore).toBeGreaterThan(0.5);
+    expect(score.weeklyResonanceScore).toBeGreaterThan(0);
     expect(score.totalScore).toBeGreaterThan(0);
     expect(score.totalScore).toBeLessThanOrEqual(5.0);
     expect(score.scoreReasons.length).toBeGreaterThan(0);
@@ -190,13 +204,14 @@ describe('scoring', () => {
       pattern,
       wave,
       makeDefaultSR(),
+      makeDefaultChanLun(),
       [makeCandle(160)],
       { ema5: [150], ema10: [140], ema20: [130], ema60: [120] },
       { dif: [5], dea: [2], hist: [3] }
     );
 
     expect(score.totalScore).toBeLessThan(4.2);
-    expect(score.scoreReasons.some((reason) => reason.includes('EMA20') || reason.includes('ATR'))).toBe(true);
+    expect(score.scoreReasons.some((reason) => reason.includes('EMA20') || reason.includes('赔率'))).toBe(true);
   });
 
   it('should rate a healthy pullback above a hot but extended setup', () => {
@@ -228,6 +243,7 @@ describe('scoring', () => {
       makeDefaultPattern(),
       makeDefaultWave(),
       makeDefaultSR(),
+      makeDefaultChanLun(),
       [makeCandle(103)],
       { ema5: [105], ema10: [103], ema20: [100], ema60: [96] },
       { dif: [0.2], dea: [0.1], hist: [0.1] }
@@ -256,12 +272,238 @@ describe('scoring', () => {
       makeDefaultPattern(),
       makeDefaultWave(),
       makeDefaultSR(),
+      makeDefaultChanLun(),
       [makeCandle(145)],
       { ema5: [135], ema10: [125], ema20: [110], ema60: [95] },
       { dif: [0.2], dea: [0.1], hist: [0.1] }
     );
 
     expect(healthyScore.totalScore).toBeGreaterThan(hotScore.totalScore);
+  });
+
+  it('should give a high score to a good-odds trend pullback with support confluence', () => {
+    const dailyCandles = Array(30).fill(null).map(() => makeCandle(100));
+    dailyCandles[29] = makeCandle(102);
+
+    const volumeAnalysis = {
+      ...makeDefaultVolumeAnalysis(),
+      cmf: Array(30).fill(0.18),
+      obv: Array.from({ length: 30 }, (_, i) => 100 + i * 5),
+      isVolumeExpanding: true
+    };
+
+    const pattern = makeDefaultPattern();
+    pattern.fibonacciLevels = [
+      { label: '38.2%', price: 99.8 },
+      { label: '50.0%', price: 104 },
+      { label: '61.8%', price: 118 }
+    ];
+    pattern.activePatterns = [
+      { key: 'fallingWedge', name: 'Falling wedge', bias: 'bullish', confidence: 0.72, description: 'Compression near support' }
+    ];
+
+    const score = calculateStockScore(
+      dailyCandles,
+      {
+        ema5: Array(30).fill(103),
+        ema10: Array(30).fill(102),
+        ema20: Array(30).fill(100),
+        ema60: Array(30).fill(94)
+      },
+      { dif: Array(30).fill(0.4), dea: Array(30).fill(0.2), hist: Array(30).fill(0.25) },
+      { k: Array(30).fill(48), d: Array(30).fill(42), j: Array(30).fill(60) },
+      Array(30).fill(54),
+      Array(30).fill(2),
+      makeDefaultIchimoku(30, 'bullish'),
+      volumeAnalysis,
+      pattern,
+      makeDefaultWave(),
+      makeDefaultSR({
+        horizontalSupports: [100],
+        horizontalResistances: [118],
+        volumeSupportNodes: [99],
+        volumeResistanceNodes: [121],
+        volumePOC: 100,
+        volumeProfile: {
+          poc: 100,
+          valueAreaHigh: 108,
+          valueAreaLow: 98,
+          nodes: [{ price: 100, volume: 3000, volumeShare: 0.5 }]
+        },
+        dynamicSupportEMA20: 100,
+        dynamicSupportEMA60: 94,
+        dynamicBOLLUpper: 120,
+        dynamicBOLLLower: 96
+      }),
+      makeDefaultChanLun({
+        currentStrokeDirection: 'up',
+        chanlunDescription: '缠论结构：最近已确立一笔向上笔，当前多头延续。'
+      }),
+      [makeCandle(103)],
+      { ema5: [104], ema10: [102], ema20: [99], ema60: [92] },
+      { dif: [0.3], dea: [0.1], hist: [0.2] }
+    );
+
+    expect(score.totalScore).toBeGreaterThanOrEqual(4);
+    expect(score.scoreReasons.some((reason) => reason.includes('赔率'))).toBe(true);
+  });
+
+  it('should suppress a hot breakout when reward/risk is poor despite strong indicators', () => {
+    const dailyCandles = Array(30).fill(null).map(() => makeCandle(100));
+    dailyCandles[28] = makeCandle(132);
+    dailyCandles[29] = makeCandle(145);
+
+    const volumeAnalysis = {
+      ...makeDefaultVolumeAnalysis(),
+      cmf: Array(30).fill(0.35),
+      obv: Array.from({ length: 30 }, (_, i) => 100 + i * 20),
+      hasVolumeBreakout: true,
+      isVolumeExpanding: true
+    };
+
+    const pattern = makeDefaultPattern();
+    pattern.activePatterns = [
+      { key: 'cupAndHandle', name: 'Cup and handle', bias: 'bullish', confidence: 0.8, description: 'Breakout' }
+    ];
+
+    const score = calculateStockScore(
+      dailyCandles,
+      {
+        ema5: Array(30).fill(138),
+        ema10: Array(30).fill(130),
+        ema20: Array(30).fill(112),
+        ema60: Array(30).fill(96)
+      },
+      { dif: Array(30).fill(2.2), dea: Array(30).fill(1.2), hist: Array(30).fill(1.1) },
+      { k: Array(30).fill(90), d: Array(30).fill(84), j: Array(30).fill(98) },
+      Array(30).fill(82),
+      Array(30).fill(4),
+      makeDefaultIchimoku(30, 'bullish'),
+      volumeAnalysis,
+      pattern,
+      { ...makeDefaultWave(), waveScoreContribution: 0.5, currentWave: 'Wave 3 (Upward Impulse)' },
+      makeDefaultSR({
+        horizontalSupports: [120],
+        horizontalResistances: [150],
+        volumeSupportNodes: [118],
+        volumeResistanceNodes: [151],
+        volumePOC: 118,
+        volumeProfile: {
+          poc: 118,
+          valueAreaHigh: 136,
+          valueAreaLow: 108,
+          nodes: [{ price: 118, volume: 3000, volumeShare: 0.5 }]
+        },
+        dynamicSupportEMA20: 112,
+        dynamicSupportEMA60: 96,
+        dynamicBOLLUpper: 152,
+        dynamicBOLLLower: 90
+      }),
+      makeDefaultChanLun({
+        currentStrokeDirection: 'up',
+        chanlunDescription: '缠论结构：最近已确立一笔向上笔，当前在该笔冲高后，正在形成潜在的顶分型结构。'
+      }),
+      [makeCandle(145)],
+      { ema5: [138], ema10: [130], ema20: [112], ema60: [96] },
+      { dif: [0.8], dea: [0.3], hist: [0.5] }
+    );
+
+    expect(score.totalScore).toBeLessThan(3.5);
+    expect(score.scoreReasons.some((reason) => reason.includes('赔率'))).toBe(true);
+  });
+
+  it('should use Fibonacci and ChanLun context to improve a left-side reversal score', () => {
+    const dailyCandles = Array(30).fill(null).map(() => makeCandle(100));
+    dailyCandles[29] = makeCandle(96);
+
+    const patternWithoutContext = makeDefaultPattern();
+    patternWithoutContext.tdSignal = 'Buy Setup 9';
+    patternWithoutContext.rsiDivergence = 'bottom';
+
+    const patternWithContext = {
+      ...patternWithoutContext,
+      fibonacciLevels: [
+        { label: '61.8%', price: 95.8 },
+        { label: '78.6%', price: 92 }
+      ]
+    };
+
+    const commonArgs = {
+      dailyCandles,
+      dailyEMAs: {
+        ema5: Array(30).fill(97),
+        ema10: Array(30).fill(98),
+        ema20: Array(30).fill(101),
+        ema60: Array(30).fill(104)
+      },
+      dailyMACD: { dif: Array(30).fill(-0.4), dea: Array(30).fill(-0.6), hist: Array(30).fill(0.1) },
+      dailyKDJ: { k: Array(30).fill(24), d: Array(30).fill(20), j: Array(30).fill(32) },
+      dailyRSI: Array(30).fill(34),
+      dailyATR: Array(30).fill(2.2),
+      dailyIchimoku: makeDefaultIchimoku(30, 'neutral'),
+      dailyVolumeAnalysis: {
+        ...makeDefaultVolumeAnalysis(),
+        cmf: Array(30).fill(0.08),
+        obv: Array.from({ length: 30 }, (_, i) => 100 + i)
+      },
+      dailyWaveResult: makeDefaultWave(),
+      dailySupportResistance: makeDefaultSR({
+        horizontalSupports: [94],
+        horizontalResistances: [108],
+        volumeSupportNodes: [95],
+        volumeResistanceNodes: [110],
+        volumePOC: 97,
+        volumeProfile: {
+          poc: 97,
+          valueAreaHigh: 103,
+          valueAreaLow: 94,
+          nodes: [{ price: 97, volume: 3000, volumeShare: 0.5 }]
+        }
+      }),
+      weeklyCandles: [makeCandle(96)],
+      weeklyEMAs: { ema5: [98], ema10: [100], ema20: [102], ema60: [104] },
+      weeklyMACD: { dif: [-0.3], dea: [-0.5], hist: [0.2] }
+    };
+
+    const withoutContext = calculateStockScore(
+      commonArgs.dailyCandles,
+      commonArgs.dailyEMAs,
+      commonArgs.dailyMACD,
+      commonArgs.dailyKDJ,
+      commonArgs.dailyRSI,
+      commonArgs.dailyATR,
+      commonArgs.dailyIchimoku,
+      commonArgs.dailyVolumeAnalysis,
+      patternWithoutContext,
+      commonArgs.dailyWaveResult,
+      commonArgs.dailySupportResistance,
+      makeDefaultChanLun({ currentStrokeDirection: 'down', chanlunDescription: '缠论结构：向下笔延续。' }),
+      commonArgs.weeklyCandles,
+      commonArgs.weeklyEMAs,
+      commonArgs.weeklyMACD
+    );
+
+    const withContext = calculateStockScore(
+      commonArgs.dailyCandles,
+      commonArgs.dailyEMAs,
+      commonArgs.dailyMACD,
+      commonArgs.dailyKDJ,
+      commonArgs.dailyRSI,
+      commonArgs.dailyATR,
+      commonArgs.dailyIchimoku,
+      commonArgs.dailyVolumeAnalysis,
+      patternWithContext,
+      commonArgs.dailyWaveResult,
+      commonArgs.dailySupportResistance,
+      makeDefaultChanLun({ currentStrokeDirection: 'down', chanlunDescription: '缠论结构：向下笔探底后，正在形成潜在的底分型结构。' }),
+      commonArgs.weeklyCandles,
+      commonArgs.weeklyEMAs,
+      commonArgs.weeklyMACD
+    );
+
+    expect(withContext.totalScore).toBeGreaterThan(withoutContext.totalScore);
+    expect(withContext.scoreReasons.some((reason) => reason.includes('斐波纳契'))).toBe(true);
+    expect(withContext.scoreReasons.some((reason) => reason.includes('缠论'))).toBe(true);
   });
 
   it('should return neutral weeklyResonanceScore if weeklyCandles is empty and no extra risk applies', () => {
@@ -277,6 +519,7 @@ describe('scoring', () => {
       makeDefaultPattern(),
       makeDefaultWave(),
       makeDefaultSR(),
+      makeDefaultChanLun(),
       [],
       { ema5: [], ema10: [], ema20: [], ema60: [] },
       { dif: [], dea: [], hist: [] }

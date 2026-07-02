@@ -3,6 +3,7 @@ import { VolumeAnalysisResult } from "./volumeForce";
 import { PatternResult } from "./patterns";
 import { WaveAnalysisResult } from "./waveTheory";
 import { SupportResistanceResult } from "./supportResistance";
+import { ChanLunResult } from "./chanlun";
 
 export interface ScoreDetail {
   baseTrendScore: number;
@@ -15,11 +16,20 @@ export interface ScoreDetail {
 }
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-const isValid = (value: number | undefined) => typeof value === "number" && Number.isFinite(value);
+const isValid = (value: number | undefined): value is number => typeof value === "number" && Number.isFinite(value);
+
+const BULLISH_REVERSAL_PATTERNS = new Set(["doubleBottom", "tripleBottom", "fallingWedge"]);
+const BULLISH_BREAKOUT_PATTERNS = new Set(["cupAndHandle", "bullFlag", "doubleBottom", "tripleBottom"]);
+const BEARISH_TOP_PATTERNS = new Set(["doubleTop", "tripleTop", "headAndShoulders", "roundingTop", "bearFlag", "risingWedge"]);
 
 function pctDistance(price: number, base: number): number {
   if (!base) return 0;
   return ((price - base) / base) * 100;
+}
+
+function pctFromCurrent(currentPrice: number, level: number): number {
+  if (!currentPrice) return 0;
+  return Math.abs((currentPrice - level) / currentPrice) * 100;
 }
 
 function latestValid(values: number[]): number | undefined {
@@ -29,11 +39,52 @@ function latestValid(values: number[]): number | undefined {
   return undefined;
 }
 
+function valueAt(values: number[], index: number): number | undefined {
+  return isValid(values[index]) ? values[index] : latestValid(values);
+}
+
+function uniqueLevels(levels: Array<number | undefined>): number[] {
+  const seen = new Set<string>();
+  const result: number[] = [];
+
+  for (const level of levels) {
+    if (!isValid(level) || level <= 0) continue;
+    const key = level.toFixed(2);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(level);
+    }
+  }
+
+  return result;
+}
+
+function levelsBelow(levels: Array<number | undefined>, currentPrice: number): number[] {
+  return uniqueLevels(levels)
+    .filter((level) => level < currentPrice)
+    .sort((a, b) => b - a);
+}
+
+function levelsAbove(levels: Array<number | undefined>, currentPrice: number): number[] {
+  return uniqueLevels(levels)
+    .filter((level) => level > currentPrice)
+    .sort((a, b) => a - b);
+}
+
+function hasPattern(patterns: PatternResult["activePatterns"], keys: Set<string>): boolean {
+  return patterns.some((pattern) => keys.has(pattern.key));
+}
+
+function patternNames(patterns: PatternResult["activePatterns"]): string {
+  return patterns.map((pattern) => pattern.name).join("、");
+}
+
 /**
- * Computes a 0-5 buy-attractiveness score.
+ * Computes a 0-5 buy-point attractiveness score.
  *
- * A high score means the current setup has better buy/accumulate expectancy
- * based on trend quality, entry location, confirmation, and reward/risk.
+ * A high score means the current price offers attractive buy odds first,
+ * then receives confirmation from one of three setup paths: left-side reversal,
+ * trend pullback, or right-side breakout.
  */
 export function calculateStockScore(
   dailyCandles: Candle[],
@@ -47,6 +98,7 @@ export function calculateStockScore(
   dailyPatternResult: PatternResult,
   dailyWaveResult: WaveAnalysisResult,
   dailySupportResistance: SupportResistanceResult,
+  dailyChanLunResult: ChanLunResult,
   weeklyCandles: Candle[],
   weeklyEMAs: { ema5: number[]; ema10: number[]; ema20: number[]; ema60: number[] },
   weeklyMACD: { dif: number[]; dea: number[]; hist: number[] }
@@ -71,308 +123,394 @@ export function calculateStockScore(
   const prevPrice = dailyCandles[latestD - 1]?.close ?? currentPrice;
   const dayChangePct = prevPrice ? pctDistance(currentPrice, prevPrice) : 0;
 
-  const de5 = dailyEMAs.ema5[latestD];
-  const de10 = dailyEMAs.ema10[latestD];
-  const de20 = dailyEMAs.ema20[latestD];
-  const de60 = dailyEMAs.ema60[latestD];
+  const de5 = valueAt(dailyEMAs.ema5, latestD);
+  const de10 = valueAt(dailyEMAs.ema10, latestD);
+  const de20 = valueAt(dailyEMAs.ema20, latestD);
+  const de60 = valueAt(dailyEMAs.ema60, latestD);
   const distFromEma20 = isValid(de20) ? pctDistance(currentPrice, de20) : 0;
   const distFromEma60 = isValid(de60) ? pctDistance(currentPrice, de60) : 0;
-  const atr = dailyATR[latestD] ?? latestValid(dailyATR);
+  const atr = valueAt(dailyATR, latestD);
   const atrPct = isValid(atr) && currentPrice ? (atr / currentPrice) * 100 : 0;
+  const maxHealthyStopPct = Math.max(6, atrPct > 0 ? atrPct * 2.5 : 6);
+
+  const vpvr = dailySupportResistance.volumeProfile;
+  const fibLevels = dailyPatternResult.fibonacciLevels.map((level) => level.price);
+  const structuralLevels = [vpvr.poc, vpvr.valueAreaHigh, vpvr.valueAreaLow, dailySupportResistance.volumePOC];
+  const supportPool = [
+    ...dailySupportResistance.horizontalSupports,
+    ...dailySupportResistance.volumeSupportNodes,
+    dailySupportResistance.dynamicSupportEMA20,
+    dailySupportResistance.dynamicSupportEMA60,
+    dailySupportResistance.dynamicBOLLLower,
+    ...structuralLevels,
+    ...fibLevels,
+  ];
+  const resistancePool = [
+    ...dailySupportResistance.horizontalResistances,
+    ...dailySupportResistance.volumeResistanceNodes,
+    dailySupportResistance.dynamicBOLLUpper,
+    ...structuralLevels,
+    ...fibLevels,
+  ];
+
+  const supportLevels = levelsBelow(supportPool, currentPrice);
+  const resistanceLevels = levelsAbove(resistancePool, currentPrice);
+  const fallbackRiskUnit = Math.max(isValid(atr) ? atr * 2 : 0, currentPrice * 0.05);
+  const fallbackRewardUnit = Math.max(isValid(atr) ? atr * 3 : 0, currentPrice * 0.08);
+  const minMeaningfulTargetPct = Math.max(4, atrPct > 0 ? atrPct * 1.5 : 4);
+  const nearestSupport = supportLevels[0] ?? Math.max(0.01, currentPrice - fallbackRiskUnit);
+  const nearestResistance = resistanceLevels.find((level) => pctFromCurrent(currentPrice, level) >= minMeaningfulTargetPct)
+    ?? resistanceLevels[0]
+    ?? currentPrice + fallbackRewardUnit;
+  const downsidePct = Math.max(0.1, ((currentPrice - nearestSupport) / currentPrice) * 100);
+  const upsidePct = Math.max(0, ((nearestResistance - currentPrice) / currentPrice) * 100);
+  const rewardRisk = upsidePct / downsidePct;
+  const supportWindowPct = Math.max(2.5, Math.min(6, atrPct > 0 ? atrPct * 1.2 : 2.5));
+  const supportConfluence = supportLevels.filter((level) => pctFromCurrent(currentPrice, level) <= supportWindowPct).length;
+  const nearestFibSupport = levelsBelow(fibLevels, currentPrice)[0];
+  const nearestFibResistance = levelsAbove(fibLevels, currentPrice)[0];
+  const nearFibSupport = isValid(nearestFibSupport) && pctFromCurrent(currentPrice, nearestFibSupport) <= supportWindowPct;
+  const nearFibResistance = isValid(nearestFibResistance) && pctFromCurrent(currentPrice, nearestFibResistance) <= supportWindowPct;
+  const inValueArea = isValid(vpvr.valueAreaLow) && isValid(vpvr.valueAreaHigh) && currentPrice >= vpvr.valueAreaLow && currentPrice <= vpvr.valueAreaHigh;
+  const belowValueArea = isValid(vpvr.valueAreaLow) && currentPrice < vpvr.valueAreaLow;
+  const aboveValueArea = isValid(vpvr.valueAreaHigh) && currentPrice > vpvr.valueAreaHigh;
 
   let baseTrendScore = 0;
-  if ([de5, de10, de20, de60].every(isValid)) {
-    if (de20 > de60 && currentPrice >= de60 && currentPrice <= de20 * 1.08) {
-      baseTrendScore = 1.25;
-      scoreReasons.push("日线中期趋势偏多，且价格没有明显远离 EMA20，建仓位置较健康 (+1.25)");
-    } else if (de5 > de10 && de10 > de20 && de20 > de60 && currentPrice <= de20 * 1.15) {
-      baseTrendScore = 1.05;
-      scoreReasons.push("日线 EMA 多头排列，但仍控制追高溢价，趋势质量良好 (+1.05)");
-    } else if (de20 > de60) {
-      baseTrendScore = 0.8;
-      scoreReasons.push("日线 20EMA 位于 60EMA 上方，中线趋势改善 (+0.8)");
-    } else if (currentPrice > de20 && currentPrice > de60) {
-      baseTrendScore = 0.45;
-      scoreReasons.push("价格重新站上 EMA20/EMA60，但趋势排列仍需确认 (+0.45)");
-    } else if (de5 < de10 && de10 < de20 && de20 < de60) {
-      baseTrendScore = 0;
-      scoreReasons.push("日线 EMA 空头排列，当前不适合主动买入 (0)");
-    } else {
-      baseTrendScore = 0.25;
-      scoreReasons.push("日线均线纠缠，仍处于观察区 (+0.25)");
-    }
-
-    if (distFromEma20 > 15) {
-      baseTrendScore = Math.max(0, baseTrendScore - 0.45);
-      scoreReasons.push(`价格较 EMA20 偏离 ${distFromEma20.toFixed(1)}%，追高风险上升 (-0.45)`);
-    }
-    if (atrPct > 0 && distFromEma20 > atrPct * 2.2) {
-      baseTrendScore = Math.max(0, baseTrendScore - 0.25);
-      scoreReasons.push("价格偏离 EMA20 超过约 2.2 倍 ATR，当前赔率不佳 (-0.25)");
-    }
+  if (rewardRisk >= 3 && downsidePct <= maxHealthyStopPct) {
+    baseTrendScore = 1.35;
+  } else if (rewardRisk >= 2.2 && downsidePct <= maxHealthyStopPct * 1.2) {
+    baseTrendScore = 1.15;
+  } else if (rewardRisk >= 1.6) {
+    baseTrendScore = 0.9;
+  } else if (rewardRisk >= 1.1) {
+    baseTrendScore = 0.6;
+  } else if (rewardRisk >= 0.8) {
+    baseTrendScore = 0.35;
   } else {
-    baseTrendScore = 0.45;
+    baseTrendScore = 0.15;
   }
 
-  let momentumPoints = 0;
-  const dif = dailyMACD.dif[latestD];
-  const dea = dailyMACD.dea[latestD];
-  const hist = dailyMACD.hist[latestD];
-  const prevDif = dailyMACD.dif[latestD - 1];
-  const prevDea = dailyMACD.dea[latestD - 1];
-  const prevHist = dailyMACD.hist[latestD - 1];
+  scoreReasons.push(`买入赔率约 ${rewardRisk.toFixed(1)}:1，上行空间 ${upsidePct.toFixed(1)}%，下行风险 ${downsidePct.toFixed(1)}%`);
 
-  if (isValid(dif) && isValid(dea)) {
-    const isGoldCross = dif > dea && isValid(prevDif) && isValid(prevDea) && prevDif <= prevDea;
-    const isDeadCross = dif < dea && isValid(prevDif) && isValid(prevDea) && prevDif >= prevDea;
-
-    if (dif > 0 && dif > dea && hist > 0) {
-      const stillAccelerating = isValid(prevHist) ? hist >= prevHist : true;
-      momentumPoints += stillAccelerating ? 0.22 : 0.08;
-      scoreReasons.push(stillAccelerating
-        ? "MACD 位于零轴上方且红柱扩张，趋势动能配合买点 (+0.22)"
-        : "MACD 位于零轴上方但红柱收缩，趋势仍在但买点不占优 (+0.08)");
-    } else if (dif < 0 && isGoldCross) {
-      momentumPoints += 0.35;
-      scoreReasons.push("MACD 零轴下方金叉，具备左侧修复信号 (+0.35)");
-    } else if (isDeadCross) {
-      momentumPoints -= 0.3;
-      scoreReasons.push("MACD 死叉，短线胜率下降 (-0.3)");
-    } else if (dif < 0 && dif > dea) {
-      momentumPoints += 0.18;
-      scoreReasons.push("MACD 零轴下方弱势反弹，空头动能收敛 (+0.18)");
-    }
+  if (supportConfluence >= 3) {
+    baseTrendScore += 0.2;
+    scoreReasons.push("支撑、均线、筹码或斐波纳契形成多重共振，止损依据更清晰 (+0.2)");
+  } else if (supportConfluence >= 2) {
+    baseTrendScore += 0.1;
+    scoreReasons.push("附近存在两类支撑依据，买入位置具备一定防守性 (+0.1)");
   }
 
-  const k = dailyKDJ.k[latestD];
-  const d = dailyKDJ.d[latestD];
-  if (isValid(k) && isValid(d)) {
-    if (k > d && d < 30) {
-      momentumPoints += 0.3;
-      scoreReasons.push("KDJ 低位金叉，左侧买点质量较好 (+0.3)");
-    } else if (k < d && d > 80) {
-      momentumPoints -= 0.3;
-      scoreReasons.push("KDJ 高位死叉，超买回落风险加剧 (-0.3)");
-    } else if (k > d && d >= 30 && d <= 70) {
-      momentumPoints += 0.15;
-      scoreReasons.push("KDJ 中位金叉，动能温和改善 (+0.15)");
-    }
+  if (nearFibSupport) {
+    baseTrendScore += 0.1;
+    scoreReasons.push(`价格靠近斐波纳契支撑 ${nearestFibSupport.toFixed(2)}，赔率可信度提升 (+0.1)`);
   }
+  if (inValueArea) {
+    baseTrendScore += 0.1;
+    scoreReasons.push("价格位于 VPVR 价值区内，筹码承接相对充分 (+0.1)");
+  } else if (belowValueArea) {
+    baseTrendScore -= 0.1;
+    scoreReasons.push("价格低于 VPVR 价值区，筹码结构仍需修复 (-0.1)");
+  }
+  if (downsidePct > maxHealthyStopPct * 1.5) {
+    baseTrendScore -= 0.25;
+    scoreReasons.push("止损距离偏大，买入赔率需要打折 (-0.25)");
+  } else if (downsidePct > maxHealthyStopPct) {
+    baseTrendScore -= 0.15;
+    scoreReasons.push("下方风险略大于健康止损范围，仓位吸引力下降 (-0.15)");
+  }
+  baseTrendScore = clamp(baseTrendScore, 0, 1.6);
 
-  const rsi = dailyRSI[latestD];
-  if (isValid(rsi)) {
-    if (rsi >= 40 && rsi <= 60) {
-      momentumPoints += 0.2;
-      scoreReasons.push("RSI 处于 40-60 中性修复区，买点不拥挤 (+0.2)");
-    } else if (rsi > 60 && rsi < 70) {
-      momentumPoints += 0.12;
-      scoreReasons.push("RSI 处于 60-70 强势区，但需控制追高 (+0.12)");
-    } else if (rsi >= 70) {
-      momentumPoints -= 0.28;
-      scoreReasons.push("RSI 已进入超买区，买入安全边际下降 (-0.28)");
-    } else if (rsi < 30) {
-      momentumPoints += 0.15;
-      scoreReasons.push("RSI 严重超卖，具备反弹观察价值 (+0.15)");
-    }
+  const dif = valueAt(dailyMACD.dif, latestD);
+  const dea = valueAt(dailyMACD.dea, latestD);
+  const hist = valueAt(dailyMACD.hist, latestD);
+  const prevDif = valueAt(dailyMACD.dif, latestD - 1);
+  const prevDea = valueAt(dailyMACD.dea, latestD - 1);
+  const prevHist = valueAt(dailyMACD.hist, latestD - 1);
+  const isGoldCross = isValid(dif) && isValid(dea) && isValid(prevDif) && isValid(prevDea) && dif > dea && prevDif <= prevDea;
+  const macdBullish = isValid(dif) && isValid(dea) && dif > dea;
+  const macdAboveZero = isValid(dif) && isValid(dea) && isValid(hist) && dif > 0 && dif > dea && hist > 0;
+  const macdRepair = isValid(dif) && isValid(dea) && dif < 0 && dif > dea;
+  const macdAccelerating = macdAboveZero && (!isValid(prevHist) || (isValid(hist) && hist >= prevHist));
+
+  const k = valueAt(dailyKDJ.k, latestD);
+  const d = valueAt(dailyKDJ.d, latestD);
+  const kdjLowGold = isValid(k) && isValid(d) && k > d && d < 30;
+  const kdjMidGold = isValid(k) && isValid(d) && k > d && d >= 30 && d <= 70;
+  const kdjHighDead = isValid(k) && isValid(d) && k < d && d > 80;
+  const rsi = valueAt(dailyRSI, latestD);
+  const rsiOversold = isValid(rsi) && rsi < 35;
+  const rsiNeutral = isValid(rsi) && rsi >= 40 && rsi <= 60;
+  const rsiStrongButNotHot = isValid(rsi) && rsi > 60 && rsi < 72;
+  const rsiOverheated = isValid(rsi) && rsi >= 72;
+  const bottomDivergence = dailyPatternResult.macdDivergence === "bottom" || dailyPatternResult.rsiDivergence === "bottom" || dailyPatternResult.kdjDivergence === "bottom";
+  const topDivergence = dailyPatternResult.macdDivergence === "top" || dailyPatternResult.rsiDivergence === "top" || dailyPatternResult.kdjDivergence === "top";
+
+  const bullishPatterns = dailyPatternResult.activePatterns.filter((pattern) => pattern.bias === "bullish");
+  const bearishPatterns = dailyPatternResult.activePatterns.filter((pattern) => pattern.bias === "bearish");
+  const neutralPatterns = dailyPatternResult.activePatterns.filter((pattern) => pattern.bias === "neutral");
+  const hasBullishReversalPattern = hasPattern(bullishPatterns, BULLISH_REVERSAL_PATTERNS);
+  const hasBullishBreakoutPattern = hasPattern(bullishPatterns, BULLISH_BREAKOUT_PATTERNS);
+  const hasBearishTopPattern = hasPattern(bearishPatterns, BEARISH_TOP_PATTERNS);
+  const dailyUptrend = isValid(de20) && isValid(de60) && de20 > de60 && currentPrice >= de60;
+  const dailyStrongTrend = isValid(de5) && isValid(de10) && isValid(de20) && isValid(de60) && de5 > de10 && de10 > de20 && de20 > de60;
+  const nearEma20 = isValid(de20) && Math.abs(distFromEma20) <= 4;
+  const nearEma60 = isValid(de60) && Math.abs(distFromEma60) <= 5;
+  const cmfVal = valueAt(dailyVolumeAnalysis.cmf, latestD);
+
+  const weeklyClose = weeklyCandles[latestW]?.close;
+  const we5 = valueAt(weeklyEMAs.ema5, latestW);
+  const we10 = valueAt(weeklyEMAs.ema10, latestW);
+  const we20 = valueAt(weeklyEMAs.ema20, latestW);
+  const we60 = valueAt(weeklyEMAs.ema60, latestW);
+  const weeklyTrendUp = isValid(weeklyClose) && isValid(we20) && isValid(we60) && we20 > we60 && weeklyClose >= we20;
+  const weeklyStrongTrend = isValid(we5) && isValid(we10) && isValid(we20) && isValid(we60) && we5 > we10 && we10 > we20 && we20 > we60;
+  const weeklyTrendDown = isValid(we5) && isValid(we10) && isValid(we20) && isValid(we60) && we5 < we10 && we10 < we20 && we20 < we60;
+  const chanlunBottomHint = dailyChanLunResult.chanlunDescription.includes("底分型");
+  const chanlunTopHint = dailyChanLunResult.chanlunDescription.includes("顶分型");
+
+  let leftSetupScore = 0;
+  if (dailyPatternResult.tdSignal === "Buy Setup 9") leftSetupScore += 0.22;
+  if (bottomDivergence) leftSetupScore += 0.25;
+  if (rsiOversold) leftSetupScore += 0.2;
+  if (kdjLowGold) leftSetupScore += 0.2;
+  if (macdRepair || isGoldCross) leftSetupScore += 0.18;
+  if (hasBullishReversalPattern) leftSetupScore += 0.18;
+  if (nearFibSupport || supportConfluence >= 2 || inValueArea) leftSetupScore += 0.12;
+  if (chanlunBottomHint) leftSetupScore += 0.1;
+  leftSetupScore = clamp(leftSetupScore, 0, 1.2);
+
+  let pullbackSetupScore = 0;
+  if (dailyUptrend) pullbackSetupScore += 0.25;
+  if (weeklyTrendUp || weeklyStrongTrend) pullbackSetupScore += 0.2;
+  if (nearEma20 || nearEma60) pullbackSetupScore += 0.25;
+  if (rsiNeutral || rsiStrongButNotHot) pullbackSetupScore += 0.15;
+  if (macdBullish || macdAccelerating) pullbackSetupScore += 0.15;
+  if (kdjMidGold) pullbackSetupScore += 0.08;
+  if (isValid(cmfVal) && cmfVal > 0.05) pullbackSetupScore += 0.1;
+  if (inValueArea || supportConfluence >= 2) pullbackSetupScore += 0.1;
+  if (dailyIchimoku.cloudSignal === "bullish") pullbackSetupScore += 0.1;
+  if (dailyChanLunResult.currentStrokeDirection === "up" && !chanlunTopHint) pullbackSetupScore += 0.1;
+  pullbackSetupScore = clamp(pullbackSetupScore, 0, 1.2);
+
+  let breakoutSetupScore = 0;
+  if (hasBullishBreakoutPattern) breakoutSetupScore += 0.25;
+  if (dailyVolumeAnalysis.hasVolumeBreakout && dayChangePct > 0) breakoutSetupScore += 0.2;
+  if (macdAboveZero) breakoutSetupScore += 0.2;
+  if (dailyStrongTrend) breakoutSetupScore += 0.15;
+  if (aboveValueArea && rewardRisk >= 1.2) breakoutSetupScore += 0.1;
+  if (rsiStrongButNotHot) breakoutSetupScore += 0.1;
+  if (dayChangePct > 4 || distFromEma20 > 12 || rsiOverheated) breakoutSetupScore -= 0.3;
+  if (nearFibResistance && rewardRisk < 1.4) breakoutSetupScore -= 0.1;
+  breakoutSetupScore = clamp(breakoutSetupScore, 0, 1.2);
+
+  const setupScores = [
+    { name: "左侧反转", score: leftSetupScore },
+    { name: "趋势回踩", score: pullbackSetupScore },
+    { name: "右侧突破", score: breakoutSetupScore },
+  ].sort((a, b) => b.score - a.score);
+  const bestSetup = setupScores[0];
+  const momentumScore = bestSetup.score;
+  if (momentumScore > 0) {
+    scoreReasons.push(`${bestSetup.name}路径当前确认度最高 (+${momentumScore.toFixed(2)})`);
   }
-  const momentumScore = clamp(momentumPoints, 0, 1);
 
   let volumePoints = 0;
-  const cmfVal = dailyVolumeAnalysis.cmf[latestD];
   if (isValid(cmfVal)) {
     if (cmfVal > 0.15) {
-      volumePoints += 0.2;
-      scoreReasons.push(`CMF 显示资金净流入 (CMF: ${cmfVal.toFixed(2)}) (+0.2)`);
+      volumePoints += 0.3;
+      scoreReasons.push(`CMF 显示资金净流入 (CMF: ${cmfVal.toFixed(2)}) (+0.3)`);
     } else if (cmfVal > 0.05) {
-      volumePoints += 0.1;
-      scoreReasons.push(`CMF 温和净流入 (CMF: ${cmfVal.toFixed(2)}) (+0.1)`);
+      volumePoints += 0.18;
+      scoreReasons.push(`CMF 温和净流入 (CMF: ${cmfVal.toFixed(2)}) (+0.18)`);
     } else if (cmfVal < -0.15) {
-      volumePoints -= 0.25;
-      scoreReasons.push(`CMF 显示资金流出，筹码承接不足 (CMF: ${cmfVal.toFixed(2)}) (-0.25)`);
+      volumePoints -= 0.3;
+      scoreReasons.push(`CMF 显示资金流出，承接不足 (CMF: ${cmfVal.toFixed(2)}) (-0.3)`);
+    } else if (cmfVal < -0.05) {
+      volumePoints -= 0.15;
+      scoreReasons.push(`CMF 偏流出，资金确认度不足 (CMF: ${cmfVal.toFixed(2)}) (-0.15)`);
     }
   }
 
   const obv = dailyVolumeAnalysis.obv;
-  if (obv.length >= 10) {
-    let obvSum = 0;
-    for (let i = latestD - 1; i > Math.max(-1, latestD - 10); i--) {
-      obvSum += obv[i] ?? 0;
+  const latestObv = valueAt(obv, latestD);
+  const obvWindow = obv.slice(Math.max(0, latestD - 10), latestD).filter(isValid);
+  if (isValid(latestObv) && obvWindow.length > 0) {
+    const obvAverage = obvWindow.reduce((sum, value) => sum + value, 0) / obvWindow.length;
+    if (latestObv > obvAverage) {
+      volumePoints += 0.15;
+      scoreReasons.push("OBV 高于近端均值，资金承接较健康 (+0.15)");
     }
-    const obv10SMA = obvSum / Math.min(9, obv.length - 1);
-    if (obv[latestD] > obv10SMA) {
-      volumePoints += 0.12;
-      scoreReasons.push("OBV 位于短期均线上方，承接量能较健康 (+0.12)");
-    }
+  }
+
+  if (dailyVolumeAnalysis.isVolumeExpanding) {
+    volumePoints += 0.1;
+    scoreReasons.push("近期成交量扩张，确认度改善 (+0.1)");
   }
 
   if (dailyVolumeAnalysis.hasVolumeBreakout) {
-    if (dayChangePct > 3 || distFromEma20 > 12) {
-      volumePoints -= 0.25;
-      scoreReasons.push("放量急涨且价格偏离均线，短线更偏交易热度而非低风险买点 (-0.25)");
+    if (dayChangePct > 4 || distFromEma20 > 12) {
+      volumePoints -= 0.2;
+      scoreReasons.push("放量急涨且价格偏离均线，热度高于买入赔率 (-0.2)");
     } else if (dayChangePct > 0) {
-      volumePoints += 0.12;
-      scoreReasons.push("温和放量上行，突破质量尚可 (+0.12)");
+      volumePoints += 0.18;
+      scoreReasons.push("温和放量上行，突破质量尚可 (+0.18)");
     } else {
-      volumePoints -= 0.15;
-      scoreReasons.push("放量下跌，卖压放大 (-0.15)");
-    }
-  }
-
-  if ([de20, de60].every(isValid)) {
-    if (Math.abs(distFromEma20) <= 4 && de20 >= de60) {
-      volumePoints += 0.25;
-      scoreReasons.push("价格靠近 EMA20 且中期趋势未坏，具备较好的回踩买入位置 (+0.25)");
-    } else if (Math.abs(distFromEma60) <= 5 && de20 >= de60) {
-      volumePoints += 0.2;
-      scoreReasons.push("价格靠近 EMA60 支撑，风险收益比改善 (+0.2)");
-    }
-  }
-
-  const nearestSupport = dailySupportResistance.horizontalSupports[0]
-    ?? dailySupportResistance.volumeSupportNodes[0]
-    ?? dailySupportResistance.dynamicBOLLLower
-    ?? dailySupportResistance.dynamicSupportEMA60;
-  const nearestResistance = dailySupportResistance.horizontalResistances[0]
-    ?? dailySupportResistance.volumeResistanceNodes[0]
-    ?? dailySupportResistance.dynamicBOLLUpper;
-
-  if (isValid(nearestSupport) && isValid(nearestResistance) && nearestSupport < currentPrice && nearestResistance > currentPrice) {
-    const downsidePct = Math.max(0.1, ((currentPrice - nearestSupport) / currentPrice) * 100);
-    const upsidePct = ((nearestResistance - currentPrice) / currentPrice) * 100;
-    const rewardRisk = upsidePct / downsidePct;
-
-    if (rewardRisk >= 1.8 && downsidePct <= Math.max(6, atrPct * 2.5)) {
-      volumePoints += 0.25;
-      scoreReasons.push(`上方空间/下方风险约 ${rewardRisk.toFixed(1)}:1，当前建仓赔率较好 (+0.25)`);
-    } else if (rewardRisk < 0.9) {
-      volumePoints -= 0.25;
-      scoreReasons.push(`距离压力位过近，空间/风险约 ${rewardRisk.toFixed(1)}:1，当前不适合追买 (-0.25)`);
-    }
-  }
-
-  const vah = dailySupportResistance.volumeProfile.valueAreaHigh;
-  const val = dailySupportResistance.volumeProfile.valueAreaLow;
-  if (isValid(vah) && isValid(val) && val < vah) {
-    if (currentPrice >= val && currentPrice <= vah) {
-      volumePoints += 0.1;
-      scoreReasons.push("价格位于 VPVR 价值区内，筹码承接相对充分 (+0.1)");
-    } else if (currentPrice > vah && dayChangePct > 3) {
-      volumePoints -= 0.15;
-      scoreReasons.push("价格快速脱离 VPVR 价值区上沿，短线追买赔率下降 (-0.15)");
-    } else if (currentPrice < val) {
-      volumePoints -= 0.1;
-      scoreReasons.push("价格低于 VPVR 价值区，筹码压力仍需修复 (-0.1)");
+      volumePoints -= 0.2;
+      scoreReasons.push("放量下跌，卖压放大 (-0.2)");
     }
   }
 
   if (dailyVolumeAnalysis.hasPriceVolumeDivergence) {
-    volumePoints -= 0.2;
-    scoreReasons.push("量价背离，买入确认度下降 (-0.2)");
+    volumePoints -= 0.25;
+    scoreReasons.push("量价背离，买入确认度下降 (-0.25)");
   }
-  const volumeScore = clamp(volumePoints, 0, 0.8);
+  const volumeScore = clamp(volumePoints, 0, 0.9);
 
   let patternPoints = 0;
   if (dailyPatternResult.tdSignal === "Buy Setup 9") {
-    patternPoints += 0.35;
-    scoreReasons.push("TD Buy Setup 9，左侧反转信号加分 (+0.35)");
+    patternPoints += 0.15;
+    scoreReasons.push("TD Buy Setup 9 提供左侧反转依据 (+0.15)");
   } else if (dailyPatternResult.tdSignal === "Sell Setup 9") {
-    patternPoints -= 0.35;
-    scoreReasons.push("TD Sell Setup 9，趋势衰竭风险扣分 (-0.35)");
+    patternPoints -= 0.2;
+    scoreReasons.push("TD Sell Setup 9 提示趋势衰竭风险 (-0.2)");
   }
 
-  if (
-    dailyPatternResult.macdDivergence === "bottom" ||
-    dailyPatternResult.rsiDivergence === "bottom" ||
-    dailyPatternResult.kdjDivergence === "bottom"
-  ) {
-    patternPoints += 0.35;
-    scoreReasons.push("出现底背离，左侧性价比改善 (+0.35)");
+  if (bottomDivergence) {
+    patternPoints += 0.22;
+    scoreReasons.push("出现底背离，左侧性价比改善 (+0.22)");
   }
-
-  if (
-    dailyPatternResult.macdDivergence === "top" ||
-    dailyPatternResult.rsiDivergence === "top" ||
-    dailyPatternResult.kdjDivergence === "top"
-  ) {
-    patternPoints -= 0.35;
-    scoreReasons.push("出现顶背离，追高风险上升 (-0.35)");
+  if (topDivergence) {
+    patternPoints -= 0.25;
+    scoreReasons.push("出现顶背离，追高风险上升 (-0.25)");
   }
-
-  const bullishPatterns = dailyPatternResult.activePatterns.filter((p) => p.bias === "bullish");
-  const bearishPatterns = dailyPatternResult.activePatterns.filter((p) => p.bias === "bearish");
-  const neutralPatterns = dailyPatternResult.activePatterns.filter((p) => p.bias === "neutral");
 
   if (bullishPatterns.length > 0) {
-    const add = Math.min(0.35, bullishPatterns.reduce((sum, p) => sum + p.confidence, 0) * 0.12);
+    const add = Math.min(0.35, bullishPatterns.reduce((sum, pattern) => sum + pattern.confidence, 0) * 0.18);
     patternPoints += add;
-    scoreReasons.push(`看多形态确认：${bullishPatterns.map((p) => p.name).join("、")} (+${add.toFixed(2)})`);
+    scoreReasons.push(`看多形态参与评分：${patternNames(bullishPatterns)} (+${add.toFixed(2)})`);
   }
   if (bearishPatterns.length > 0) {
-    const deduct = Math.min(0.4, bearishPatterns.reduce((sum, p) => sum + p.confidence, 0) * 0.14);
+    const deduct = Math.min(0.45, bearishPatterns.reduce((sum, pattern) => sum + pattern.confidence, 0) * 0.2);
     patternPoints -= deduct;
-    scoreReasons.push(`看空形态风险：${bearishPatterns.map((p) => p.name).join("、")} (-${deduct.toFixed(2)})`);
+    scoreReasons.push(`看空形态压制买点：${patternNames(bearishPatterns)} (-${deduct.toFixed(2)})`);
   }
   if (neutralPatterns.length > 0) {
-    scoreReasons.push(`中性整理形态：${neutralPatterns.map((p) => p.name).join("、")}，等待突破确认 (0)`);
+    scoreReasons.push(`中性整理形态：${patternNames(neutralPatterns)}，等待突破确认 (0)`);
   }
 
-  patternPoints += dailyWaveResult.waveScoreContribution;
-  if (dailyWaveResult.waveScoreContribution > 0) {
-    scoreReasons.push(`波浪结构指向 ${dailyWaveResult.currentWave}，结构贡献 (+${dailyWaveResult.waveScoreContribution})`);
-  } else if (dailyWaveResult.waveScoreContribution < 0) {
-    scoreReasons.push(`波浪结构指向 ${dailyWaveResult.currentWave}，结构风险 (${dailyWaveResult.waveScoreContribution})`);
+  if (nearFibSupport) {
+    patternPoints += 0.15;
+    scoreReasons.push("斐波纳契支撑与当前价格接近，结构防守位更明确 (+0.15)");
+  } else if (nearFibResistance && rewardRisk < 1.4) {
+    patternPoints -= 0.1;
+    scoreReasons.push("价格靠近斐波纳契压力，向上赔率受限 (-0.1)");
   }
-  const patternsScore = clamp(patternPoints, 0, 0.7);
 
-  let weeklyResonanceScore = 0.5;
+  if (chanlunBottomHint) {
+    patternPoints += 0.15;
+    scoreReasons.push("缠论提示潜在底分型，左侧修复概率提高 (+0.15)");
+  } else if (chanlunTopHint) {
+    patternPoints -= 0.15;
+    scoreReasons.push("缠论提示潜在顶分型，追买风险上升 (-0.15)");
+  } else if (dailyChanLunResult.currentStrokeDirection === "up") {
+    patternPoints += 0.08;
+    scoreReasons.push("缠论当前向上笔延续，结构方向偏多 (+0.08)");
+  } else if (dailyChanLunResult.currentStrokeDirection === "down") {
+    patternPoints -= 0.05;
+    scoreReasons.push("缠论当前仍处向下笔，买点需等待确认 (-0.05)");
+  }
+
+  const waveContribution = clamp(dailyWaveResult.waveScoreContribution, -0.2, 0.25);
+  patternPoints += waveContribution;
+  if (waveContribution > 0) {
+    scoreReasons.push(`波浪结构指向 ${dailyWaveResult.currentWave}，结构贡献 (+${waveContribution})`);
+  } else if (waveContribution < 0) {
+    scoreReasons.push(`波浪结构指向 ${dailyWaveResult.currentWave}，结构风险 (${waveContribution})`);
+  }
+  const patternsScore = clamp(patternPoints, 0, 0.9);
+
+  let weeklyResonanceScore = latestW >= 0 ? 0.2 : 0.5;
   if (latestW >= 0) {
-    weeklyResonanceScore = 0;
-    const we5 = weeklyEMAs.ema5[latestW];
-    const we10 = weeklyEMAs.ema10[latestW];
-    const we20 = weeklyEMAs.ema20[latestW];
-    const we60 = weeklyEMAs.ema60[latestW];
-    const weeklyClose = weeklyCandles[latestW].close;
-
-    if ([we5, we10, we20, we60].every(isValid)) {
-      if (we20 > we60 && weeklyClose >= we20) {
-        weeklyResonanceScore += 0.55;
-        scoreReasons.push("周线中期趋势向上，日线买点有大周期支撑 (+0.55)");
-      } else if (we5 > we10 && we10 > we20 && we20 > we60) {
-        weeklyResonanceScore += 0.45;
-        scoreReasons.push("周线 EMA 多头排列，但需避免日线追高 (+0.45)");
-      } else if (we5 < we10 && we10 < we20 && we20 < we60) {
-        weeklyResonanceScore -= baseTrendScore >= 0.8 ? 0.5 : 0;
-        scoreReasons.push(baseTrendScore >= 0.8
-          ? "日线反弹与周线空头冲突，需防反弹结束 (-0.5)"
-          : "周线空头排列，大趋势仍弱 (0)");
-      }
+    if (weeklyTrendUp) {
+      weeklyResonanceScore += 0.3;
+      scoreReasons.push("周线中期趋势向上，日线买点有大周期支撑 (+0.3)");
+    } else if (weeklyStrongTrend) {
+      weeklyResonanceScore += 0.25;
+      scoreReasons.push("周线 EMA 多头排列，大级别趋势配合 (+0.25)");
+    } else if (weeklyTrendDown) {
+      weeklyResonanceScore -= dailyUptrend ? 0.25 : 0.1;
+      scoreReasons.push(dailyUptrend
+        ? "日线反弹与周线空头冲突，需防反弹结束 (-0.25)"
+        : "周线空头排列，大趋势仍弱 (-0.1)");
     }
 
-    const wdif = weeklyMACD.dif[latestW];
-    const wdea = weeklyMACD.dea[latestW];
+    const wdif = valueAt(weeklyMACD.dif, latestW);
+    const wdea = valueAt(weeklyMACD.dea, latestW);
     if (isValid(wdif) && isValid(wdea) && wdif > wdea) {
-      weeklyResonanceScore += 0.2;
-      scoreReasons.push("周线 MACD 金叉或红柱区间，大级别动能配合 (+0.2)");
+      weeklyResonanceScore += 0.15;
+      scoreReasons.push("周线 MACD 动能配合，买点胜率改善 (+0.15)");
     }
+  } else {
+    scoreReasons.push("周线数据不足，买点背景保持中性 (+0.5)");
   }
 
   if (dailyIchimoku.cloudSignal === "bullish") {
-    weeklyResonanceScore += 0.2;
-    scoreReasons.push("Ichimoku 云图呈多头支撑，趋势胜率改善 (+0.2)");
+    weeklyResonanceScore += 0.15;
+    scoreReasons.push("Ichimoku 云图呈多头支撑，趋势胜率改善 (+0.15)");
   } else if (dailyIchimoku.cloudSignal === "bearish") {
-    weeklyResonanceScore -= 0.25;
-    scoreReasons.push("Ichimoku 云图呈空头压制，当前买入胜率下降 (-0.25)");
+    weeklyResonanceScore -= 0.2;
+    scoreReasons.push("Ichimoku 云图呈空头压制，当前买入胜率下降 (-0.2)");
   }
 
   if (atrPct > 8) {
     weeklyResonanceScore -= 0.2;
     scoreReasons.push(`ATR 波动率约 ${atrPct.toFixed(1)}%，仓位胜率/赔率不稳定 (-0.2)`);
   }
-  weeklyResonanceScore = clamp(weeklyResonanceScore, -0.5, 1);
+  if (distFromEma20 > 15) {
+    weeklyResonanceScore -= 0.2;
+    scoreReasons.push(`价格较 EMA20 偏离 ${distFromEma20.toFixed(1)}%，追高风险上升 (-0.2)`);
+  }
+  if (rsiOverheated) {
+    weeklyResonanceScore -= 0.15;
+    scoreReasons.push("RSI 已进入过热区，买入安全边际下降 (-0.15)");
+  }
+  if (kdjHighDead) {
+    weeklyResonanceScore -= 0.15;
+    scoreReasons.push("KDJ 高位死叉，短线回落风险加剧 (-0.15)");
+  }
+  weeklyResonanceScore = clamp(weeklyResonanceScore, -0.5, 0.8);
 
-  const totalScore = Number(
-    clamp(baseTrendScore + momentumScore + volumeScore + patternsScore + weeklyResonanceScore, 0, 5).toFixed(1)
-  );
+  let totalScore = baseTrendScore + momentumScore + volumeScore + patternsScore + weeklyResonanceScore;
+
+  if (rewardRisk < 0.9) {
+    totalScore = Math.min(totalScore, 2.8);
+    scoreReasons.push("买入赔率低于 0.9:1，即便指标活跃也限制总分上限");
+  } else if (rewardRisk < 1.1) {
+    totalScore = Math.min(totalScore, 3.1);
+    scoreReasons.push("买入赔率未达到 1.1:1，暂不支持高分买点");
+  }
+  if (downsidePct > Math.max(10, atrPct * 3)) {
+    totalScore = Math.min(totalScore, 3.4);
+    scoreReasons.push("止损空间过宽，限制买点魅力分上限");
+  }
+  if (dailyVolumeAnalysis.hasVolumeBreakout && dayChangePct > 4 && rewardRisk < 1.2) {
+    totalScore = Math.min(totalScore, 3.2);
+    scoreReasons.push("放量急涨但赔率不足，按追热度而非优质买点处理");
+  }
+  if ((distFromEma20 > 12 && rsiOverheated) || (distFromEma20 > 18)) {
+    totalScore = Math.min(totalScore, 3.4);
+    scoreReasons.push("价格远离 EMA20 且动能过热，限制追买评分上限");
+  }
+  if (hasBearishTopPattern && rewardRisk < 1.6) {
+    totalScore = Math.min(totalScore, 3.0);
+    scoreReasons.push("顶部类经典形态压制，除非赔率显著改善否则不应高分");
+  }
+  if (belowValueArea && !bottomDivergence && dailyPatternResult.tdSignal !== "Buy Setup 9") {
+    totalScore = Math.min(totalScore, 3.3);
+    scoreReasons.push("价格低于 VPVR 价值区且缺少反转确认，限制评分上限");
+  }
+
+  totalScore = Number(clamp(totalScore, 0, 5).toFixed(1));
 
   return {
     baseTrendScore,

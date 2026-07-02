@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.3 - 2026-07-02
+
+### Changed
+- Renamed the score display to "买点魅力分" and reworked the scoring model around buy-entry odds, reward/risk, trend setup, support/resistance, VPVR, Fibonacci, ChanLun, and classical-pattern context.
+- Tuned AI prompt scoring semantics so model-generated reports evaluate entry attractiveness instead of recent trading heat.
+
+### Fixed
+- Hardened US and Hong Kong market data loading: EastMoney now uses market-code candidates, node retries, bounded K-line windows, and a Node HTTPS request path for more reliable server-side access.
+- Added Tencent Finance as a final real-data fallback for quotes and K-line analysis when Yahoo, EastMoney, optional providers, and other primary sources are unavailable.
+- Prevented last-resort Tencent fallback data from occupying the primary analysis cache, so primary providers are retried on later requests.
+- Reduced quote and analysis performance pressure by avoiding uncancelled timeout races, serializing quote fetches, and limiting EastMoney candles to the recent analysis window instead of full history.
+
 ## 0.5.2 - 2026-06-25
 
 ### Added

@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import YahooFinance from "yahoo-finance2";
 import { Candle, IchimokuResult, calculateEMA, calculateBOLL, calculateMACD, calculateKDJ, calculateRSI, calculateATR, calculateIchimoku } from "@/lib/analysis/indicators";
 import { convertSymbolToSina, fetchSinaAShareKlines } from "./sinaUtils";
-
-const yahooFinance = new YahooFinance();
 import { analyzePriceVolume, VolumeAnalysisResult } from "@/lib/analysis/volumeForce";
 import { calculateSupportResistance, SupportResistanceResult } from "@/lib/analysis/supportResistance";
 import { analyzeWaveTheory, WaveAnalysisResult } from "@/lib/analysis/waveTheory";
@@ -16,6 +14,26 @@ import { generateMockCandles } from "@/lib/analysis/mockData";
 import { getMarketCurrencySymbol, normalizeManualSymbolInput, replaceDollarPriceSymbols } from "@/lib/analysis/market";
 import { fetchKabutanMarketData, getKabutanCode } from "@/lib/analysis/kabutan";
 import { fetchProviderMarketData } from "@/lib/analysis/marketDataProviders";
+import { fetchTencentMarketData } from "@/lib/analysis/tencent";
+import { fetchEastMoneyJson } from "@/lib/analysis/eastmoneyHttp";
+
+const yahooFinance = new YahooFinance();
+const EAST_MONEY_KLINE_HOSTS = [
+  "push2his.eastmoney.com",
+  "1.push2his.eastmoney.com",
+  "2.push2his.eastmoney.com",
+  "3.push2his.eastmoney.com",
+  "4.push2his.eastmoney.com",
+  "5.push2his.eastmoney.com",
+  "6.push2his.eastmoney.com",
+  "7.push2his.eastmoney.com",
+  "8.push2his.eastmoney.com",
+  "9.push2his.eastmoney.com",
+  "10.push2his.eastmoney.com",
+];
+const EAST_MONEY_TIMEOUT_MS = 6000;
+const EAST_MONEY_DAILY_CANDLE_LIMIT = 320;
+const EAST_MONEY_WEEKLY_CANDLE_LIMIT = 180;
 
 // Simple in-memory cache for technical analysis data (1 hour TTL)
 interface TechnicalIndicators {
@@ -54,7 +72,7 @@ interface CacheEntry {
     companyNameEn?: string;
     volumeAnalysis: VolumeAnalysisResult;
     isMock?: boolean;
-    dataSource?: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'sina' | 'kabutan' | 'twelve-data' | 'fmp' | 'provider' | 'mock';
+    dataSource?: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'sina' | 'kabutan' | 'tencent' | 'twelve-data' | 'fmp' | 'provider' | 'mock';
   };
 }
 
@@ -386,7 +404,7 @@ export async function POST(request: Request) {
       let currentPrice = 0;
       let changePercent = 0;
       let isMock = false;
-      let dataSource: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'sina' | 'kabutan' | 'twelve-data' | 'fmp' | 'provider' | 'mock' = 'yahoo';
+      let dataSource: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'sina' | 'kabutan' | 'tencent' | 'twelve-data' | 'fmp' | 'provider' | 'mock' = 'yahoo';
 
       try {
         let quote: YahooQuote | null = null;
@@ -507,47 +525,56 @@ export async function POST(request: Request) {
           }
         }
 
-        const secid = convertSymbolToEastMoneySecid(cleanSymbol);
+        const secidCandidates = getEastMoneySecidCandidates(cleanSymbol);
         let eastMoneySuccess = false;
 
-        if (!realDataSuccess && secid) {
-          try {
-            console.log(`Fetching EastMoney klines for secid: ${secid}`);
-            const dailyRaw = await fetchEastMoneyKlines(secid, false);
-            const weeklyRaw = await fetchEastMoneyKlines(secid, true);
-
-            if (dailyRaw.length >= MIN_REAL_DAILY_CANDLES) {
-              dailyCandles = dailyRaw;
-              weeklyCandles = weeklyRaw;
-
-              const lastCandle = dailyCandles[dailyCandles.length - 1];
-              const prevCandle = dailyCandles[dailyCandles.length - 2] || lastCandle;
-
-              currentPrice = lastCandle.close;
-              changePercent = ((lastCandle.close - prevCandle.close) / prevCandle.close) * 100;
-
-              // Fetch company name from EastMoney Web API
+        if (!realDataSuccess && secidCandidates.length > 0) {
+          for (const secid of secidCandidates) {
+            try {
+              console.log(`Fetching EastMoney klines for secid: ${secid}`);
+              const dailyRaw = await fetchReliableEastMoneyKlines(secid, false);
+              let weeklyRaw: Candle[];
               try {
-                const nameRes = await fetch(`https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f58`, {
-                  headers: { "Referer": "https://quote.eastmoney.com/" }
-                });
-                if (nameRes.ok) {
-                  const nameData = await nameRes.json() as EastMoneyNameResponse;
-                  companyName = nameData?.data?.f58 || cleanSymbol;
-                } else {
-                  companyName = cleanSymbol;
-                }
-              } catch {
-                companyName = cleanSymbol;
+                weeklyRaw = await fetchReliableEastMoneyKlines(secid, true);
+              } catch (weeklyErr: unknown) {
+                console.warn(`EastMoney weekly K-line failed for ${secid}, building weekly candles from daily data:`, weeklyErr);
+                weeklyRaw = buildWeeklyCandlesFromDaily(dailyRaw);
               }
 
-              isMock = false;
-              dataSource = "eastmoney";
-              eastMoneySuccess = true;
-              console.log(`Successfully loaded real data from EastMoney for: ${companyName}`);
+              if (dailyRaw.length >= MIN_REAL_DAILY_CANDLES) {
+                dailyCandles = dailyRaw;
+                weeklyCandles = weeklyRaw;
+
+                const lastCandle = dailyCandles[dailyCandles.length - 1];
+                const prevCandle = dailyCandles[dailyCandles.length - 2] || lastCandle;
+
+                currentPrice = lastCandle.close;
+                changePercent = ((lastCandle.close - prevCandle.close) / prevCandle.close) * 100;
+
+                // Fetch company name from EastMoney Web API
+                try {
+                  const nameRes = await fetch(`https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f58`, {
+                    headers: { "Referer": "https://quote.eastmoney.com/" }
+                  });
+                  if (nameRes.ok) {
+                    const nameData = await nameRes.json() as EastMoneyNameResponse;
+                    companyName = nameData?.data?.f58 || cleanSymbol;
+                  } else {
+                    companyName = cleanSymbol;
+                  }
+                } catch {
+                  companyName = cleanSymbol;
+                }
+
+                isMock = false;
+                dataSource = "eastmoney";
+                eastMoneySuccess = true;
+                console.log(`Successfully loaded real data from EastMoney for: ${companyName}`);
+                break;
+              }
+            } catch (emErr: unknown) {
+              console.error(`EastMoney API failed for ${secid}:`, emErr);
             }
-          } catch (emErr: unknown) {
-            console.error("EastMoney API failed as well:", emErr);
           }
         }
 
@@ -602,6 +629,27 @@ export async function POST(request: Request) {
             }
           } catch (providerErr: unknown) {
             console.warn("Optional provider APIs failed as well:", providerErr);
+          }
+        }
+
+        if (!realDataSuccess) {
+          try {
+            console.log(`Fetching Tencent market data for symbol: ${cleanSymbol}`);
+            const tencentData = await fetchTencentMarketData(cleanSymbol);
+            if (tencentData) {
+              dailyCandles = tencentData.dailyCandles;
+              weeklyCandles = tencentData.weeklyCandles;
+              companyName = tencentData.companyName || cleanSymbol;
+              companyNameEn = "";
+              currentPrice = tencentData.price;
+              changePercent = tencentData.changePercent;
+              isMock = false;
+              dataSource = "tencent";
+              realDataSuccess = true;
+              console.log(`Successfully loaded real data from Tencent for: ${companyName}`);
+            }
+          } catch (tencentErr: unknown) {
+            console.warn("Tencent API failed as well:", tencentErr);
           }
         }
 
@@ -678,6 +726,7 @@ export async function POST(request: Request) {
         dailyPatterns,
         dailyWaveResult,
         dailySupportResistance,
+        dailyChanLunResult,
         weeklyCandles,
         { ema5: weeklyEma5, ema10: weeklyEma10, ema20: weeklyEma20, ema60: weeklyEma60 },
         weeklyMacd
@@ -719,8 +768,8 @@ export async function POST(request: Request) {
         dataSource,
       };
 
-      // Write to cache only for real market data. Demo/mock data should be retried next time.
-      if (!techData.isMock) {
+      // Write to cache only for primary real market data. Last-resort fallback should retry primary sources next time.
+      if (!techData.isMock && techData.dataSource !== "tencent") {
         techCache[cacheKey] = {
           timestamp: now,
           data: techData,
@@ -942,6 +991,13 @@ function buildUnifiedAnalystPrompt(symbol: string, data: CacheEntry["data"], lan
       : language === "zh-TW"
         ? "Traditional Chinese"
         : "Simplified Chinese";
+  const scoreLabel = language === "zh-CN"
+    ? "买点魅力分"
+    : language === "zh-TW"
+      ? "買點魅力分"
+      : language === "ja"
+        ? "買い場魅力度"
+        : "Entry Appeal Score";
 
   return `You are a senior quantitative technical analyst. Produce a detailed TradingView-style stock analysis report with clear trading logic.
 
@@ -953,12 +1009,14 @@ Current price: ${moneyFixed(data.price)}
 Daily change: ${data.changePercent.toFixed(2)}%
 
 Scoring semantics:
-- The 0-5 score means current buy/accumulate attractiveness, not recent heat.
+- The 0-5 ${scoreLabel} means current buy/accumulate attractiveness, not recent heat.
+- Reward/risk odds are the primary gate; active trading heat alone must not raise the score if upside/downside is poor.
+- Setup confirmation is evaluated through left-side reversal, trend pullback, and right-side breakout paths.
 - Higher score means better current entry expectancy: higher win-rate, better reward/risk, acceptable stop distance, and stronger confirmation.
 - Lower score means avoid buying now, reduce exposure, or wait.
 
-### 1. Buy-Attractiveness Score
-- Total score: ${score.totalScore.toFixed(1)} / 5.0
+### 1. ${scoreLabel}
+- ${scoreLabel}: ${score.totalScore.toFixed(1)} / 5.0
 - Reasons:
 ${score.scoreReasons.map((r) => `  * ${r}`).join("\n")}
 
@@ -1039,7 +1097,7 @@ The stock to analyze is: **${data.companyName} (${symbol})**, currently priced a
 We have computed technical metrics and patterns using mathematical algorithms. Based on the objective data below, write a professional technical report.
 
 ### 1. Moving Average Trends & Multi-Period Resonance
-- **Overall Quantitative Score**: ${score.totalScore.toFixed(1)} / 5.0
+- **Entry Appeal Score**: ${score.totalScore.toFixed(1)} / 5.0
 - **Scoring & Resonance Details**:
 ${score.scoreReasons.map((r: string) => `  * ${r}`).join("\n")}
 
@@ -1099,7 +1157,7 @@ Write in a professional, Wall-Street quantitative analyst tone. Do not invent fa
 厳密な数学的アルゴリズムを用いて計算された指標データに基づいて、以下の全方位的なレポートを日本語で作成してください。
 
 ### 1. 移動平均線トレンドと複数周期共鳴
-- **総合クオンツスコア**: ${score.totalScore.toFixed(1)} / 5.0 点
+- **買い場魅力度**: ${score.totalScore.toFixed(1)} / 5.0 点
 - **スコアリングおよび共鳴根拠**:
 ${score.scoreReasons.map((r: string) => `  * ${r}`).join("\n")}
 
@@ -1159,7 +1217,7 @@ JSON出力フォーマット：
 我們已經使用嚴謹的數學演算法，計算出了這隻股票各項指標和形態識別的客觀結果。請根據以下客觀數據，編寫一份全方位專業技術研報。
 
 ### 1. 均線趨勢與多週期共振
-- **系統綜合打分**: ${score.totalScore.toFixed(1)} / 5.0 分
+- **買點魅力分**: ${score.totalScore.toFixed(1)} / 5.0 分
 - **打分與共振依據 (核心動能與均線掃描結果)**:
 ${score.scoreReasons.map((r: string) => `  * ${r}`).join("\n")}
 
@@ -1218,7 +1276,7 @@ JSON 格式要求如下：
 我们已经使用严谨的数学算法，计算出了这只股票各项指标和形态识别的客观结果。请根据以下客观数据，编写一份全方位的专业技术研报。
 
 ### 1. 均线趋势与多周期共振
-- **系统综合打分**: ${score.totalScore.toFixed(1)} / 5.0 分
+- **买点魅力分**: ${score.totalScore.toFixed(1)} / 5.0 分
 - **打分与共振依据 (核心动能与均线扫描结果)**:
 ${score.scoreReasons.map((r: string) => `  * ${r}`).join("\n")}
 
@@ -1403,11 +1461,90 @@ function convertSymbolToEastMoneySecid(symbol: string): string | null {
   return null;
 }
 
+function getEastMoneySecidCandidates(symbol: string): string[] {
+  const clean = symbol.trim().toUpperCase();
+  if (/^[A-Z]{1,5}$/.test(clean)) {
+    return [`105.${clean}`, `106.${clean}`, `107.${clean}`];
+  }
+
+  const secid = convertSymbolToEastMoneySecid(clean);
+  return secid ? [secid] : [];
+}
+
+async function fetchReliableEastMoneyKlines(secid: string, isWeekly: boolean = false): Promise<Candle[]> {
+  const klt = isWeekly ? "102" : "101";
+  const limit = isWeekly ? EAST_MONEY_WEEKLY_CANDLE_LIMIT : EAST_MONEY_DAILY_CANDLE_LIMIT;
+  let lastError: unknown = null;
+
+  for (const host of EAST_MONEY_KLINE_HOSTS) {
+    try {
+      const url = `https://${host}/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56&klt=${klt}&fqt=1&lmt=${limit}&ut=fa5fd190ac2ec2c49a057690f96c340f`;
+      const data = await fetchEastMoneyJson<{ data?: { klines?: string[] } }>(url, EAST_MONEY_TIMEOUT_MS);
+      const klines = data?.data?.klines;
+      if (!klines || klines.length === 0) {
+        throw new Error(`EastMoney returned empty K-line data (secid: ${secid})`);
+      }
+
+      return parseEastMoneyKlineRows(klines.slice(-limit));
+    } catch (error: unknown) {
+      lastError = error;
+      console.warn(`EastMoney K-line host failed (${host}, ${secid}, klt=${klt}):`, error);
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`EastMoney K-line request failed for ${secid}`);
+}
+
+function parseEastMoneyKlineRows(klines: string[]): Candle[] {
+  return klines.map((item: string) => {
+    const parts = item.split(",");
+    return {
+      date: parts[0],
+      open: parseFloat(parts[1]),
+      close: parseFloat(parts[2]),
+      high: parseFloat(parts[3]),
+      low: parseFloat(parts[4]),
+      volume: parseInt(parts[5], 10) || 0
+    };
+  });
+}
+
+function buildWeeklyCandlesFromDaily(dailyCandles: Candle[]): Candle[] {
+  const weekly = new Map<string, Candle>();
+
+  for (const candle of dailyCandles) {
+    const key = getWeekStart(String(candle.date));
+    const current = weekly.get(key);
+    if (!current) {
+      weekly.set(key, { ...candle, date: key });
+      continue;
+    }
+
+    current.high = Math.max(current.high, candle.high);
+    current.low = Math.min(current.low, candle.low);
+    current.close = candle.close;
+    current.volume += candle.volume;
+  }
+
+  return Array.from(weekly.values()).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
+function getWeekStart(dateText: string): string {
+  const date = new Date(`${dateText.slice(0, 10)}T00:00:00Z`);
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() - day + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function fetchEastMoneyKlines(secid: string, isWeekly: boolean = false): Promise<Candle[]> {
   const klt = isWeekly ? "102" : "101";
   const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56&klt=${klt}&fqt=1&beg=19900101&end=20991231&lmt=300&ut=fa5fd190ac2ec2c49a057690f96c340f`;
 
   const res = await fetch(url, {
+    cache: "no-store",
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       "Referer": "https://quote.eastmoney.com/"
