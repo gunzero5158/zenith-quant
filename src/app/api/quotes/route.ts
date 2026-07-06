@@ -5,6 +5,7 @@ import { fetchKabutanQuote, getKabutanCode } from "@/lib/analysis/kabutan";
 import { fetchProviderQuote } from "@/lib/analysis/marketDataProviders";
 import { fetchTencentQuote } from "@/lib/analysis/tencent";
 import { fetchEastMoneyJson } from "@/lib/analysis/eastmoneyHttp";
+import { convertSymbolToEastMoneyAShareSecid, fetchAShareRealtimeQuote } from "@/lib/analysis/ashareRealtime";
 
 const yahooFinance = new YahooFinance();
 
@@ -88,7 +89,8 @@ export async function GET(request: Request) {
 async function fetchSingleQuote(inputSymbol: string): Promise<{ price: number; change: number }> {
   const symbol = await resolveInputSymbol(inputSymbol);
   const now = Date.now();
-  if (quoteCache[inputSymbol] && now - quoteCache[inputSymbol].timestamp < CACHE_TTL) {
+  const shouldUseCache = convertSymbolToEastMoneyAShareSecid(symbol) === null;
+  if (shouldUseCache && quoteCache[inputSymbol] && now - quoteCache[inputSymbol].timestamp < CACHE_TTL) {
     return {
       price: quoteCache[inputSymbol].price,
       change: quoteCache[inputSymbol].change
@@ -107,6 +109,15 @@ async function fetchSingleQuote(inputSymbol: string): Promise<{ price: number; c
       } catch (err) {
         console.warn(`Kabutan quote fetch failed for ${symbol}:`, err);
       }
+    }
+
+    const aShareQuote = await fetchAShareRealtimeQuote(symbol);
+    if (aShareQuote) {
+      return {
+        price: aShareQuote.price,
+        change: aShareQuote.changePercent,
+        source: "ashare-realtime"
+      };
     }
 
     // 1. Try EastMoney first as it is fast and requires no proxy
@@ -161,7 +172,7 @@ async function fetchSingleQuote(inputSymbol: string): Promise<{ price: number; c
     throw new Error("Invalid quote from all real data providers");
   })();
 
-  if (res.source !== "tencent") {
+  if (shouldUseCache && res.source !== "tencent") {
     quoteCache[inputSymbol] = {
       timestamp: now,
       price: res.price,

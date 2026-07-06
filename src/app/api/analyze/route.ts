@@ -16,6 +16,11 @@ import { fetchKabutanMarketData, getKabutanCode } from "@/lib/analysis/kabutan";
 import { fetchProviderMarketData } from "@/lib/analysis/marketDataProviders";
 import { fetchTencentMarketData } from "@/lib/analysis/tencent";
 import { fetchEastMoneyJson } from "@/lib/analysis/eastmoneyHttp";
+import {
+  convertSymbolToEastMoneyAShareSecid,
+  fetchAShareRealtimeQuote,
+  mergeRealtimeQuoteIntoDailyCandles,
+} from "@/lib/analysis/ashareRealtime";
 
 const yahooFinance = new YahooFinance();
 const EAST_MONEY_KLINE_HOSTS = [
@@ -384,12 +389,13 @@ export async function POST(request: Request) {
     const cacheKey = `${cleanSymbol}_${effectiveLang}`;
     const currencySymbol = getMarketCurrencySymbol(cleanSymbol);
     const now = Date.now();
+    const isAShareRequest = convertSymbolToEastMoneyAShareSecid(cleanSymbol) !== null;
 
     let techData: CacheEntry["data"];
 
     // Check if technical data is cached. Mock/demo data is intentionally not reused:
     // a temporary provider outage should not poison later real-data analyses.
-    if (techCache[cacheKey] && now - techCache[cacheKey].timestamp < CACHE_TTL && !techCache[cacheKey].data.isMock) {
+    if (!isAShareRequest && techCache[cacheKey] && now - techCache[cacheKey].timestamp < CACHE_TTL && !techCache[cacheKey].data.isMock) {
       techData = techCache[cacheKey].data;
     } else {
       if (techCache[cacheKey]?.data.isMock) {
@@ -404,6 +410,7 @@ export async function POST(request: Request) {
       let currentPrice = 0;
       let changePercent = 0;
       let isMock = false;
+      let usedRealtimeQuote = false;
       let dataSource: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'sina' | 'kabutan' | 'tencent' | 'twelve-data' | 'fmp' | 'provider' | 'mock' = 'yahoo';
 
       try {
@@ -668,6 +675,20 @@ export async function POST(request: Request) {
         }
       }
 
+      if (!isMock && isAShareRequest) {
+        const realtimeQuote = await fetchAShareRealtimeQuote(cleanSymbol);
+        if (realtimeQuote) {
+          currentPrice = realtimeQuote.price;
+          changePercent = realtimeQuote.changePercent;
+          dailyCandles = mergeRealtimeQuoteIntoDailyCandles(dailyCandles, realtimeQuote);
+          if (realtimeQuote.name && companyName === cleanSymbol) {
+            companyName = realtimeQuote.name;
+          }
+          usedRealtimeQuote = true;
+          console.log(`Applied A-share realtime quote from ${realtimeQuote.source} for: ${cleanSymbol}`);
+        }
+      }
+
       const latestPrice = currentPrice || dailyCandles[dailyCandles.length - 1].close;
       companyName = await improveCompanyName(cleanSymbol, companyName, companyNameEn, isMock);
 
@@ -769,7 +790,7 @@ export async function POST(request: Request) {
       };
 
       // Write to cache only for primary real market data. Last-resort fallback should retry primary sources next time.
-      if (!techData.isMock && techData.dataSource !== "tencent") {
+      if (!usedRealtimeQuote && !techData.isMock && techData.dataSource !== "tencent") {
         techCache[cacheKey] = {
           timestamp: now,
           data: techData,

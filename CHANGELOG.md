@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.4 - 2026-07-06
+
+### Fixed
+- Separated A-share realtime quotes from historical daily K-line data, so current price and change percent no longer fall back to the previous trading day's close when daily candles lag.
+- Added EastMoney realtime quotes with Sina realtime quote fallback for A-shares, and merged intraday quote data into the latest daily candle before indicators and scoring are calculated.
+- Prevented A-share realtime analysis and quote responses from being held by longer-lived technical or quote caches.
+
 ## 0.5.3 - 2026-07-02
 
 ### Changed
