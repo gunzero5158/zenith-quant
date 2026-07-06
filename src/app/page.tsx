@@ -62,7 +62,7 @@ interface StockAnalysisData {
   reportTechnical: string;
   isLLMUsed: boolean;
   isMock?: boolean;
-  dataSource?: "yahoo" | "yahoo-chart" | "eastmoney" | "sina" | "kabutan" | "twelve-data" | "fmp" | "provider" | "mock";
+  dataSource?: "yahoo" | "yahoo-chart" | "eastmoney" | "tonghuashun" | "kabutan" | "tencent" | "twelve-data" | "fmp" | "provider" | "mock";
   currencySymbol?: string;
 }
 
@@ -1482,8 +1482,8 @@ export default function Home() {
                     {stockData.dataSource === "eastmoney" && (
                       <span style={styles.eastMoneyBadge}>⚡ 东方财富</span>
                     )}
-                    {stockData.dataSource === "sina" && (
-                      <span style={styles.sinaBadge}>⚡ 新浪财经</span>
+                    {stockData.dataSource === "tonghuashun" && (
+                      <span style={styles.tonghuashunBadge}>⚡ 同花顺</span>
                     )}
                     {(stockData.dataSource === "yahoo" || stockData.dataSource === "yahoo-chart") && (
                       <span style={styles.yahooBadge}>🌐 雅虎财经</span>
@@ -2876,10 +2876,10 @@ const styles: Record<string, React.CSSProperties> = {
     marginLeft: "8px",
     display: "inline-block",
   },
-  sinaBadge: {
+  tonghuashunBadge: {
     fontSize: "11px",
-    color: "#089981",
-    backgroundColor: "rgba(8,153,129,0.15)",
+    color: "#f59e0b",
+    backgroundColor: "rgba(245,158,11,0.15)",
     padding: "2px 6px",
     borderRadius: "10px",
     fontWeight: "bold",

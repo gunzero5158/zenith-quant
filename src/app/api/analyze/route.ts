@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import YahooFinance from "yahoo-finance2";
 import { Candle, IchimokuResult, calculateEMA, calculateBOLL, calculateMACD, calculateKDJ, calculateRSI, calculateATR, calculateIchimoku } from "@/lib/analysis/indicators";
-import { convertSymbolToSina, fetchSinaAShareKlines } from "./sinaUtils";
 import { analyzePriceVolume, VolumeAnalysisResult } from "@/lib/analysis/volumeForce";
 import { calculateSupportResistance, SupportResistanceResult } from "@/lib/analysis/supportResistance";
 import { analyzeWaveTheory, WaveAnalysisResult } from "@/lib/analysis/waveTheory";
@@ -15,7 +14,8 @@ import { getMarketCurrencySymbol, normalizeManualSymbolInput, replaceDollarPrice
 import { fetchKabutanMarketData, getKabutanCode } from "@/lib/analysis/kabutan";
 import { fetchProviderMarketData } from "@/lib/analysis/marketDataProviders";
 import { fetchTencentMarketData } from "@/lib/analysis/tencent";
-import { fetchEastMoneyJson } from "@/lib/analysis/eastmoneyHttp";
+import { buildEastMoneyKlineUrl, fetchEastMoneyJson } from "@/lib/analysis/eastmoneyHttp";
+import { fetchTonghuashunMarketData } from "@/lib/analysis/tonghuashun";
 import {
   convertSymbolToEastMoneyAShareSecid,
   fetchAShareRealtimeQuote,
@@ -77,7 +77,7 @@ interface CacheEntry {
     companyNameEn?: string;
     volumeAnalysis: VolumeAnalysisResult;
     isMock?: boolean;
-    dataSource?: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'sina' | 'kabutan' | 'tencent' | 'twelve-data' | 'fmp' | 'provider' | 'mock';
+    dataSource?: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'tonghuashun' | 'kabutan' | 'tencent' | 'twelve-data' | 'fmp' | 'provider' | 'mock';
   };
 }
 
@@ -411,7 +411,7 @@ export async function POST(request: Request) {
       let changePercent = 0;
       let isMock = false;
       let usedRealtimeQuote = false;
-      let dataSource: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'sina' | 'kabutan' | 'tencent' | 'twelve-data' | 'fmp' | 'provider' | 'mock' = 'yahoo';
+      let dataSource: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'tonghuashun' | 'kabutan' | 'tencent' | 'twelve-data' | 'fmp' | 'provider' | 'mock' = 'yahoo';
 
       try {
         let quote: YahooQuote | null = null;
@@ -588,33 +588,23 @@ export async function POST(request: Request) {
         if (eastMoneySuccess) {
           realDataSuccess = true;
         } else {
-          // Try Sina Finance (Only A-share) if EastMoney failed
-          const sinaSymbol = convertSymbolToSina(cleanSymbol);
-          if (sinaSymbol) {
-            try {
-              console.log(`Fetching Sina klines for symbol: ${sinaSymbol}`);
-              const dailyRaw = await fetchSinaAShareKlines(sinaSymbol, false);
-              const weeklyRaw = await fetchSinaAShareKlines(sinaSymbol, true);
-
-              if (dailyRaw.length >= MIN_REAL_DAILY_CANDLES) {
-                dailyCandles = dailyRaw;
-                weeklyCandles = weeklyRaw;
-
-                const lastCandle = dailyCandles[dailyCandles.length - 1];
-                const prevCandle = dailyCandles[dailyCandles.length - 2] || lastCandle;
-
-                currentPrice = lastCandle.close;
-                changePercent = ((lastCandle.close - prevCandle.close) / prevCandle.close) * 100;
-                companyName = cleanSymbol;
-
-                isMock = false;
-                dataSource = "sina";
-                realDataSuccess = true;
-                console.log(`Successfully loaded real data from Sina for: ${cleanSymbol}`);
-              }
-            } catch (sinaErr: unknown) {
-              console.error("Sina API failed as well:", sinaErr);
+          try {
+            console.log(`Fetching Tonghuashun market data for symbol: ${cleanSymbol}`);
+            const tonghuashunData = await fetchTonghuashunMarketData(cleanSymbol);
+            if (tonghuashunData) {
+              dailyCandles = tonghuashunData.dailyCandles;
+              weeklyCandles = tonghuashunData.weeklyCandles;
+              companyName = tonghuashunData.companyName || cleanSymbol;
+              companyNameEn = "";
+              currentPrice = tonghuashunData.price;
+              changePercent = tonghuashunData.changePercent;
+              isMock = false;
+              dataSource = "tonghuashun";
+              realDataSuccess = true;
+              console.log(`Successfully loaded real data from Tonghuashun for: ${companyName}`);
             }
+          } catch (tonghuashunErr: unknown) {
+            console.warn("Tonghuashun API failed as well:", tonghuashunErr);
           }
         }
 
@@ -661,7 +651,7 @@ export async function POST(request: Request) {
         }
 
         if (!realDataSuccess) {
-          console.warn("All real data APIs (Yahoo, Kabutan, EastMoney, Sina, optional providers) failed, rolling back to mock data.");
+          console.warn("All real data APIs (Yahoo, Kabutan, EastMoney, Tonghuashun, optional providers) failed, rolling back to mock data.");
           isMock = true;
           dataSource = "mock";
           const mockDaily = generateMockCandles(cleanSymbol, 250, false);
@@ -1499,7 +1489,7 @@ async function fetchReliableEastMoneyKlines(secid: string, isWeekly: boolean = f
 
   for (const host of EAST_MONEY_KLINE_HOSTS) {
     try {
-      const url = `https://${host}/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56&klt=${klt}&fqt=1&lmt=${limit}&ut=fa5fd190ac2ec2c49a057690f96c340f`;
+      const url = buildEastMoneyKlineUrl({ host, secid, klt, limit });
       const data = await fetchEastMoneyJson<{ data?: { klines?: string[] } }>(url, EAST_MONEY_TIMEOUT_MS);
       const klines = data?.data?.klines;
       if (!klines || klines.length === 0) {

@@ -4,8 +4,11 @@
 
 ### Fixed
 - Separated A-share realtime quotes from historical daily K-line data, so current price and change percent no longer fall back to the previous trading day's close when daily candles lag.
-- Added EastMoney realtime quotes with Sina realtime quote fallback for A-shares, and merged intraday quote data into the latest daily candle before indicators and scoring are calculated.
+- Added EastMoney realtime quotes for A-shares, and merged intraday quote data into the latest daily candle before indicators and scoring are calculated.
 - Prevented A-share realtime analysis and quote responses from being held by longer-lived technical or quote caches.
+- Fixed EastMoney K-line requests by restoring the explicit historical date range required by the API.
+- Added Tonghuashun market data fallback for A-share, Hong Kong, and US symbols, including current-day candle merging and quote change calculation.
+- Removed Sina Finance from the runtime fallback chain so analyses no longer degrade to Sina data.
 
 ## 0.5.3 - 2026-07-02
 

@@ -6,6 +6,7 @@ import { fetchProviderQuote } from "@/lib/analysis/marketDataProviders";
 import { fetchTencentQuote } from "@/lib/analysis/tencent";
 import { fetchEastMoneyJson } from "@/lib/analysis/eastmoneyHttp";
 import { convertSymbolToEastMoneyAShareSecid, fetchAShareRealtimeQuote } from "@/lib/analysis/ashareRealtime";
+import { fetchTonghuashunQuote } from "@/lib/analysis/tonghuashun";
 
 const yahooFinance = new YahooFinance();
 
@@ -117,6 +118,15 @@ async function fetchSingleQuote(inputSymbol: string): Promise<{ price: number; c
         price: aShareQuote.price,
         change: aShareQuote.changePercent,
         source: "ashare-realtime"
+      };
+    }
+
+    const tonghuashunQuote = await fetchTonghuashunQuote(symbol);
+    if (tonghuashunQuote) {
+      return {
+        price: tonghuashunQuote.price,
+        change: tonghuashunQuote.changePercent,
+        source: "tonghuashun"
       };
     }
 

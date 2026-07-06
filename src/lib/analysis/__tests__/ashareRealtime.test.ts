@@ -3,7 +3,6 @@ import {
   convertSymbolToEastMoneyAShareSecid,
   mergeRealtimeQuoteIntoDailyCandles,
   parseEastMoneyRealtimeQuote,
-  parseSinaRealtimeQuote,
 } from "@/lib/analysis/ashareRealtime";
 
 describe("A-share realtime quote helpers", () => {
@@ -44,27 +43,6 @@ describe("A-share realtime quote helpers", () => {
     });
   });
 
-  it("parses Sina realtime quote text as current A-share price", () => {
-    const fields = Array(32).fill("");
-    fields[0] = "MOUTAI";
-    fields[1] = "1410.00";
-    fields[2] = "1400.00";
-    fields[3] = "1420.00";
-    fields[4] = "1430.00";
-    fields[5] = "1390.00";
-    fields[8] = "123456";
-    fields[30] = "2026-07-06";
-    fields[31] = "15:00:00";
-
-    const quote = parseSinaRealtimeQuote(`var hq_str_sh600519="${fields.join(",")}";`);
-
-    expect(quote?.source).toBe("sina-realtime");
-    expect(quote?.name).toBe("MOUTAI");
-    expect(quote?.price).toBe(1420);
-    expect(quote?.date).toBe("2026-07-06");
-    expect(quote?.changePercent).toBeCloseTo(1.4286, 4);
-  });
-
   it("appends a current-day candle when the daily K-line stops at the previous trading day", () => {
     const merged = mergeRealtimeQuoteIntoDailyCandles(
       [
@@ -72,7 +50,7 @@ describe("A-share realtime quote helpers", () => {
         { date: "2026-07-03", open: 10.2, high: 10.8, low: 10, close: 10.5, volume: 1200 },
       ],
       {
-        source: "sina-realtime",
+        source: "eastmoney-realtime",
         price: 11.2,
         open: 10.8,
         high: 11.5,
