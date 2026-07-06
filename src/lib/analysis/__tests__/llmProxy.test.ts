@@ -43,7 +43,9 @@ describe('llmProxy', () => {
 
     expect(calledUrl).toContain('generativelanguage.googleapis.com');
     expect(calledUrl).toContain('gemini-1.5-flash');
-    expect(calledUrl).toContain('key=test-key');
+    // API key must travel in a header, never in the query string (avoids proxy/access-log leaks)
+    expect(calledUrl).not.toContain('test-key');
+    expect(calledInit.headers['x-goog-api-key']).toBe('test-key');
 
     const body = JSON.parse(calledInit.body);
     expect(body.contents[0].parts[0].text).toBe('hello gemini');
@@ -104,5 +106,67 @@ describe('llmProxy', () => {
     expect(body.model).toBe('gpt-4o');
     expect(body.messages[1].content).toBe('hello openai');
     expect(result).toBe('OpenAI simulated response');
+  });
+
+  describe('baseUrl validation (SSRF hardening)', () => {
+    const customConfig = (baseUrl: string) => ({
+      provider: 'custom',
+      apiKey: 'test-key',
+      modelName: 'test-model',
+      baseUrl,
+    });
+
+    it.each([
+      'http://169.254.169.254/latest', // cloud metadata endpoint
+      'http://localhost:11434',
+      'http://127.0.0.1:8080',
+      'http://10.0.0.5',
+      'http://172.16.0.1',
+      'http://192.168.1.1',
+      'http://metadata.google.internal',
+      'http://service.cluster.internal',
+    ])('rejects private/internal baseUrl %s', async (baseUrl) => {
+      await expect(generateLLMReport('prompt', customConfig(baseUrl)))
+        .rejects.toThrow(/private or internal hosts/);
+    });
+
+    it('rejects non-http schemes', async () => {
+      await expect(generateLLMReport('prompt', customConfig('file:///etc/passwd')))
+        .rejects.toThrow(/only http\(s\)/);
+    });
+
+    it('rejects credentials embedded in the URL', async () => {
+      await expect(generateLLMReport('prompt', customConfig('https://user:pass@example.com')))
+        .rejects.toThrow(/credentials/);
+    });
+
+    it('rejects malformed URLs', async () => {
+      await expect(generateLLMReport('prompt', customConfig('not a url')))
+        .rejects.toThrow(/not a valid URL/);
+    });
+
+    it('rejects model names with path traversal characters', async () => {
+      await expect(generateLLMReport('prompt', {
+        provider: 'gemini',
+        apiKey: 'test-key',
+        modelName: '../../evil',
+      })).rejects.toThrow(/Invalid LLM model name/);
+    });
+
+    it('truncates upstream error bodies instead of echoing them fully', async () => {
+      const hugeBody = 'x'.repeat(5000);
+      const globalFetchMock = vi.fn().mockImplementation(() =>
+        Promise.resolve({
+          ok: false,
+          status: 502,
+          text: () => Promise.resolve(hugeBody)
+        })
+      );
+      vi.stubGlobal('fetch', globalFetchMock);
+
+      await expect(
+        generateLLMReport('prompt', { provider: 'openai', apiKey: 'k', modelName: 'gpt-4o' })
+      ).rejects.toSatisfy((err: Error) => err.message.length < 400);
+    });
   });
 });

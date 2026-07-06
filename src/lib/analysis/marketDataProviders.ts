@@ -1,4 +1,5 @@
 import { Candle } from "@/lib/analysis/indicators";
+import { buildWeeklyCandles } from "@/lib/analysis/weeklyCandles";
 
 export interface ProviderQuote {
   price: number;
@@ -137,10 +138,12 @@ async function fetchTwelveDataMarketData(symbol: string): Promise<ProviderMarket
   if (!apiKey) return null;
 
   try {
-    const daily = await fetchTwelveDataTimeSeries(symbol, "1day", 260, apiKey);
+    const [daily, weekly] = await Promise.all([
+      fetchTwelveDataTimeSeries(symbol, "1day", 260, apiKey),
+      fetchTwelveDataTimeSeries(symbol, "1week", 170, apiKey),
+    ]);
     if (daily.candles.length < MIN_REAL_DAILY_CANDLES) return null;
 
-    const weekly = await fetchTwelveDataTimeSeries(symbol, "1week", 170, apiKey);
     const weeklyCandles = weekly.candles.length > 0 ? weekly.candles : buildWeeklyCandles(daily.candles);
     const last = daily.candles[daily.candles.length - 1];
     const prev = daily.candles[daily.candles.length - 2] || last;
@@ -349,33 +352,6 @@ function parseProviderNumber(value: string | number | undefined): number | null 
 
   const parsed = Number(value.replace(/,/g, ""));
   return Number.isFinite(parsed) ? parsed : null;
-}
-
-function buildWeeklyCandles(dailyCandles: Candle[]): Candle[] {
-  const weekly = new Map<string, Candle>();
-
-  for (const candle of dailyCandles) {
-    const key = getWeekKey(String(candle.date));
-    const current = weekly.get(key);
-    if (!current) {
-      weekly.set(key, { ...candle, date: key });
-      continue;
-    }
-
-    current.high = Math.max(current.high, candle.high);
-    current.low = Math.min(current.low, candle.low);
-    current.close = candle.close;
-    current.volume += candle.volume;
-  }
-
-  return Array.from(weekly.values()).sort((a, b) => String(a.date).localeCompare(String(b.date)));
-}
-
-function getWeekKey(dateText: string): string {
-  const date = new Date(`${dateText.slice(0, 10)}T00:00:00Z`);
-  const day = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() - day + 1);
-  return date.toISOString().slice(0, 10);
 }
 
 function getTwelveDataApiKey(): string {

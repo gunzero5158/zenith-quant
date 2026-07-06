@@ -102,4 +102,44 @@ describe("A-share realtime quote helpers", () => {
       volume: 1300,
     });
   });
+
+  it("replaces the last candle when candle dates are Date objects (Yahoo path)", () => {
+    const merged = mergeRealtimeQuoteIntoDailyCandles(
+      [
+        { date: new Date("2026-07-03T00:00:00Z"), open: 10.2, high: 10.8, low: 10, close: 10.5, volume: 1200 },
+        { date: new Date("2026-07-06T00:00:00Z"), open: 10.6, high: 10.9, low: 10.4, close: 10.7, volume: 800 },
+      ],
+      {
+        source: "eastmoney-realtime",
+        price: 11.2,
+        open: 10.8,
+        high: 11.5,
+        low: 10.7,
+        previousClose: 10.5,
+        volume: 1300,
+        date: "2026-07-06",
+        changePercent: 6.67,
+      }
+    );
+
+    // Regression: string quote.date vs Date candle.date used to never match,
+    // appending a duplicated final bar that skewed every downstream indicator.
+    expect(merged).toHaveLength(2);
+    expect(merged[1].close).toBe(11.2);
+  });
+
+  it("ignores realtime quotes older than the last candle (Date objects)", () => {
+    const merged = mergeRealtimeQuoteIntoDailyCandles(
+      [{ date: new Date("2026-07-06T00:00:00Z"), open: 10, high: 11, low: 9.5, close: 10.5, volume: 500 }],
+      {
+        source: "eastmoney-realtime",
+        price: 9,
+        date: "2026-07-03",
+        changePercent: -2,
+      }
+    );
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].close).toBe(10.5);
+  });
 });

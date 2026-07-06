@@ -150,8 +150,10 @@ export async function GET(request: Request) {
 }
 
 async function fetchFallbackSuggestions(query: string): Promise<SearchSuggestion[]> {
-  const providerSuggestions = await fetchProviderSearchSuggestions(query);
-  const eastMoneySuggestions = await fetchEastMoneySuggestions(query);
+  const [providerSuggestions, eastMoneySuggestions] = await Promise.all([
+    fetchProviderSearchSuggestions(query),
+    fetchEastMoneySuggestions(query),
+  ]);
   const staticSuggestions = findStaticFallbackSuggestions(query);
   return mergeSuggestions(providerSuggestions, eastMoneySuggestions, staticSuggestions);
 }

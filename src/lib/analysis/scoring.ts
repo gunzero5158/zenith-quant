@@ -40,7 +40,18 @@ function latestValid(values: number[]): number | undefined {
 }
 
 function valueAt(values: number[], index: number): number | undefined {
+  if (index < 0) return undefined;
   return isValid(values[index]) ? values[index] : latestValid(values);
+}
+
+/**
+ * Strict lookup without the latest-value fallback. Used for previous-bar values:
+ * falling back to the latest value there would compare "today vs today" and
+ * fabricate crossover signals.
+ */
+function strictValueAt(values: number[], index: number): number | undefined {
+  if (index < 0 || index >= values.length) return undefined;
+  return isValid(values[index]) ? values[index] : undefined;
 }
 
 function uniqueLevels(levels: Array<number | undefined>): number[] {
@@ -223,9 +234,9 @@ export function calculateStockScore(
   const dif = valueAt(dailyMACD.dif, latestD);
   const dea = valueAt(dailyMACD.dea, latestD);
   const hist = valueAt(dailyMACD.hist, latestD);
-  const prevDif = valueAt(dailyMACD.dif, latestD - 1);
-  const prevDea = valueAt(dailyMACD.dea, latestD - 1);
-  const prevHist = valueAt(dailyMACD.hist, latestD - 1);
+  const prevDif = strictValueAt(dailyMACD.dif, latestD - 1);
+  const prevDea = strictValueAt(dailyMACD.dea, latestD - 1);
+  const prevHist = strictValueAt(dailyMACD.hist, latestD - 1);
   const isGoldCross = isValid(dif) && isValid(dea) && isValid(prevDif) && isValid(prevDea) && dif > dea && prevDif <= prevDea;
   const macdBullish = isValid(dif) && isValid(dea) && dif > dea;
   const macdAboveZero = isValid(dif) && isValid(dea) && isValid(hist) && dif > 0 && dif > dea && hist > 0;

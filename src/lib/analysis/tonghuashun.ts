@@ -1,4 +1,5 @@
 import { Candle } from "@/lib/analysis/indicators";
+import { buildWeeklyCandles } from "@/lib/analysis/weeklyCandles";
 
 const TONGHUASHUN_TIMEOUT_MS = 4500;
 const MIN_REAL_DAILY_CANDLES = 20;
@@ -64,13 +65,32 @@ export async function fetchTonghuashunQuote(symbol: string): Promise<Tonghuashun
   if (!code) return null;
 
   try {
-    const today = parseTonghuashunTodayResponse(await fetchTonghuashunText(code, "today"));
-    if (!today) return null;
-    const last = parseTonghuashunLastResponse(await fetchTonghuashunText(code, "last"));
+    const [todayResult, lastResult] = await Promise.allSettled([
+      fetchTonghuashunText(code, "today"),
+      fetchTonghuashunText(code, "last"),
+    ]);
+
+    let today: TonghuashunTodayCandle | null = null;
+    try {
+      if (todayResult.status === "rejected") throw todayResult.reason;
+      today = parseTonghuashunTodayResponse(todayResult.value);
+    } catch (error: unknown) {
+      console.warn(`Tonghuashun today quote failed for ${symbol}:`, error);
+    }
+
+    let last: { companyName: string; candles: Candle[] } = { companyName: "", candles: [] };
+    try {
+      if (lastResult.status === "rejected") throw lastResult.reason;
+      last = parseTonghuashunLastResponse(lastResult.value);
+    } catch (error: unknown) {
+      console.warn(`Tonghuashun history quote failed for ${symbol}:`, error);
+    }
+
     const latestHistory = last.candles[last.candles.length - 1];
-    const active = latestHistory && today.date < String(latestHistory.date)
-      ? latestHistory
-      : today;
+    const active = today && !(latestHistory && today.date < String(latestHistory.date))
+      ? today
+      : latestHistory;
+    if (!active) return null;
     const prev = latestHistory?.date === active.date
       ? last.candles[last.candles.length - 2]
       : latestHistory;
@@ -78,7 +98,7 @@ export async function fetchTonghuashunQuote(symbol: string): Promise<Tonghuashun
     return {
       price: active.close,
       changePercent: prev?.close ? ((active.close - prev.close) / prev.close) * 100 : 0,
-      companyName: today.companyName || last.companyName,
+      companyName: today?.companyName || last.companyName,
       source: "tonghuashun",
     };
   } catch (error: unknown) {
@@ -92,11 +112,22 @@ export async function fetchTonghuashunMarketData(symbol: string): Promise<Tonghu
   if (!code) return null;
 
   try {
-    const last = parseTonghuashunLastResponse(await fetchTonghuashunText(code, "last"));
+    const [lastResult, todayResult] = await Promise.allSettled([
+      fetchTonghuashunText(code, "last"),
+      fetchTonghuashunText(code, "today"),
+    ]);
+    if (lastResult.status === "rejected") {
+      throw lastResult.reason;
+    }
+
+    const last = parseTonghuashunLastResponse(lastResult.value);
     let dailyCandles = last.candles;
 
     try {
-      const today = parseTonghuashunTodayResponse(await fetchTonghuashunText(code, "today"));
+      if (todayResult.status === "rejected") {
+        throw todayResult.reason;
+      }
+      const today = parseTonghuashunTodayResponse(todayResult.value);
       dailyCandles = mergeTonghuashunTodayCandle(dailyCandles, today);
       if (today?.companyName) {
         last.companyName = today.companyName;
@@ -247,29 +278,3 @@ function stripCompanyName(candle: TonghuashunTodayCandle): Candle {
   };
 }
 
-function buildWeeklyCandles(dailyCandles: Candle[]): Candle[] {
-  const weekly = new Map<string, Candle>();
-
-  for (const candle of dailyCandles) {
-    const key = getWeekStart(String(candle.date));
-    const current = weekly.get(key);
-    if (!current) {
-      weekly.set(key, { ...candle, date: key });
-      continue;
-    }
-
-    current.high = Math.max(current.high, candle.high);
-    current.low = Math.min(current.low, candle.low);
-    current.close = candle.close;
-    current.volume += candle.volume;
-  }
-
-  return Array.from(weekly.values()).sort((a, b) => String(a.date).localeCompare(String(b.date)));
-}
-
-function getWeekStart(dateText: string): string {
-  const date = new Date(`${dateText.slice(0, 10)}T00:00:00Z`);
-  const day = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() - day + 1);
-  return date.toISOString().slice(0, 10);
-}

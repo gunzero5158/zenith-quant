@@ -1,4 +1,5 @@
 import { Candle } from "@/lib/analysis/indicators";
+import { buildWeeklyCandles } from "@/lib/analysis/weeklyCandles";
 
 export interface TencentMarketData {
   dailyCandles: Candle[];
@@ -55,8 +56,10 @@ export async function fetchTencentMarketData(symbol: string): Promise<TencentMar
 
   for (const code of candidates) {
     try {
-      const daily = await fetchTencentKlines(code, "day", 300);
-      const weekly = await fetchTencentKlines(code, "week", 170);
+      const [daily, weekly] = await Promise.all([
+        fetchTencentKlines(code, "day", 300),
+        fetchTencentKlines(code, "week", 170),
+      ]);
 
       if (daily.candles.length < MIN_REAL_DAILY_CANDLES) {
         continue;
@@ -234,29 +237,3 @@ function decodeTencentText(buffer: ArrayBuffer): string {
   }
 }
 
-function buildWeeklyCandles(dailyCandles: Candle[]): Candle[] {
-  const weekly = new Map<string, Candle>();
-
-  for (const candle of dailyCandles) {
-    const key = getWeekKey(String(candle.date));
-    const current = weekly.get(key);
-    if (!current) {
-      weekly.set(key, { ...candle, date: key });
-      continue;
-    }
-
-    current.high = Math.max(current.high, candle.high);
-    current.low = Math.min(current.low, candle.low);
-    current.close = candle.close;
-    current.volume += candle.volume;
-  }
-
-  return Array.from(weekly.values()).sort((a, b) => String(a.date).localeCompare(String(b.date)));
-}
-
-function getWeekKey(dateText: string): string {
-  const date = new Date(`${dateText.slice(0, 10)}T00:00:00Z`);
-  const day = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() - day + 1);
-  return date.toISOString().slice(0, 10);
-}

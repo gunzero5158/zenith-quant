@@ -154,7 +154,9 @@ export function detectDivergence(
   lookback: number = 30
 ): "top" | "bottom" | "none" {
   const len = candles.length;
-  if (len < lookback) return "none";
+  // The scan below reads candles[i - 2] with i as low as len - lookback + 1,
+  // so len must be at least lookback + 1 to stay in bounds.
+  if (len < lookback + 1) return "none";
 
   let latestPricePeakIdx = -1;
   let prevPricePeakIdx = -1;
