@@ -1,8 +1,10 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useSyncExternalStore, useCallback } from "react";
-import { Search, Settings, Star, TrendingUp, TrendingDown, RefreshCw, Trash2, ExternalLink, Zap } from "lucide-react";
-import StockChart from "@/components/StockChart";
+import dynamic from "next/dynamic";
+import { Search, Settings, Star, TrendingUp, TrendingDown, RefreshCw, Trash2, Zap } from "lucide-react";
+import LoadingOverlay from "@/components/LoadingOverlay";
+import SettingsModal from "@/components/SettingsModal";
 import { LLMConfig } from "@/lib/analysis/llmProxy";
 import { formatMarketPrice, getMarketCurrencySymbol, normalizeManualSymbolInput } from "@/lib/analysis/market";
 import { Candle, IchimokuResult } from "@/lib/analysis/indicators";
@@ -12,6 +14,9 @@ import { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
 import { ChanLunResult } from "@/lib/analysis/chanlun";
 import { SupportResistanceResult } from "@/lib/analysis/supportResistance";
 import { VolumeAnalysisResult } from "@/lib/analysis/volumeForce";
+
+// Keep lightweight-charts out of the initial bundle
+const StockChart = dynamic(() => import("@/components/StockChart"), { ssr: false });
 
 interface SearchSuggestion {
   symbol: string;
@@ -71,8 +76,14 @@ interface AnalysisCacheEntry {
   data: StockAnalysisData;
 }
 
+interface WatchQuote {
+  price: number;
+  change: number;
+  isMock?: boolean;
+}
+
 interface QuotesResponse {
-  quotes?: Record<string, { price: number; change: number }>;
+  quotes?: Record<string, WatchQuote>;
 }
 
 interface SearchResponse {
@@ -288,57 +299,71 @@ const setCookie = (name: string, value: string, days = 365) => {
   document.cookie = `${name}=${encodeURIComponent(value)}${expires}; path=/`;
 };
 
-const getTerminalLogsForStep = (step: number, symbol: string) => {
-  const time = () => `[${new Date().toLocaleTimeString()}]`;
-  switch (step) {
-    case 0:
-      return [
-        `${time()} [SYSTEM] Initializing Zenith-Quant Engine v0.3.0...`,
-        `${time()} [NET] Connecting to market server cluster...`,
-        `${time()} [NET] Establishing WebSocket handshake with remote host...`,
-        `${time()} [NET] Connection open. Protocol: secure wss/rest tunnel.`,
-        `${time()} [SYSTEM] Core engine startup: loading technical analytics schema.`
-      ];
-    case 1:
-      return [
-        `${time()} [DATA] Querying historical quotes database for ${symbol}...`,
-        `${time()} [DATA] Downloading historical candles (Daily: 250 bars, Weekly: 150 bars)...`,
-        `${time()} [DATA] Data extraction complete. Extracted [Open, High, Low, Close, Volume].`,
-        `${time()} [DATA] Running anomaly filter: checking for split adjustments...`,
-        `${time()} [DATA] Pre-processing completed: 0 null values, data validation OK.`
-      ];
-    case 2:
-      return [
-        `${time()} [QUANT] Spawning parallel indicators computing matrix...`,
-        `${time()} [QUANT] - Computing EMA (5, 10, 20, 60) series... OK.`,
-        `${time()} [QUANT] - Computing Bollinger Bands (20, 2.0)... Bands generated.`,
-        `${time()} [QUANT] - Computing MACD (12, 26, 9) oscillators... DIF/DEA spread resolved.`,
-        `${time()} [QUANT] - Computing KDJ (9, 3, 3) stochastic indicators... OK.`,
-        `${time()} [QUANT] - Computing RSI (14) & ATR (14) volatility range... Done.`,
-        `${time()} [QUANT] All base technical metrics calculated. Memory block allocated.`
-      ];
-    case 3:
-      return [
-        `${time()} [ALGO] Activating Elliott Wave Theory pattern matcher...`,
-        `${time()} [ALGO] - Swing high/low extrema calculated. Lookback: 120 bars.`,
-        `${time()} [ALGO] - Template matching: analyzing 5-wave impulse/3-wave ABC structures.`,
-        `${time()} [ALGO] Activating Chanlun Stroke & Segment resolver...`,
-        `${time()} [ALGO] - Resolving K-line inclusions: merging swallow-up candles.`,
-        `${time()} [ALGO] - Scanning for Ding/Di FenXing pivot points...`,
-        `${time()} [ALGO] - Connecting strokes... Alternating high-low sequence resolved.`,
-        `${time()} [ALGO] Clustering support & resistance pivots via density estimation...`,
-        `${time()} [ALGO] - Support zones identified. POC chip volume peak mapped.`
-      ];
-    case 4:
-      return [
-        `${time()} [AI] Quantitative indicators scoring calculated. Stock score loaded.`,
-        `${time()} [AI] Assembling prompt payload... Injecting 64 objective quant metrics.`,
-        `${time()} [AI] AI Analyst model dispatched. Waiting for model response...`,
-        `${time()} [AI] Synthesizing report: Overview, Strategy, and Technical breakout.`,
-        `${time()} [SYSTEM] Analysis complete. Preparing interface rendering.`
-      ];
-    default:
-      return [];
+// ----------------------------------------------------
+// Analysis result localStorage cache with a simple LRU cap.
+// A recency index (most recent first) is kept under
+// `zenith_analysis_index`; entries beyond the cap are evicted.
+// ----------------------------------------------------
+const ANALYSIS_CACHE_LIMIT = 6;
+const ANALYSIS_CACHE_INDEX_KEY = "zenith_analysis_index";
+const analysisCacheKey = (symbol: string) => `zenith_analysis_${symbol}`;
+
+const readAnalysisCacheIndex = (): string[] => {
+  try {
+    const raw = localStorage.getItem(ANALYSIS_CACHE_INDEX_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed.filter((item): item is string => typeof item === "string");
+    }
+  } catch (e) {
+    console.error("Read analysis cache index failed:", e);
+  }
+  return [];
+};
+
+// Move `symbol` to the front of the recency index and evict overflow entries
+const touchAnalysisCache = (symbol: string) => {
+  try {
+    const updated = [symbol, ...readAnalysisCacheIndex().filter((item) => item !== symbol)];
+    for (const evicted of updated.slice(ANALYSIS_CACHE_LIMIT)) {
+      localStorage.removeItem(analysisCacheKey(evicted));
+    }
+    localStorage.setItem(ANALYSIS_CACHE_INDEX_KEY, JSON.stringify(updated.slice(0, ANALYSIS_CACHE_LIMIT)));
+  } catch (e) {
+    console.error("Update analysis cache index failed:", e);
+  }
+};
+
+const readAnalysisCache = (symbol: string): AnalysisCacheEntry | null => {
+  try {
+    const cachedStr = localStorage.getItem(analysisCacheKey(symbol));
+    if (!cachedStr) return null;
+    return JSON.parse(cachedStr) as AnalysisCacheEntry;
+  } catch (e) {
+    console.error("Cache parse error", e);
+    return null;
+  }
+};
+
+const writeAnalysisCache = (symbol: string, entry: AnalysisCacheEntry) => {
+  try {
+    localStorage.setItem(analysisCacheKey(symbol), JSON.stringify(entry));
+    touchAnalysisCache(symbol);
+  } catch (e) {
+    console.error("Failed to save cache", e);
+  }
+};
+
+const removeAnalysisCache = (symbol: string) => {
+  try {
+    localStorage.removeItem(analysisCacheKey(symbol));
+    localStorage.setItem(
+      ANALYSIS_CACHE_INDEX_KEY,
+      JSON.stringify(readAnalysisCacheIndex().filter((item) => item !== symbol))
+    );
+  } catch (e) {
+    console.error("Failed to remove cache", e);
   }
 };
 
@@ -382,6 +407,116 @@ const isNonTradingHours = (symbol: string): boolean => {
   }
 };
 
+const parseBoldText = (text: string) => {
+  const parts = text.split(/\*\*(.*?)\*\*/g);
+  return parts.map((part, i) => (i % 2 === 1 ? <strong key={i} style={{ color: "#ffffff" }}>{part}</strong> : part));
+};
+
+// Memoized Markdown renderer so the three report blocks are not re-parsed
+// on every unrelated re-render of the page.
+const MarkdownBlock = React.memo(function MarkdownBlock({ text, effectiveLang }: { text: string; effectiveLang: EffectiveLanguage }) {
+  if (!text) return null;
+
+  const lines = text.split("\n");
+
+  return (
+    <>
+      {lines.map((line, idx) => {
+        const cleanLine = line.trim();
+
+        if (cleanLine.startsWith("*(Error:") || cleanLine.startsWith("*(error:")) {
+          let rawError = cleanLine;
+          if (cleanLine.startsWith("*(Error:")) {
+            rawError = cleanLine.replace("*(Error:", "");
+          } else {
+            rawError = cleanLine.replace("*(error:", "");
+          }
+          if (rawError.endsWith(")*")) {
+            rawError = rawError.substring(0, rawError.length - 2);
+          }
+          rawError = rawError.trim();
+
+          return (
+            <details key={idx} style={{
+              margin: "12px 0",
+              padding: "10px 14px",
+              backgroundColor: "rgba(242, 54, 69, 0.02)",
+              border: "1px dashed rgba(242, 54, 69, 0.15)",
+              borderRadius: "6px",
+              cursor: "pointer",
+              width: "100%",
+              boxSizing: "border-box"
+            }}>
+              <summary style={{
+                fontSize: "12px",
+                color: "#787b86",
+                fontWeight: 600,
+                userSelect: "none",
+                outline: "none",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px"
+              }}>
+                <span>🔍</span>
+                <span>
+                  {effectiveLang === "zh-CN" && "展开查看底层错误日志详情"}
+                  {effectiveLang === "zh-TW" && "展開查看底層錯誤日誌詳情"}
+                  {effectiveLang === "en" && "Expand to view raw error details"}
+                  {effectiveLang === "ja" && "生の技術エラーログを展開して表示"}
+                </span>
+              </summary>
+              <div style={{
+                marginTop: "8px",
+                padding: "10px",
+                backgroundColor: "#0d0f14",
+                border: "1px solid #2a2e39",
+                borderRadius: "4px",
+                overflowX: "auto",
+                cursor: "text"
+              }}>
+                <code style={{
+                  fontFamily: "monospace",
+                  fontSize: "11px",
+                  color: "#f23645",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-all"
+                }}>
+                  {rawError}
+                </code>
+              </div>
+            </details>
+          );
+        }
+
+        if (cleanLine.startsWith("## ")) {
+          return <h2 key={idx} style={styles.mdH2}>{cleanLine.replace("## ", "")}</h2>;
+        }
+        if (cleanLine.startsWith("### ")) {
+          return <h3 key={idx} style={styles.mdH3}>{cleanLine.replace("### ", "")}</h3>;
+        }
+        if (cleanLine.startsWith("- ") || cleanLine.startsWith("* ")) {
+          const content = cleanLine.substring(2);
+          return (
+            <ul key={idx} style={styles.mdUl}>
+              <li style={styles.mdLi}>{parseBoldText(content)}</li>
+            </ul>
+          );
+        }
+        if (cleanLine === "---") {
+          return <hr key={idx} style={styles.mdHr} />;
+        }
+        if (!cleanLine) {
+          return <div key={idx} style={{ height: "8px" }} />;
+        }
+
+        return <p key={idx} style={styles.mdP}>{parseBoldText(cleanLine)}</p>;
+      })}
+    </>
+  );
+});
+
+const LANG_OPTION_STYLE: React.CSSProperties = { backgroundColor: "#1c2030", color: "#ffffff" };
+
 export default function Home() {
   const mounted = useSyncExternalStore(subscribeMounted, getClientMountedSnapshot, getServerMountedSnapshot);
   const [activeSymbol, setActiveSymbol] = useState("");
@@ -393,24 +528,21 @@ export default function Home() {
   const [stockData, setStockData] = useState<StockAnalysisData | null>(null);
   const [chartPeriod, setChartPeriod] = useState<"daily" | "weekly">("daily");
   const [showMockWarning, setShowMockWarning] = useState(true);
-  const [loadingStep, setLoadingStep] = useState(0);
-  const [terminalLogs, setTerminalLogs] = useState<string[]>([]);
 
-  const pendingLogsRef = useRef<string[]>([]);
-  const terminalRef = useRef<HTMLDivElement>(null);
   const lastRequestedSymbolRef = useRef("");
+  const analyzeAbortRef = useRef<AbortController | null>(null);
+  const currentRequestSymbolRef = useRef("");
+  const watchlistHydratedRef = useRef(false);
 
   const [watchlist, setWatchlist] = useState<string[]>([]);
-  const [watchlistQuotes, setWatchlistQuotes] = useState<Record<string, { price: number; change: number }>>({});
-  
+  const [watchlistQuotes, setWatchlistQuotes] = useState<Record<string, WatchQuote>>({});
+
   const [isRedUp, setIsRedUp] = useState(true);
 
   const toggleColorMode = () => {
-    setIsRedUp((prev) => {
-      const newVal = !prev;
-      localStorage.setItem("zenith_chart_color_mode", newVal ? "red-up" : "green-up");
-      return newVal;
-    });
+    const newVal = !isRedUp;
+    localStorage.setItem("zenith_chart_color_mode", newVal ? "red-up" : "green-up");
+    setIsRedUp(newVal);
   };
   
   const [llmConfig, setLlmConfig] = useState<LLMConfig>({
@@ -444,79 +576,6 @@ export default function Home() {
   const t = TRANSLATIONS[effectiveLang];
   const upColor = isRedUp ? "#f23645" : "#089981";
   const downColor = isRedUp ? "#089981" : "#f23645";
-
-  const steps = [
-    {
-      label: {
-        "zh-CN": "连接多源行情服务器",
-        "zh-TW": "連接多源行情服務器",
-        "en": "Connecting to Market Servers",
-        "ja": "市場サーバーへの接続"
-      },
-      subLabel: {
-        "zh-CN": "建立安全 WebSocket 与 REST 极速数据通道",
-        "zh-TW": "建立安全 WebSocket 與 REST 極速數據通道",
-        "en": "Establishing secure WebSocket & REST data tunnels",
-        "ja": "セキュアなWebSocketおよびRESTデータチャネルの確立中"
-      }
-    },
-    {
-      label: {
-        "zh-CN": "下载并清洗 K 线历史数据",
-        "zh-TW": "下載並清洗 K 線歷史數據",
-        "en": "Downloading & Cleaning K-Line Data",
-        "ja": "K線データの取得とクレンジング"
-      },
-      subLabel: {
-        "zh-CN": "拉取 250 日日K及 150 周K数据并排除异常波动",
-        "zh-TW": "拉取 250 日日K及 150 周K數據並排除異常波動",
-        "en": "Fetching 250 daily & 150 weekly bars and filtering anomalies",
-        "ja": "日足250本および週足150本のデータを取得し、異常値を除去"
-      }
-    },
-    {
-      label: {
-        "zh-CN": "计算多维度量化指标",
-        "zh-TW": "計算多維度量化指標",
-        "en": "Running Technical Quant Indicators",
-        "ja": "テクニカル指標の並行計算"
-      },
-      subLabel: {
-        "zh-CN": "并行矩阵计算 EMA, BOLL, MACD, RSI, KDJ, ATR 序列",
-        "zh-TW": "並行矩陣計算 EMA, BOLL, MACD, RSI, KDJ, ATR 序列",
-        "en": "Computing multi-period EMA, Bollinger, MACD, RSI, KDJ, ATR matrices",
-        "ja": "複数期間のEMA、ボリンジャー、MACD、RSI、KDJ、ATR行列の計算"
-      }
-    },
-    {
-      label: {
-        "zh-CN": "探测波浪理论与缠论形态",
-        "zh-TW": "探測波浪理論與纏論形態",
-        "en": "Detecting Elliot Waves & Chanlun Structures",
-        "ja": "波動および纏論パターンの検出"
-      },
-      subLabel: {
-        "zh-CN": "识别 1-5 推进浪与 ABC 调整浪，构建缠论分型、笔划及中枢",
-        "zh-TW": "識別 1-5 推進浪與 ABC 調整浪，構建纏論分型、筆劃及中樞",
-        "en": "Detecting 1-5 Impulse/ABC Correction waves and Chanlun stroke elements",
-        "ja": "エリオット推進・修正波のカウントおよび纏論の頂底分型・筆画分析"
-      }
-    },
-    {
-      label: {
-        "zh-CN": "大模型智能组装报告",
-        "zh-TW": "大模型智能組裝報告",
-        "en": "Assembling AI Quantitative Report",
-        "ja": "AIモデルによるスマートレポート生成"
-      },
-      subLabel: {
-        "zh-CN": "驱动智能 analysis 员模型对客观算力指标执行多因子融合推理",
-        "zh-TW": "驅動智能 analysis 員模型對客觀算力指標執行多因子融合推理",
-        "en": "Running multi-factor integration reasoning via configured LLM model",
-        "ja": "客観的指標をAIプロンプトに注入し、テクニカル分析を自動統合"
-      }
-    }
-  ];
 
   const renderStockName = () => {
     if (!stockData) return "";
@@ -581,12 +640,13 @@ export default function Home() {
           setCookie("analysis_history", JSON.stringify(defaultHistory));
         }
       }
+      watchlistHydratedRef.current = true;
 
       // 1.5 Load Watchlist Quotes Cache
       const savedQuotes = localStorage.getItem("watchlistQuotes");
       if (savedQuotes) {
         try {
-          const parsedQuotes = JSON.parse(savedQuotes) as Record<string, { price: number; change: number }>;
+          const parsedQuotes = JSON.parse(savedQuotes) as Record<string, WatchQuote>;
           setWatchlistQuotes(parsedQuotes);
         } catch (e) {
           console.error("Parse cached watchlist quotes failed:", e);
@@ -627,13 +687,22 @@ export default function Home() {
     };
   }, []);
 
-  // Fetch Watchlist simple quotes on load and when watchlist changes
+  // Persist analysis history to cookie whenever it changes (after hydration)
   useEffect(() => {
-    if (watchlist.length === 0) return;
-    
+    if (!watchlistHydratedRef.current) return;
+    setCookie("analysis_history", JSON.stringify(watchlist));
+  }, [watchlist]);
+
+  // Fetch Watchlist simple quotes on load and when watchlist MEMBERSHIP changes.
+  // The membership key ignores reordering (recency reshuffles after each analysis).
+  const watchlistKey = [...watchlist].sort().join(",");
+
+  useEffect(() => {
+    if (!watchlistKey) return;
+
     const fetchWatchlistQuotes = async () => {
       try {
-        const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(watchlist.join(","))}`);
+        const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(watchlistKey)}`);
         if (res.ok) {
           const data = await res.json() as QuotesResponse;
           const newQuotes = data.quotes || {};
@@ -646,52 +715,41 @@ export default function Home() {
     };
 
     fetchWatchlistQuotes();
-  }, [watchlist]);
+  }, [watchlistKey]);
 
-  // Update pending logs when loadingStep changes
-  useEffect(() => {
-    if (loading && activeSymbol) {
-      const stepLogs = getTerminalLogsForStep(loadingStep, activeSymbol);
-      pendingLogsRef.current = [...pendingLogsRef.current, ...stepLogs];
-    }
-  }, [loadingStep, loading, activeSymbol]);
-
-  // Scroll terminal to bottom when new logs print
-  useEffect(() => {
-    if (terminalRef.current) {
-      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
-    }
-  }, [terminalLogs]);
-
-  const fetchActiveStockData = useCallback(async (forceFetch: boolean | React.MouseEvent = false) => {
+  const fetchActiveStockData = useCallback(async (forceFetch: boolean | React.MouseEvent = false, overrideConfig?: LLMConfig) => {
     const isForce = forceFetch === true || (forceFetch && typeof forceFetch === "object" && "nativeEvent" in forceFetch);
-    
+    const requestedSymbol = activeSymbol;
+    const config = overrideConfig ?? llmConfig;
+
     if (!isForce) {
-      const cacheKey = `zenith_analysis_${activeSymbol}`;
-      const cachedStr = localStorage.getItem(cacheKey);
-      if (cachedStr) {
+      const cachedObj = readAnalysisCache(requestedSymbol);
+      if (cachedObj) {
         try {
-          const cachedObj = JSON.parse(cachedStr) as AnalysisCacheEntry;
           const cacheDate = new Date(cachedObj.timestamp);
           const now = new Date();
           const isSameDay = cacheDate.toDateString() === now.toDateString();
-          if (isSameDay && isNonTradingHours(activeSymbol)) {
-            console.log("[CACHE] Using cached analysis for", activeSymbol);
+          if (isSameDay && isNonTradingHours(requestedSymbol)) {
+            console.log("[CACHE] Using cached analysis for", requestedSymbol);
             const cachedData = cachedObj.data;
             if (cachedData.isMock) {
-              localStorage.removeItem(cacheKey);
+              removeAnalysisCache(requestedSymbol);
             } else {
-              const resolvedSymbol = cachedData.symbol || activeSymbol;
+              touchAnalysisCache(requestedSymbol);
+              const resolvedSymbol = cachedData.symbol || requestedSymbol;
+              // A cache hit supersedes any in-flight analysis request
+              analyzeAbortRef.current?.abort();
+              analyzeAbortRef.current = null;
+              currentRequestSymbolRef.current = resolvedSymbol;
+              setLoading(false);
               setStockData(cachedData);
-              if (resolvedSymbol !== activeSymbol) {
+              if (resolvedSymbol !== requestedSymbol) {
                 lastRequestedSymbolRef.current = resolvedSymbol;
                 setActiveSymbol(resolvedSymbol);
               }
               setWatchlist((prev) => {
-                const filtered = prev.filter((item) => item !== activeSymbol && item !== resolvedSymbol);
-                const updated = [resolvedSymbol, ...filtered].slice(0, 15);
-                setCookie("analysis_history", JSON.stringify(updated));
-                return updated;
+                const filtered = prev.filter((item) => item !== requestedSymbol && item !== resolvedSymbol);
+                return [resolvedSymbol, ...filtered].slice(0, 15);
               });
               return;
             }
@@ -702,94 +760,83 @@ export default function Home() {
       }
     }
 
+    // Abort any previous in-flight analysis so slow responses cannot win
+    analyzeAbortRef.current?.abort();
+    const controller = new AbortController();
+    analyzeAbortRef.current = controller;
+    currentRequestSymbolRef.current = requestedSymbol;
+
     setLoading(true);
-    setLoadingStep(0);
-    setTerminalLogs([]);
-    pendingLogsRef.current = getTerminalLogsForStep(0, activeSymbol);
 
-    const interval = setInterval(() => {
-      setLoadingStep((prev) => (prev < 4 ? prev + 1 : prev));
-    }, 800);
-
-    const logInterval = setInterval(() => {
-      if (pendingLogsRef.current.length > 0) {
-        const next = pendingLogsRef.current[0];
-        pendingLogsRef.current = pendingLogsRef.current.slice(1);
-        setTerminalLogs((prev) => [...prev, next]);
+    let requestLang: EffectiveLanguage = appLanguage === "auto" ? "zh-CN" : appLanguage;
+    if (appLanguage === "auto") {
+      const navLang = typeof navigator !== "undefined" ? navigator.language.toLowerCase() : "zh-cn";
+      if (navLang.includes("zh-tw") || navLang.includes("zh-hk") || navLang.includes("zh-mo")) {
+        requestLang = "zh-TW";
+      } else if (navLang.includes("zh")) {
+        requestLang = "zh-CN";
+      } else if (navLang.includes("ja")) {
+        requestLang = "ja";
+      } else {
+        requestLang = "en";
       }
-    }, 120);
+    }
+    const requestT = TRANSLATIONS[requestLang];
 
     try {
-      let effectiveLang: EffectiveLanguage = appLanguage === "auto" ? "zh-CN" : appLanguage;
-      if (appLanguage === "auto") {
-        const navLang = typeof navigator !== "undefined" ? navigator.language.toLowerCase() : "zh-cn";
-        if (navLang.includes("zh-tw") || navLang.includes("zh-hk") || navLang.includes("zh-mo")) {
-          effectiveLang = "zh-TW";
-        } else if (navLang.includes("zh")) {
-          effectiveLang = "zh-CN";
-        } else if (navLang.includes("ja")) {
-          effectiveLang = "ja";
-        } else {
-          effectiveLang = "en";
-        }
-      }
-
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          symbol: activeSymbol,
-          llmConfig: llmConfig.apiKey ? llmConfig : undefined,
-          language: effectiveLang,
+          symbol: requestedSymbol,
+          llmConfig: config.apiKey ? config : undefined,
+          language: requestLang,
           useFallback,
         }),
+        signal: controller.signal,
       });
 
       if (!res.ok) {
         const err = await res.json() as ApiErrorResponse;
-        alert(`查询失败: ${err.error || "未知错误"}`);
+        if (analyzeAbortRef.current !== controller) return;
+        alert(`${requestT.queryFailed}: ${err.error || "Unknown Error"}`);
         return;
       }
 
       const data = await res.json() as StockAnalysisData;
-      const resolvedSymbol = data.symbol || activeSymbol;
+      // Ignore stale responses: a newer request (or cache hit) has taken over
+      if (analyzeAbortRef.current !== controller || currentRequestSymbolRef.current !== requestedSymbol) {
+        return;
+      }
+      const resolvedSymbol = data.symbol || requestedSymbol;
       setStockData(data);
-      if (resolvedSymbol !== activeSymbol) {
+      if (resolvedSymbol !== requestedSymbol) {
         lastRequestedSymbolRef.current = resolvedSymbol;
         setActiveSymbol(resolvedSymbol);
       }
       setShowMockWarning(true);
-      
-      try {
-        if (!data.isMock) {
-          localStorage.setItem(`zenith_analysis_${resolvedSymbol}`, JSON.stringify({
-            timestamp: Date.now(),
-            data
-          }));
-        }
-      } catch (e) {
-        console.error("Failed to save cache", e);
+
+      if (!data.isMock) {
+        writeAnalysisCache(resolvedSymbol, {
+          timestamp: Date.now(),
+          data
+        });
       }
-      
-      // Update analysis history cookie
+
+      // Update analysis history (persisted to cookie by effect)
       setWatchlist((prev) => {
-        const filtered = prev.filter((item) => item !== activeSymbol && item !== resolvedSymbol);
-        const updated = [resolvedSymbol, ...filtered].slice(0, 15);
-        setCookie("analysis_history", JSON.stringify(updated));
-        return updated;
+        const filtered = prev.filter((item) => item !== requestedSymbol && item !== resolvedSymbol);
+        return [resolvedSymbol, ...filtered].slice(0, 15);
       });
     } catch (caught: unknown) {
+      if (controller.signal.aborted) return;
       const e = { message: getErrorMessage(caught) };
       console.error(e);
-      alert(`查询出错: ${e.message || e}`);
+      alert(`${requestT.queryError}: ${e.message || e}`);
     } finally {
-      clearInterval(interval);
-      clearInterval(logInterval);
-      if (pendingLogsRef.current.length > 0) {
-        setTerminalLogs((prev) => [...prev, ...pendingLogsRef.current]);
-        pendingLogsRef.current = [];
+      if (analyzeAbortRef.current === controller) {
+        setLoading(false);
       }
-      setLoading(false);
     }
   }, [activeSymbol, appLanguage, llmConfig, useFallback]);
 
@@ -849,131 +896,25 @@ export default function Home() {
 
   const handleRemoveWatchlist = (sym: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Avoid selecting the item
-    setWatchlist((prev) => {
-      const updated = prev.filter((item) => item !== sym);
-      setCookie("analysis_history", JSON.stringify(updated));
-      return updated;
-    });
+    setWatchlist((prev) => prev.filter((item) => item !== sym));
   };
 
-  const handleSaveSettings = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveSettings = (newConfig: LLMConfig) => {
     const prevConfigStr = localStorage.getItem("llmConfig");
     const prevApiKey = prevConfigStr ? JSON.parse(prevConfigStr).apiKey : "";
-    const prevFallback = localStorage.getItem("zenith_use_fallback") === "true";
+    // The state default is `true` and the loader only flips it off for the
+    // literal "false", so a missing key must also be treated as `true`.
+    const prevFallback = localStorage.getItem("zenith_use_fallback") !== "false";
 
-    localStorage.setItem("llmConfig", JSON.stringify(llmConfig));
+    localStorage.setItem("llmConfig", JSON.stringify(newConfig));
     localStorage.setItem("appLanguage", appLanguage);
     localStorage.setItem("zenith_use_fallback", useFallback ? "true" : "false");
+    setLlmConfig(newConfig);
     setIsSettingsOpen(false);
-    
-    if (activeSymbol && (prevApiKey !== llmConfig.apiKey || prevFallback !== useFallback)) {
-      fetchActiveStockData(true);
+
+    if (activeSymbol && (prevApiKey !== newConfig.apiKey || prevFallback !== useFallback)) {
+      fetchActiveStockData(true, newConfig);
     }
-  };
-
-  // Helper to render Markdown cleanly without external dependencies
-  const renderMarkdownText = (text: string) => {
-    if (!text) return null;
-    
-    const lines = text.split("\n");
-    const effectiveLang = getEffectiveLang();
-
-    return lines.map((line, idx) => {
-      const cleanLine = line.trim();
-
-      if (cleanLine.startsWith("*(Error:") || cleanLine.startsWith("*(error:")) {
-        let rawError = cleanLine;
-        if (cleanLine.startsWith("*(Error:")) {
-          rawError = cleanLine.replace("*(Error:", "");
-        } else {
-          rawError = cleanLine.replace("*(error:", "");
-        }
-        if (rawError.endsWith(")*")) {
-          rawError = rawError.substring(0, rawError.length - 2);
-        }
-        rawError = rawError.trim();
-
-        return (
-          <details key={idx} style={{
-            margin: "12px 0",
-            padding: "10px 14px",
-            backgroundColor: "rgba(242, 54, 69, 0.02)",
-            border: "1px dashed rgba(242, 54, 69, 0.15)",
-            borderRadius: "6px",
-            cursor: "pointer",
-            width: "100%",
-            boxSizing: "border-box"
-          }}>
-            <summary style={{
-              fontSize: "12px",
-              color: "#787b86",
-              fontWeight: 600,
-              userSelect: "none",
-              outline: "none",
-              display: "flex",
-              alignItems: "center",
-              gap: "6px"
-            }}>
-              <span>🔍</span>
-              <span>
-                {effectiveLang === "zh-CN" && "展开查看底层错误日志详情"}
-                {effectiveLang === "zh-TW" && "展開查看底層錯誤日誌詳情"}
-                {effectiveLang === "en" && "Expand to view raw error details"}
-                {effectiveLang === "ja" && "生の技術エラーログを展開して表示"}
-              </span>
-            </summary>
-            <div style={{
-              marginTop: "8px",
-              padding: "10px",
-              backgroundColor: "#0d0f14",
-              border: "1px solid #2a2e39",
-              borderRadius: "4px",
-              overflowX: "auto",
-              cursor: "text"
-            }}>
-              <code style={{
-                fontFamily: "monospace",
-                fontSize: "11px",
-                color: "#f23645",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-all"
-              }}>
-                {rawError}
-              </code>
-            </div>
-          </details>
-        );
-      }
-
-      if (cleanLine.startsWith("## ")) {
-        return <h2 key={idx} style={styles.mdH2}>{cleanLine.replace("## ", "")}</h2>;
-      }
-      if (cleanLine.startsWith("### ")) {
-        return <h3 key={idx} style={styles.mdH3}>{cleanLine.replace("### ", "")}</h3>;
-      }
-      if (cleanLine.startsWith("- ") || cleanLine.startsWith("* ")) {
-        const content = cleanLine.substring(2);
-        return (
-          <ul key={idx} style={styles.mdUl}>
-            <li style={styles.mdLi}>{parseBoldText(content)}</li>
-          </ul>
-        );
-      }
-      if (cleanLine === "---") {
-        return <hr key={idx} style={styles.mdHr} />;
-      }
-      if (!cleanLine) {
-        return <div key={idx} style={{ height: "8px" }} />;
-      }
-      
-      return <p key={idx} style={styles.mdP}>{parseBoldText(cleanLine)}</p>;
-    });
-  };
-
-  const parseBoldText = (text: string) => {
-    const parts = text.split(/\*\*(.*?)\*\*/g);
-    return parts.map((part, i) => (i % 2 === 1 ? <strong key={i} style={{ color: "#ffffff" }}>{part}</strong> : part));
   };
 
   const renderStarRating = (val: number) => {
@@ -1119,11 +1060,11 @@ export default function Home() {
               }}
               style={styles.langSelect}
             >
-              <option value="auto" style={{ backgroundColor: "#1c2030", color: "#ffffff" }}>{t.langAuto}</option>
-              <option value="zh-CN" style={{ backgroundColor: "#1c2030", color: "#ffffff" }}>{t.langZhCN}</option>
-              <option value="zh-TW" style={{ backgroundColor: "#1c2030", color: "#ffffff" }}>{t.langZhTW}</option>
-              <option value="en" style={{ backgroundColor: "#1c2030", color: "#ffffff" }}>{t.langEn}</option>
-              <option value="ja" style={{ backgroundColor: "#1c2030", color: "#ffffff" }}>{t.langJa}</option>
+              <option value="auto" style={LANG_OPTION_STYLE}>{t.langAuto}</option>
+              <option value="zh-CN" style={LANG_OPTION_STYLE}>{t.langZhCN}</option>
+              <option value="zh-TW" style={LANG_OPTION_STYLE}>{t.langZhTW}</option>
+              <option value="en" style={LANG_OPTION_STYLE}>{t.langEn}</option>
+              <option value="ja" style={LANG_OPTION_STYLE}>{t.langJa}</option>
             </select>
           </div>
 
@@ -1181,15 +1122,25 @@ export default function Home() {
                   </div>
                   {quote ? (
                     <div style={styles.watchItemRight}>
-                      <span style={styles.watchPrice}>{formatMarketPrice(sym, quote.price)}</span>
-                      <span
-                        style={{
-                          ...styles.watchChange,
-                          color: isUp ? upColor : downColor,
-                        }}
-                      >
-                        {isUp ? "+" : ""}{quote.change.toFixed(2)}%
-                      </span>
+                      {quote.isMock ? (
+                        <>
+                          {/* Real quote unavailable: show a placeholder instead of mock values */}
+                          <span style={styles.watchPrice}>--</span>
+                          <span style={{ ...styles.watchChange, color: "#787b86" }}>--</span>
+                        </>
+                      ) : (
+                        <>
+                          <span style={styles.watchPrice}>{formatMarketPrice(sym, quote.price)}</span>
+                          <span
+                            style={{
+                              ...styles.watchChange,
+                              color: isUp ? upColor : downColor,
+                            }}
+                          >
+                            {isUp ? "+" : ""}{quote.change.toFixed(2)}%
+                          </span>
+                        </>
+                      )}
                       <button
                         onClick={(e) => handleRemoveWatchlist(sym, e)}
                         style={styles.removeWatchBtn}
@@ -1209,269 +1160,7 @@ export default function Home() {
         {/* Center/Right Main Content Area */}
         <main style={styles.main}>
           {loading ? (
-            <div style={styles.loadingContainer}>
-              <style>{`
-                @keyframes border-flow {
-                  0% { background-position: 0% 50%; }
-                  50% { background-position: 100% 50%; }
-                  100% { background-position: 0% 50%; }
-                }
-                @keyframes scan-line {
-                  0% { transform: translateY(-100%); }
-                  100% { transform: translateY(100%); }
-                }
-                @keyframes floating-bg {
-                  0% { transform: translateY(0px) rotate(0deg); opacity: 0.015; }
-                  50% { transform: translateY(-30px) rotate(180deg); opacity: 0.05; }
-                  100% { transform: translateY(0px) rotate(360deg); opacity: 0.015; }
-                }
-                @keyframes spin-clockwise {
-                  0% { transform: rotate(0deg); }
-                  100% { transform: rotate(360deg); }
-                }
-                @keyframes spin-counterclockwise {
-                  0% { transform: rotate(0deg); }
-                  100% { transform: rotate(-360deg); }
-                }
-                @keyframes pulse-glow {
-                  0%, 100% { opacity: 0.6; transform: scale(1); }
-                  50% { opacity: 1; transform: scale(1.15); }
-                }
-                @keyframes pulse-badge {
-                  0%, 100% { opacity: 0.8; }
-                  50% { opacity: 1; filter: drop-shadow(0 0 4px #2962ff); }
-                }
-                .feature-card {
-                  background: linear-gradient(135deg, rgba(23, 27, 38, 0.75) 0%, rgba(15, 18, 26, 0.9) 100%) !important;
-                  border: 1px solid rgba(255, 255, 255, 0.06) !important;
-                  backdrop-filter: blur(16px);
-                  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
-                }
-                .feature-card:hover {
-                  transform: translateY(-6px);
-                  border-color: rgba(41, 98, 255, 0.6) !important;
-                  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65), 0 0 25px rgba(41, 98, 255, 0.25) !important;
-                }
-                .quick-badge-btn {
-                  transition: all 0.25s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
-                  position: relative;
-                  overflow: hidden;
-                }
-                .quick-badge-btn:hover {
-                  transform: translateY(-2px) scale(1.03);
-                  background-color: #1a52f5 !important;
-                  box-shadow: 0 6px 20px rgba(41, 98, 255, 0.45) !important;
-                }
-                .quick-badge-btn::after {
-                  content: '';
-                  position: absolute;
-                  top: -50%;
-                  left: -60%;
-                  width: 20%;
-                  height: 200%;
-                  background: rgba(255,255,255,0.13);
-                  transform: rotate(30deg);
-                  transition: none;
-                }
-                .quick-badge-btn:hover::after {
-                  left: 150%;
-                  transition: all 0.6s ease-in-out;
-                }
-                .guide-step-card {
-                  transition: border-color 0.2s;
-                }
-                .guide-step-card:hover {
-                  border-color: rgba(41, 98, 255, 0.3) !important;
-                }
-                .glow-border-container {
-                  background: linear-gradient(90deg, #2962ff, #089981, #fbbf24, #2962ff);
-                  background-size: 300% 300%;
-                  animation: border-flow 4s ease infinite;
-                  padding: 1.5px;
-                  border-radius: 12px;
-                  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 40px rgba(41, 98, 255, 0.1);
-                }
-              `}</style>
-
-              {[
-                { text: "EMA", top: "15%", left: "10%", delay: "0s", size: "48px" },
-                { text: "MACD", top: "25%", left: "80%", delay: "2s", size: "60px" },
-                { text: "BOLL", top: "70%", left: "15%", delay: "4s", size: "54px" },
-                { text: "RSI", top: "80%", left: "75%", delay: "1s", size: "46px" },
-                { text: "KDJ", top: "45%", left: "85%", delay: "5s", size: "40px" },
-                { text: "Wave 5", top: "85%", left: "45%", delay: "3s", size: "64px" },
-                { text: "Chanlun", top: "12%", left: "50%", delay: "6s", size: "58px" },
-              ].map((op, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    position: "absolute",
-                    top: op.top,
-                    left: op.left,
-                    fontSize: op.size,
-                    fontWeight: "bold",
-                    color: "rgba(41, 98, 255, 0.06)",
-                    fontFamily: "monospace",
-                    userSelect: "none",
-                    pointerEvents: "none",
-                    animation: `floating-bg 12s ease-in-out infinite`,
-                    animationDelay: op.delay,
-                    zIndex: 1,
-                  }}
-                >
-                  {op.text}
-                </div>
-              ))}
-
-              <div className="glow-border-container" style={{ zIndex: 2 }}>
-                <div style={{
-                  background: "linear-gradient(135deg, #1c2030 0%, #131722 100%)",
-                  borderRadius: "11px",
-                  padding: "24px 28px",
-                  width: "780px",
-                  maxHeight: "82vh",
-                  boxSizing: "border-box",
-                  display: "flex",
-                  gap: "24px",
-                  backdropFilter: "blur(20px)",
-                  position: "relative",
-                  overflow: "hidden",
-                }}>
-                  <div style={{ width: "320px", display: "flex", flexDirection: "column", gap: "16px", borderRight: "1px solid #2a2e39", paddingRight: "20px" }}>
-                    <div style={styles.loadingHeader}>
-                      <div style={styles.techLoaderWrapper}>
-                        <div style={styles.outerRing}></div>
-                        <div style={styles.innerRing}></div>
-                        <div style={styles.centerDot}></div>
-                      </div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                        <span style={styles.loadingTitle}>
-                          {effectiveLang === "zh-CN" && `正在实时分析 ${activeSymbol}`}
-                          {effectiveLang === "zh-TW" && `正在實時分析 ${activeSymbol}`}
-                          {effectiveLang === "en" && `Analyzing ${activeSymbol} in real-time`}
-                          {effectiveLang === "ja" && `${activeSymbol} をリアルタイム分析中`}
-                        </span>
-                        <span style={{ fontSize: "11px", color: "#787b86" }}>
-                          {effectiveLang === "zh-CN" && "深度量化分析计算引擎启动中..."}
-                          {effectiveLang === "zh-TW" && "深度量化分析計算引擎啟動中..."}
-                          {effectiveLang === "en" && "Initializing multi-period quant engine..."}
-                          {effectiveLang === "ja" && "複数ファクターのクオンツエンジンを初期化中..."}
-                        </span>
-                      </div>
-                    </div>
-                    
-                    <div style={{ ...styles.stepperContainer, gap: "12px" }}>
-                      {steps.map((step, idx) => {
-                        const isCompleted = loadingStep > idx;
-                        const isCurrent = loadingStep === idx;
-                        const isPending = loadingStep < idx;
-
-                        return (
-                          <div key={idx} style={{
-                            ...styles.stepItem,
-                            opacity: isPending ? 0.35 : 1,
-                            transform: isCurrent ? "scale(1.015)" : "scale(1)",
-                            transition: "all 0.3s ease",
-        flexShrink: 0,
-                          }}>
-                            <div style={{
-                              ...styles.stepIcon,
-                              ...(isCompleted ? styles.stepIconCompleted : {}),
-                              ...(isCurrent ? styles.stepIconCurrent : {}),
-                            }}>
-                              {isCompleted ? "✓" : isCurrent ? "●" : ""}
-                            </div>
-                            <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
-                              <div style={{
-                                ...styles.stepLabel,
-                                color: isCompleted ? "#089981" : isCurrent ? "#ffffff" : "#787b86",
-                                fontWeight: isCurrent ? "bold" : "normal",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "8px",
-                              }}>
-                                {step.label[effectiveLang as "zh-CN" | "zh-TW" | "en" | "ja"] || step.label["zh-CN"]}
-                                {isCurrent && (
-                                  <span style={styles.runningBadge}>
-                                    {effectiveLang === "zh-CN" && "计算中..."}
-                                    {effectiveLang === "zh-TW" && "計算中..."}
-                                    {effectiveLang === "en" && "ACTIVE"}
-                                    {effectiveLang === "ja" && "処理中..."}
-                                  </span>
-                                )}
-                              </div>
-                              {(isCurrent || isCompleted) && (
-                                <div style={{
-                                  fontSize: "12px",
-                                  color: isCurrent ? "#2962ff" : "#5d606b",
-                                  marginTop: "4px",
-                                  transition: "all 0.3s ease",
-                                }}>
-                                  {step.subLabel[effectiveLang as "zh-CN" | "zh-TW" | "en" | "ja"] || step.subLabel["zh-CN"]}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: "220px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", borderBottom: "1px solid #2a2e39", paddingBottom: "8px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                        <span style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#089981", boxShadow: "0 0 6px #089981" }}></span>
-                        <span style={{ fontSize: "11px", fontWeight: "bold", color: "#089981", letterSpacing: "1px", fontFamily: "monospace" }}>QUANT ANALYSIS TERMINAL</span>
-                      </div>
-                      <div style={{ display: "flex", gap: "5px" }}>
-                        <span style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#f23645", opacity: 0.8 }}></span>
-                        <span style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#fbbf24", opacity: 0.8 }}></span>
-                        <span style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#089981", opacity: 0.8 }}></span>
-                      </div>
-                    </div>
-
-                    <div 
-                      ref={terminalRef}
-                      style={{
-                        flex: 1,
-                        backgroundColor: "#0d0f14",
-                        border: "1px solid #2a2e39",
-                        borderRadius: "6px",
-                        padding: "12px",
-                        fontFamily: "'Courier New', Monaco, Consolas, monospace",
-                        fontSize: "11px",
-                        color: "#39ff14",
-                        overflowY: "auto",
-                        lineHeight: "1.6",
-                        boxShadow: "inset 0 0 15px rgba(0, 0, 0, 0.85)",
-                        position: "relative",
-                      }}
-                    >
-                      <div style={{
-                        position: "absolute",
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        height: "100%",
-                        background: "linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06))",
-                        backgroundSize: "100% 4px, 6px 100%",
-                        pointerEvents: "none",
-                        zIndex: 3,
-                      }}></div>
-                      
-                      <div style={{ zIndex: 4, position: "relative" }}>
-                        {terminalLogs.map((log, i) => (
-                          <div key={i} style={{ whiteSpace: "pre-wrap", borderBottom: "1px solid rgba(57, 255, 20, 0.03)", paddingBottom: "2px" }}>
-                            {log}
-                          </div>
-                        ))}
-                        <span style={{ display: "inline-block", width: "8px", height: "12px", backgroundColor: "#39ff14", animation: "pulse-glow 1s step-end infinite", marginLeft: "4px", verticalAlign: "middle" }}></span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <LoadingOverlay key={activeSymbol} symbol={activeSymbol} effectiveLang={effectiveLang} />
           ) : stockData ? (
             <div style={styles.dashboardGrid}>
               <div style={styles.topRow}>
@@ -1561,7 +1250,7 @@ export default function Home() {
                   <div style={styles.summaryCard}>
                     <div style={styles.cardHeader}>{t.overviewHeader}</div>
                     <div style={styles.cardBodyAutoScroll}>
-                      {renderMarkdownText(stockData.reportOverview)}
+                      <MarkdownBlock text={stockData.reportOverview} effectiveLang={effectiveLang} />
                     </div>
                   </div>
                   
@@ -1640,7 +1329,7 @@ export default function Home() {
                   <div style={styles.recommendationCard}>
                     <div style={styles.cardHeader}>{t.strategyHeader}</div>
                     <div style={styles.cardBodyAutoScroll}>
-                      {renderMarkdownText(stockData.reportRecommendation)}
+                      <MarkdownBlock text={stockData.reportRecommendation} effectiveLang={effectiveLang} />
                     </div>
                   </div>
 
@@ -1654,7 +1343,7 @@ export default function Home() {
                       )}
                     </div>
                     <div style={styles.reportScroll}>
-                      {renderMarkdownText(stockData.reportTechnical)}
+                      <MarkdownBlock text={stockData.reportTechnical} effectiveLang={effectiveLang} />
                     </div>
                   </div>
                 </div>
@@ -2056,164 +1745,18 @@ export default function Home() {
 
       {/* 3. Settings Dialog */}
       {isSettingsOpen && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.modal}>
-            <h3 style={styles.modalTitle}>{t.settingsTitle}</h3>
-            <p style={styles.modalSubtitle}>
-              {t.settingsSubtitle}
-            </p>
-            
-            <form onSubmit={handleSaveSettings} style={styles.modalForm}>
-              <div style={styles.formGroup}>
-                <label style={styles.label}>{t.providerLabel}</label>
-                <select
-                  value={llmConfig.provider}
-                  onChange={(e) => setLlmConfig({ ...llmConfig, provider: e.target.value })}
-                  style={styles.select}
-                >
-                  <option value="gemini">Google Gemini</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="anthropic">Anthropic</option>
-                  <option value="custom">{t.customEndpointOption}</option>
-                </select>
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>{t.modelLabel}</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. gemini-1.5-flash, gpt-4o-mini, claude-3-5-sonnet-20241022"
-                  value={llmConfig.modelName}
-                  onChange={(e) => setLlmConfig({ ...llmConfig, modelName: e.target.value })}
-                  style={styles.input}
-                />
-              </div>
-
-              <div style={styles.formGroup}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <label style={styles.label}>{t.apiKeyLabel}</label>
-                  <a
-                    href="https://apimax.io"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      fontSize: "11px",
-                      color: "#60a5fa",
-                      textDecoration: "underline",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "2px",
-                      fontWeight: "bold",
-                    }}
-                  >
-                    <span>{effectiveLang === "en" ? "Get API Key & Token" : effectiveLang === "ja" ? "APIキーとトークンを購入" : "获取 API Key & Token"}</span>
-                    <ExternalLink size={10} />
-                  </a>
-                </div>
-                <input
-                  type="password"
-                  required
-                  placeholder="API Key"
-                  value={llmConfig.apiKey}
-                  onChange={(e) => setLlmConfig({ ...llmConfig, apiKey: e.target.value })}
-                  style={styles.input}
-                />
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>
-                  {t.baseUrlLabel}
-                </label>
-                <input
-                  type="text"
-                  placeholder="http://..."
-                  value={llmConfig.baseUrl}
-                  onChange={(e) => setLlmConfig({ ...llmConfig, baseUrl: e.target.value })}
-                  style={styles.input}
-                />
-              </div>
-
-              <div style={styles.formGroup}>
-                <label style={styles.label}>{t.languageLabel}</label>
-                <select
-                  value={appLanguage}
-                  onChange={(e) => {
-                    const newLang = e.target.value;
-                    if (isAppLanguage(newLang)) {
-                      setAppLanguage(newLang);
-                    }
-                  }}
-                  style={styles.select}
-                >
-                  <option value="auto">{t.langAuto}</option>
-                  <option value="zh-CN">{t.langZhCN}</option>
-                  <option value="zh-TW">{t.langZhTW}</option>
-                  <option value="en">{t.langEn}</option>
-                  <option value="ja">{t.langJa}</option>
-                </select>
-              </div>
-
-              <div style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                backgroundColor: "rgba(41, 98, 255, 0.05)",
-                border: "1px dashed rgba(41, 98, 255, 0.25)",
-                borderRadius: "6px",
-                padding: "10px 12px",
-                marginTop: "6px"
-              }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1, paddingRight: "12px" }}>
-                  <span style={{ fontSize: "13px", fontWeight: "bold", color: "#ffffff" }}>
-                    {t.fallbackLabel}
-                  </span>
-                  <span style={{ fontSize: "11px", color: "#787b86", lineHeight: "1.4" }}>
-                    {t.fallbackDesc}
-                  </span>
-                </div>
-                <div 
-                  onClick={() => setUseFallback(!useFallback)}
-                  style={{
-                    width: "44px",
-                    height: "22px",
-                    borderRadius: "11px",
-                    backgroundColor: useFallback ? "#2962ff" : "#2a2e39",
-                    position: "relative",
-                    cursor: "pointer",
-                    transition: "background-color 0.2s",
-                    border: "1px solid " + (useFallback ? "#2962ff" : "#363c4e")
-                  }}
-                >
-                  <div style={{
-                    width: "18px",
-                    height: "18px",
-                    borderRadius: "50%",
-                    backgroundColor: "#ffffff",
-                    position: "absolute",
-                    top: "1px",
-                    left: useFallback ? "23px" : "2px",
-                    transition: "left 0.2s",
-                    boxShadow: "0 1px 3px rgba(0,0,0,0.4)"
-                  }} />
-                </div>
-              </div>
-
-              <div style={styles.modalActions}>
-                <button
-                  type="button"
-                  onClick={() => setIsSettingsOpen(false)}
-                  style={styles.cancelBtn}
-                >
-                  {t.cancelBtn}
-                </button>
-                <button type="submit" style={styles.saveBtn}>
-                  {t.saveBtn}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          initialConfig={llmConfig}
+          appLanguage={appLanguage}
+          onLanguageChange={setAppLanguage}
+          useFallback={useFallback}
+          onToggleFallback={() => setUseFallback(!useFallback)}
+          effectiveLang={effectiveLang}
+          t={t}
+          onSave={handleSaveSettings}
+          onClose={() => setIsSettingsOpen(false)}
+        />
       )}
     </div>
   );
@@ -2453,19 +1996,6 @@ const styles: Record<string, React.CSSProperties> = {
     overflowY: "auto",
     position: "relative",
     minHeight: 0,
-  },
-  loadingContainer: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "#131722",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 5,
   },
   welcomeContainer: {
     display: "flex",
@@ -2715,97 +2245,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "14.5px",
     color: "#d1d4dc",
   },
-  // Modal styling
-  modalOverlay: {
-    position: "fixed",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.75)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 1000,
-  },
-  modal: {
-    backgroundColor: "#1c2030",
-    border: "1px solid #2a2e39",
-    borderRadius: "8px",
-    width: "480px",
-    padding: "24px",
-    boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
-  },
-  modalTitle: {
-    fontSize: "20px",
-    fontWeight: "bold",
-    color: "#ffffff",
-    marginBottom: "8px",
-  },
-  modalSubtitle: {
-    fontSize: "13px",
-    color: "#787b86",
-    lineHeight: "1.4",
-    marginBottom: "16px",
-  },
-  modalForm: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "14px",
-  },
-  formGroup: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px",
-  },
-  label: {
-    fontSize: "13px",
-    fontWeight: "bold",
-    color: "#d1d4dc",
-  },
-  select: {
-    backgroundColor: "#2a2e39",
-    border: "1px solid #363c4e",
-    borderRadius: "4px",
-    color: "#ffffff",
-    padding: "8px",
-    fontSize: "14px",
-    outline: "none",
-  },
-  input: {
-    backgroundColor: "#2a2e39",
-    border: "1px solid #363c4e",
-    borderRadius: "4px",
-    color: "#ffffff",
-    padding: "8px",
-    fontSize: "14px",
-    outline: "none",
-  },
-  modalActions: {
-    display: "flex",
-    justifyContent: "flex-end",
-    gap: "10px",
-    marginTop: "10px",
-  },
-  cancelBtn: {
-    backgroundColor: "#2a2e39",
-    border: "none",
-    color: "#d1d4dc",
-    padding: "8px 16px",
-    borderRadius: "4px",
-    cursor: "pointer",
-    fontSize: "14px",
-  },
-  saveBtn: {
-    backgroundColor: "#2962ff",
-    border: "none",
-    color: "#ffffff",
-    padding: "8px 16px",
-    borderRadius: "4px",
-    cursor: "pointer",
-    fontSize: "14px",
-    fontWeight: "bold",
-  },
 
   // Markdown rendering styles
   mdH2: {
@@ -2925,121 +2364,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: "bold",
     marginLeft: "8px",
     display: "inline-block",
-  },
-  loadingCard: {
-    background: "linear-gradient(135deg, #1c2030 0%, #131722 100%)",
-    border: "1px solid rgba(41, 98, 255, 0.25)",
-    borderRadius: "12px",
-    padding: "32px 40px",
-    width: "520px",
-    boxShadow: "0 20px 50px rgba(0, 0, 0, 0.6), 0 0 40px rgba(41, 98, 255, 0.05)",
-    display: "flex",
-    flexDirection: "column",
-    gap: "28px",
-    backdropFilter: "blur(20px)",
-  },
-  loadingHeader: {
-    display: "flex",
-    alignItems: "center",
-    gap: "16px",
-    borderBottom: "1px solid #2a2e39",
-    paddingBottom: "20px",
-  },
-  techLoaderWrapper: {
-    position: "relative",
-    width: "60px",
-    height: "60px",
-    flexShrink: 0,
-  },
-  outerRing: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderRadius: "50%",
-    border: "2.5px solid transparent",
-    borderTop: "2.5px solid #2962ff",
-    borderLeft: "2.5px solid #2962ff",
-    animation: "spin-clockwise 1.5s linear infinite",
-  },
-  innerRing: {
-    position: "absolute",
-    top: "7px",
-    left: "7px",
-    right: "7px",
-    bottom: "7px",
-    borderRadius: "50%",
-    border: "2px solid transparent",
-    borderBottom: "2px solid #089981",
-    borderRight: "2px solid #089981",
-    animation: "spin-counterclockwise 1.2s linear infinite",
-  },
-  centerDot: {
-    position: "absolute",
-    top: "22px",
-    left: "22px",
-    width: "16px",
-    height: "16px",
-    borderRadius: "50%",
-    backgroundColor: "#2962ff",
-    boxShadow: "0 0 12px #2962ff",
-    animation: "pulse-glow 1.5s ease-in-out infinite",
-  },
-  loadingTitle: {
-    fontSize: "17px",
-    fontWeight: "bold",
-    color: "#ffffff",
-    letterSpacing: "0.5px",
-  },
-  stepperContainer: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "18px",
-  },
-  stepItem: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: "16px",
-  },
-  stepIcon: {
-    width: "22px",
-    height: "22px",
-    borderRadius: "50%",
-    border: "2px solid #363c4e",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: "11px",
-    fontWeight: "bold",
-    color: "#787b86",
-    flexShrink: 0,
-    marginTop: "2px",
-  },
-  stepIconCompleted: {
-    backgroundColor: "#089981",
-    border: "2px solid #089981",
-    color: "#ffffff",
-  },
-  stepIconCurrent: {
-    backgroundColor: "#2962ff",
-    border: "2px solid #2962ff",
-    color: "#ffffff",
-    boxShadow: "0 0 10px rgba(41, 98, 255, 0.6)",
-  },
-  stepLabel: {
-    fontSize: "14px",
-    lineHeight: "1.4",
-  },
-  runningBadge: {
-    fontSize: "10px",
-    color: "#ffffff",
-    backgroundColor: "#2962ff",
-    padding: "1px 6px",
-    borderRadius: "4px",
-    fontWeight: "bold",
-    animation: "pulse-badge 1.5s ease-in-out infinite",
-    letterSpacing: "0.5px",
   },
   welcomeHero: {
     display: "flex",

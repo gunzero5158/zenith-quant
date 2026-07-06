@@ -1,3 +1,5 @@
+import { aShareCodeToSuffixedSymbol } from "./symbolConversion";
+
 export function getMarketCurrencySymbol(symbol: string): string {
   const clean = symbol.trim().toUpperCase();
 
@@ -32,9 +34,7 @@ export function normalizeManualSymbolInput(symbol: string): string {
   }
 
   if (/^\d{6}$/.test(clean)) {
-    return clean.startsWith("60") || clean.startsWith("68") || clean.startsWith("90")
-      ? `${clean}.SS`
-      : `${clean}.SZ`;
+    return aShareCodeToSuffixedSymbol(clean);
   }
 
   const hk = clean.match(/^(\d{1,5})(?:\.HK)?$/);

@@ -1,4 +1,7 @@
-import { request as httpsRequest } from "node:https";
+import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
+
+const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+const keepAliveAgent = new HttpsAgent({ keepAlive: true, maxSockets: 16 });
 
 interface EastMoneyKlineUrlOptions {
   host: string;
@@ -26,7 +29,7 @@ export function buildEastMoneyKlineUrl(options: EastMoneyKlineUrlOptions): strin
 export async function fetchEastMoneyJson<T>(url: string, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const req = httpsRequest(url, {
-      agent: false,
+      agent: keepAliveAgent,
       timeout: timeoutMs,
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -35,8 +38,14 @@ export async function fetchEastMoneyJson<T>(url: string, timeoutMs: number): Pro
       },
     }, (res) => {
       const chunks: Buffer[] = [];
+      let receivedBytes = 0;
 
       res.on("data", (chunk: Buffer) => {
+        receivedBytes += chunk.length;
+        if (receivedBytes > MAX_RESPONSE_BYTES) {
+          req.destroy(new Error(`EastMoney response exceeded ${MAX_RESPONSE_BYTES} bytes`));
+          return;
+        }
         chunks.push(chunk);
       });
       res.on("end", () => {
@@ -52,6 +61,15 @@ export async function fetchEastMoneyJson<T>(url: string, timeoutMs: number): Pro
           reject(error);
         }
       });
+    });
+
+    // The `timeout` option above only covers socket inactivity; enforce an
+    // overall deadline so slow-dripping responses cannot hang the request.
+    const deadline = setTimeout(() => {
+      req.destroy(new Error("EastMoney request deadline exceeded"));
+    }, timeoutMs);
+    req.on("close", () => {
+      clearTimeout(deadline);
     });
 
     req.on("timeout", () => {

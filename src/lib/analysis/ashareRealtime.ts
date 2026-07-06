@@ -1,5 +1,8 @@
 import { Candle } from "@/lib/analysis/indicators";
 import { fetchEastMoneyJson } from "@/lib/analysis/eastmoneyHttp";
+import { convertSymbolToEastMoneyAShareSecid } from "@/lib/analysis/symbolConversion";
+
+export { convertSymbolToEastMoneyAShareSecid };
 
 const EAST_MONEY_REALTIME_TIMEOUT_MS = 2000;
 
@@ -30,22 +33,6 @@ interface EastMoneyRealtimeResponse {
     f86?: number | string;
     f170?: number | string;
   };
-}
-
-export function convertSymbolToEastMoneyAShareSecid(symbol: string): string | null {
-  const clean = symbol.trim().toUpperCase();
-  if (clean.endsWith(".SS") || clean.endsWith(".SH")) {
-    return `1.${clean.split(".")[0]}`;
-  }
-  if (clean.endsWith(".SZ")) {
-    return `0.${clean.split(".")[0]}`;
-  }
-  if (/^\d{6}$/.test(clean)) {
-    return clean.startsWith("6") || clean.startsWith("9")
-      ? `1.${clean}`
-      : `0.${clean}`;
-  }
-  return null;
 }
 
 export function parseEastMoneyRealtimeQuote(response: EastMoneyRealtimeResponse): AShareRealtimeQuote | null {
@@ -90,14 +77,23 @@ export async function fetchAShareRealtimeQuote(symbol: string): Promise<AShareRe
   return null;
 }
 
+/** Normalizes a candle date (Date object or string) to a "YYYY-MM-DD" key for comparison. */
+function toIsoDateKey(date: Date | string): string {
+  if (date instanceof Date) return date.toISOString().slice(0, 10);
+  return String(date).slice(0, 10);
+}
+
 export function mergeRealtimeQuoteIntoDailyCandles(candles: Candle[], quote: AShareRealtimeQuote): Candle[] {
   if (!quote.date || candles.length === 0) return candles;
 
+  // Candles from the Yahoo path carry Date objects while quote.date is a string;
+  // comparing them directly never matches and duplicated the latest candle.
   const last = candles[candles.length - 1];
-  if (quote.date < last.date) return candles;
+  const lastDateKey = toIsoDateKey(last.date);
+  if (quote.date < lastDateKey) return candles;
 
   const realtimeCandle = buildRealtimeCandle(last, quote);
-  if (quote.date === last.date) {
+  if (quote.date === lastDateKey) {
     return [...candles.slice(0, -1), realtimeCandle];
   }
 

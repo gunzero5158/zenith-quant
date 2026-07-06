@@ -7,6 +7,7 @@ import { fetchTencentQuote } from "@/lib/analysis/tencent";
 import { fetchEastMoneyJson } from "@/lib/analysis/eastmoneyHttp";
 import { convertSymbolToEastMoneyAShareSecid, fetchAShareRealtimeQuote } from "@/lib/analysis/ashareRealtime";
 import { fetchTonghuashunQuote } from "@/lib/analysis/tonghuashun";
+import { aShareCodeToSuffixedSymbol, getEastMoneySecidCandidates } from "@/lib/analysis/symbolConversion";
 
 const yahooFinance = new YahooFinance();
 
@@ -18,6 +19,9 @@ interface QuoteCacheEntry {
 }
 const quoteCache: Record<string, QuoteCacheEntry> = {};
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const QUOTE_CACHE_MAX_ENTRIES = 500;
+const MAX_SYMBOLS_PER_REQUEST = 25;
+const QUOTE_FETCH_CONCURRENCY = 5;
 const EAST_MONEY_KLINE_HOSTS = [
   "push2his.eastmoney.com",
   "1.push2his.eastmoney.com",
@@ -61,24 +65,40 @@ export async function GET(request: Request) {
     }
 
     const symbols = symbolsParam.split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
-    const quotes: Record<string, { price: number; change: number }> = {};
-
-    for (const sym of symbols) {
-      try {
-        const quote = await fetchSingleQuote(sym);
-        quotes[sym] = {
-          price: quote.price,
-          change: quote.change,
-        };
-      } catch (e) {
-        console.error(`Error fetching quote for ${sym}:`, e);
-        const mock = generateMockCandles(sym, 10, false);
-        quotes[sym] = {
-          price: mock.price,
-          change: mock.changePercent
-        };
-      }
+    if (symbols.length > MAX_SYMBOLS_PER_REQUEST) {
+      return NextResponse.json(
+        { error: `Too many symbols: ${symbols.length} (max ${MAX_SYMBOLS_PER_REQUEST})` },
+        { status: 400 }
+      );
     }
+
+    const quotes: Record<string, { price: number; change: number; isMock?: true }> = {};
+
+    let nextSymbolIndex = 0;
+    const workers = Array.from(
+      { length: Math.min(QUOTE_FETCH_CONCURRENCY, symbols.length) },
+      async () => {
+        while (nextSymbolIndex < symbols.length) {
+          const sym = symbols[nextSymbolIndex++];
+          try {
+            const quote = await fetchSingleQuote(sym);
+            quotes[sym] = {
+              price: quote.price,
+              change: quote.change,
+            };
+          } catch (e) {
+            console.error(`Error fetching quote for ${sym}:`, e);
+            const mock = generateMockCandles(sym, 10, false);
+            quotes[sym] = {
+              price: mock.price,
+              change: mock.changePercent,
+              isMock: true
+            };
+          }
+        }
+      }
+    );
+    await Promise.allSettled(workers);
 
     return NextResponse.json({ quotes });
   } catch (error: unknown) {
@@ -183,13 +203,30 @@ async function fetchSingleQuote(inputSymbol: string): Promise<{ price: number; c
   })();
 
   if (shouldUseCache && res.source !== "tencent") {
-    quoteCache[inputSymbol] = {
+    setQuoteCacheEntry(inputSymbol, {
       timestamp: now,
       price: res.price,
       change: res.change
-    };
+    });
   }
   return res;
+}
+
+function setQuoteCacheEntry(key: string, entry: QuoteCacheEntry): void {
+  if (!(key in quoteCache) && Object.keys(quoteCache).length >= QUOTE_CACHE_MAX_ENTRIES) {
+    let oldestKey: string | null = null;
+    let oldestTimestamp = Infinity;
+    for (const [cachedKey, cachedEntry] of Object.entries(quoteCache)) {
+      if (cachedEntry.timestamp < oldestTimestamp) {
+        oldestTimestamp = cachedEntry.timestamp;
+        oldestKey = cachedKey;
+      }
+    }
+    if (oldestKey !== null) {
+      delete quoteCache[oldestKey];
+    }
+  }
+  quoteCache[key] = entry;
 }
 
 async function resolveInputSymbol(input: string): Promise<string> {
@@ -215,6 +252,7 @@ async function resolveSymbolFromEastMoney(query: string): Promise<string | null>
   try {
     const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(query)}&type=14&token=D43BF722C8E33EFC408CAFD32D7DAD7C`;
     const res = await fetch(url, {
+      signal: AbortSignal.timeout(2500),
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       },
@@ -258,52 +296,10 @@ function normalizeEastMoneySymbol(item: EastMoneySuggestItem): string {
   }
   if (classify === "AStock" || quoteId.startsWith("1.") || quoteId.startsWith("0.")) {
     if (/^\d{6}$/.test(code)) {
-      return code.startsWith("6") ? `${code}.SS` : `${code}.SZ`;
+      return aShareCodeToSuffixedSymbol(code);
     }
   }
   return code;
-}
-
-function convertSymbolToEastMoneySecid(symbol: string): string | null {
-  const clean = symbol.trim().toUpperCase();
-  if (clean.endsWith(".SS") || clean.endsWith(".SH")) {
-    const code = clean.split(".")[0];
-    return `1.${code}`;
-  }
-  if (clean.endsWith(".SZ")) {
-    const code = clean.split(".")[0];
-    return `0.${code}`;
-  }
-  if (/^\d{6}$/.test(clean)) {
-    if (clean.startsWith("60") || clean.startsWith("68") || clean.startsWith("90")) {
-      return `1.${clean}`;
-    } else {
-      return `0.${clean}`;
-    }
-  }
-  if (clean.endsWith(".HK")) {
-    const rawCode = clean.split(".")[0];
-    const code = rawCode.padStart(5, "0");
-    return `116.${code}`;
-  }
-  if (/^\d{4,5}$/.test(clean) && !clean.includes(".")) {
-    const code = clean.padStart(5, "0");
-    return `116.${code}`;
-  }
-  if (/^[A-Z]{1,5}$/.test(clean)) {
-    return `105.${clean}`;
-  }
-  return null;
-}
-
-function getEastMoneySecidCandidates(symbol: string): string[] {
-  const clean = symbol.trim().toUpperCase();
-  if (/^[A-Z]{1,5}$/.test(clean)) {
-    return [`105.${clean}`, `106.${clean}`, `107.${clean}`];
-  }
-
-  const secid = convertSymbolToEastMoneySecid(clean);
-  return secid ? [secid] : [];
 }
 
 async function fetchReliableEastMoneyKlinesLmt2(secid: string): Promise<EastMoneyKline[]> {

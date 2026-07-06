@@ -87,6 +87,10 @@ describe("marketDataProviders", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
+        json: () => Promise.resolve({ code: 400, message: "No data" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         json: () => Promise.resolve([
           {
             symbol: "AAPL",

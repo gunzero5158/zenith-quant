@@ -1,4 +1,5 @@
 import { Candle } from "@/lib/analysis/indicators";
+import { buildWeeklyCandles } from "@/lib/analysis/weeklyCandles";
 
 interface KabutanRow extends Candle {
   changePercent?: number;
@@ -74,8 +75,19 @@ export async function fetchKabutanMarketData(symbol: string): Promise<KabutanMar
   const rowsByDate = new Map<string, KabutanRow>();
   let companyName = symbol;
 
-  for (let page = 1; page <= KABUTAN_MAX_PAGES && rowsByDate.size < 300; page++) {
-    const pageData = await fetchKabutanDailyPage(code, page);
+  const pageResults = await Promise.allSettled(
+    Array.from({ length: KABUTAN_MAX_PAGES }, (_, index) => fetchKabutanDailyPage(code, index + 1))
+  );
+
+  for (const result of pageResults) {
+    if (rowsByDate.size >= 300) {
+      break;
+    }
+    if (result.status === "rejected") {
+      throw result.reason;
+    }
+
+    const pageData = result.value;
     if (pageData.companyName) {
       companyName = pageData.companyName;
     }
@@ -125,6 +137,7 @@ export async function fetchKabutanMarketData(symbol: string): Promise<KabutanMar
 async function fetchKabutanDailyPage(code: string, page: number): Promise<KabutanPageData> {
   const url = `https://kabutan.jp/stock/kabuka?code=${encodeURIComponent(code)}&ashi=day&page=${page}`;
   const res = await fetch(url, {
+    signal: AbortSignal.timeout(5000),
     headers: {
       "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -192,33 +205,6 @@ function parseKabutanRow(rowHtml: string): KabutanRow | null {
   };
 }
 
-function buildWeeklyCandles(dailyRows: Candle[]): Candle[] {
-  const weekly = new Map<string, Candle>();
-
-  for (const candle of dailyRows) {
-    const key = getWeekKey(String(candle.date));
-    const current = weekly.get(key);
-
-    if (!current) {
-      weekly.set(key, { ...candle });
-      continue;
-    }
-
-    current.high = Math.max(current.high, candle.high);
-    current.low = Math.min(current.low, candle.low);
-    current.close = candle.close;
-    current.volume += candle.volume;
-  }
-
-  return Array.from(weekly.values());
-}
-
-function getWeekKey(dateText: string): string {
-  const date = new Date(`${dateText}T00:00:00Z`);
-  const day = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() - day + 1);
-  return date.toISOString().slice(0, 10);
-}
 
 function cleanText(value: string): string {
   return value
