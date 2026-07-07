@@ -5,7 +5,7 @@ export interface LLMConfig {
   modelName: string;
 }
 
-const OFFICIAL_PROVIDER_TIMEOUT_MS = 60_000;
+const OFFICIAL_PROVIDER_TIMEOUT_MS = 120_000;
 const MAX_UPSTREAM_ERROR_CHARS = 240;
 
 // Hostnames/IP ranges that must never be reachable through a user-supplied baseUrl.
