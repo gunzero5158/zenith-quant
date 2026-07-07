@@ -17,6 +17,7 @@ import {
   MouseEventParams,
   Time,
   LineData,
+  WhitespaceData,
 } from "lightweight-charts";
 import { Candle } from "@/lib/analysis/indicators";
 
@@ -87,19 +88,17 @@ interface StockChartProps {
 }
 
 type IndicatorTab = "volume" | "macd" | "kdj" | "rsi";
-type IndicatorPoint = LineData<Time>;
+type IndicatorPoint = LineData<Time> | WhitespaceData<Time>;
 
+// NaN warm-up values become whitespace points ({ time } without a value) instead
+// of being dropped: the price/indicator panes are synced by LOGICAL index, so
+// every series must cover the identical time domain or the panes drift apart.
 const mapIndicatorData = (times: string[], values: number[]): IndicatorPoint[] => {
   if (!values) return [];
-  return times
-    .map((time, i) => {
-      const val = values[i];
-      return {
-        time,
-        value: typeof val === "number" ? val : NaN,
-      };
-    })
-    .filter((item) => !isNaN(item.value));
+  return times.map((time, i) => {
+    const val = values[i];
+    return typeof val === "number" && !isNaN(val) ? { time, value: val } : { time };
+  });
 };
 
 // Read the value of a series at the crosshair's logical index so we can hand
@@ -538,10 +537,9 @@ function StockChart({ candles, indicators, patterns, sr, wave, isRedUp }: StockC
       difSeries.setData(mapIndicatorData(times, indicators.macdDif));
       deaSeries.setData(mapIndicatorData(times, indicators.macdDea));
 
-      const histData = mapIndicatorData(times, indicators.macdHist).map((item) => ({
-        ...item,
-        color: item.value >= 0 ? upColor : downColor,
-      }));
+      const histData = mapIndicatorData(times, indicators.macdHist).map((item) =>
+        "value" in item ? { ...item, color: item.value >= 0 ? upColor : downColor } : item
+      );
       histSeries.setData(histData);
 
       indSeries.push(difSeries, deaSeries, histSeries);
