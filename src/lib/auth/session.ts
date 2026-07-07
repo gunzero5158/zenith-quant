@@ -1,5 +1,5 @@
 import { SignJWT, jwtVerify } from "jose";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { ensureDbReady, schema } from "@/lib/db";
 
@@ -39,8 +39,19 @@ export function clearSessionCookie(res: NextResponse): void {
   res.cookies.set(COOKIE_NAME, "", { httpOnly: true, maxAge: 0, path: "/" });
 }
 
-export async function getSessionUserId(req: NextRequest): Promise<string | null> {
-  const token = req.cookies.get(COOKIE_NAME)?.value;
+function readSessionCookie(req: Request): string | null {
+  const header = req.headers.get("cookie") || "";
+  for (const part of header.split(/;\s*/)) {
+    const eq = part.indexOf("=");
+    if (eq > 0 && part.slice(0, eq) === COOKIE_NAME) {
+      return decodeURIComponent(part.slice(eq + 1));
+    }
+  }
+  return null;
+}
+
+export async function getSessionUserId(req: Request): Promise<string | null> {
+  const token = readSessionCookie(req);
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, getSecret());
@@ -52,7 +63,7 @@ export async function getSessionUserId(req: NextRequest): Promise<string | null>
 
 export type SessionUser = typeof schema.users.$inferSelect;
 
-export async function getSessionUser(req: NextRequest): Promise<SessionUser | null> {
+export async function getSessionUser(req: Request): Promise<SessionUser | null> {
   const userId = await getSessionUserId(req);
   if (!userId) return null;
   const db = await ensureDbReady();

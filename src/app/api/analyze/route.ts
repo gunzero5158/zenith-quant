@@ -13,6 +13,12 @@ import { generateMockCandles } from "@/lib/analysis/mockData";
 import { getMarketCurrencySymbol, normalizeManualSymbolInput, replaceDollarPriceSymbols } from "@/lib/analysis/market";
 import { fetchKabutanMarketData, getKabutanCode } from "@/lib/analysis/kabutan";
 import { fetchProviderMarketData } from "@/lib/analysis/marketDataProviders";
+import { getSessionUser } from "@/lib/auth/session";
+import { getPlatformLlmConfig } from "@/lib/billing/settings";
+import {
+  chargeForAnalysis, refundAnalysis, getUserBillingSnapshot,
+  InsufficientBalanceError, ChargeResult,
+} from "@/lib/billing/charge";
 import { fetchTencentMarketData } from "@/lib/analysis/tencent";
 import { buildEastMoneyKlineUrl, fetchEastMoneyJson } from "@/lib/analysis/eastmoneyHttp";
 import { fetchTonghuashunMarketData } from "@/lib/analysis/tonghuashun";
@@ -434,6 +440,11 @@ export async function POST(request: Request) {
     }
     if (llmConfig !== undefined && llmConfig !== null && (typeof llmConfig !== "object" || Array.isArray(llmConfig))) {
       return NextResponse.json({ error: "Invalid llmConfig: expected an object" }, { status: 400 });
+    }
+
+    const sessionUser = await getSessionUser(request);
+    if (!sessionUser) {
+      return NextResponse.json({ error: "请先登录后再进行分析", needLogin: true }, { status: 401 });
     }
 
     const effectiveLang = typeof language === "string" && SUPPORTED_LANGUAGES.includes(language) ? language : "zh-CN";
@@ -874,6 +885,13 @@ export async function POST(request: Request) {
     let reportTechnical = "";
     let isLLMUsed = false;
 
+    // BYOK (user-supplied key) analyses are free; the platform default model
+    // is the paid path. Charges are reversed if the AI report isn't delivered.
+    const isByok = Boolean(llmConfig && llmConfig.apiKey);
+    const effectiveLlmConfig = isByok ? (llmConfig as LLMConfig) : await getPlatformLlmConfig();
+    const analysisId = crypto.randomUUID();
+    let chargeResult: ChargeResult | null = null;
+
     if (techData.isMock && useFallback) {
       const fallback = generateFallbackReport(
         `${techData.companyName} (${cleanSymbol})`,
@@ -898,13 +916,29 @@ export async function POST(request: Request) {
       reportOverview = mockPrefix + fallback.overview;
       reportRecommendation = fallback.recommendation;
       reportTechnical = fallback.technicalAnalysis;
-    } else if (llmConfig && llmConfig.apiKey) {
+    } else if (effectiveLlmConfig && effectiveLlmConfig.apiKey) {
+      if (!isByok) {
+        try {
+          chargeResult = await chargeForAnalysis(sessionUser.id, analysisId);
+        } catch (err) {
+          if (err instanceof InsufficientBalanceError) {
+            const snapshot = await getUserBillingSnapshot(sessionUser.id);
+            return NextResponse.json({
+              error: `余额不足：本次 AI 分析需 ¥${(err.priceCents / 100).toFixed(2)}，请先充值`,
+              needTopup: true,
+              priceCents: err.priceCents,
+              ...snapshot,
+            }, { status: 402 });
+          }
+          throw err;
+        }
+      }
       try {
         const prompt = replaceDollarPriceSymbols(
           buildAnalystPrompt(cleanSymbol, techData, effectiveLang, currencySymbol),
           currencySymbol
         );
-        const reportText = await generateLLMReport(prompt, llmConfig);
+        const reportText = await generateLLMReport(prompt, effectiveLlmConfig);
         
         // Clean markdown blocks if LLM accidentally outputted them
         let cleanedText = reportText.trim();
@@ -929,6 +963,11 @@ export async function POST(request: Request) {
         isLLMUsed = true;
       } catch (err: unknown) {
         console.error("LLM Generation or parsing failed:", err);
+        // The AI report was not delivered — reverse any charge before degrading.
+        if (chargeResult) {
+          await refundAnalysis(sessionUser.id, analysisId, chargeResult);
+          chargeResult = null;
+        }
         // Only fallback to local engine if useFallback is explicitly enabled
         if (useFallback) {
           const fallback = generateFallbackReport(
@@ -954,8 +993,11 @@ export async function POST(request: Request) {
           reportTechnical = fallback.technicalAnalysis;
         } else {
           // No fallback allowed: return the raw LLM error
+          const hint = isByok
+            ? "请检查您的 API Key 与模型配置，或在“大模型配置”中开启本地算法兜底。"
+            : "本次未扣费。请稍后重试，或在“大模型配置”中开启本地算法兜底。";
           return NextResponse.json({
-            error: `AI 分析失败: ${summarizeLLMError(err)}。请检查您的 API Key 与模型配置，或在“大模型配置”中开启本地算法兜底。`,
+            error: `AI 分析失败: ${summarizeLLMError(err)}。${hint}`,
           }, { status: 500 });
         }
       }
@@ -983,7 +1025,7 @@ export async function POST(request: Request) {
         ? "Please configure your LLM API Key in Settings, or enable the local algorithm fallback engine."
         : effectiveLang === "ja"
         ? "設定画面でAIモデルのAPIキーを構成するか、ローカルアルゴリズムのフォールバックを有効にしてください。"
-        : "请在右上角“大模型配置”中填写 API Key，或开启本地算法兜底引擎。";
+        : "平台默认 AI 模型暂未配置。请在右上角“大模型配置”中填写您自己的 API Key，或开启本地算法兜底引擎。";
       return NextResponse.json({ error: errMsg }, { status: 400 });
     }
 
@@ -1006,6 +1048,12 @@ export async function POST(request: Request) {
       chanlun: techData.chanlun,
       sr: techData.sr,
       volumeAnalysis: techData.volumeAnalysis,
+      billing: {
+        aiSource: isLLMUsed ? (isByok ? "byok" : "platform") : "none",
+        chargedCents: chargeResult ? chargeResult.priceCents : 0,
+        chargeMethod: chargeResult?.method ?? null,
+        ...(await getUserBillingSnapshot(sessionUser.id)),
+      },
       reportOverview,
       reportRecommendation,
       reportTechnical,
