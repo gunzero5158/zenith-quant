@@ -92,19 +92,34 @@ export async function refundAnalysis(userId: string, refId: string, charge: Char
   }
 }
 
-export async function creditTopup(userId: string, amountCents: number, stripeSessionId: string): Promise<void> {
+// Credit a Stripe topup exactly once: claiming the event id and crediting the
+// balance happen in one transaction, so a replayed webhook is a no-op and a
+// mid-flight failure rolls back the claim for Stripe's retry.
+export async function creditTopupIdempotent(
+  userId: string,
+  amountCents: number,
+  stripeSessionId: string,
+  stripeEventId: string,
+): Promise<boolean> {
   const db = await ensureDbReady();
-  await db.update(schema.users)
-    .set({ balanceCents: sql`${schema.users.balanceCents} + ${amountCents}` })
-    .where(eq(schema.users.id, userId));
-  await db.insert(schema.creditLedger).values({
-    id: crypto.randomUUID(),
-    userId,
-    deltaCents: amountCents,
-    type: "topup",
-    refId: stripeSessionId,
-    note: "Stripe 充值",
-    createdAt: Date.now(),
+  return db.transaction(async (tx) => {
+    const claim = await tx.insert(schema.stripeEvents)
+      .values({ eventId: stripeEventId, processedAt: Date.now() })
+      .onConflictDoNothing();
+    if (claim.rowsAffected === 0) return false;
+    await tx.update(schema.users)
+      .set({ balanceCents: sql`${schema.users.balanceCents} + ${amountCents}` })
+      .where(eq(schema.users.id, userId));
+    await tx.insert(schema.creditLedger).values({
+      id: crypto.randomUUID(),
+      userId,
+      deltaCents: amountCents,
+      type: "topup",
+      refId: stripeSessionId,
+      note: "Stripe 充值",
+      createdAt: Date.now(),
+    });
+    return true;
   });
 }
 
