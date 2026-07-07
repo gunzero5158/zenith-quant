@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState } from "react";
-import { ExternalLink } from "lucide-react";
 import { LLMConfig } from "@/lib/analysis/llmProxy";
 
 type AppLanguage = "auto" | "zh-CN" | "zh-TW" | "en" | "ja";
@@ -31,7 +30,6 @@ export default function SettingsModal({
   onLanguageChange,
   useFallback,
   onToggleFallback,
-  effectiveLang,
   t,
   onSave,
   onClose,
@@ -83,26 +81,7 @@ export default function SettingsModal({
           </div>
 
           <div style={styles.formGroup}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <label style={styles.label}>{t.apiKeyLabel}</label>
-              <a
-                href="https://apimax.io"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  fontSize: "11px",
-                  color: "#60a5fa",
-                  textDecoration: "underline",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "2px",
-                  fontWeight: "bold",
-                }}
-              >
-                <span>{effectiveLang === "en" ? "Get API Key & Token" : effectiveLang === "ja" ? "APIキーとトークンを購入" : "获取 API Key & Token"}</span>
-                <ExternalLink size={10} />
-              </a>
-            </div>
+            <label style={styles.label}>{t.apiKeyLabel}</label>
             <input
               type="password"
               required

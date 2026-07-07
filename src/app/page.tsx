@@ -2,9 +2,11 @@
 
 import React, { useState, useEffect, useRef, useSyncExternalStore, useCallback } from "react";
 import dynamic from "next/dynamic";
-import { Search, Settings, Star, TrendingUp, TrendingDown, RefreshCw, Trash2, Zap } from "lucide-react";
+import { Search, Settings, Star, TrendingUp, TrendingDown, RefreshCw, Trash2 } from "lucide-react";
 import LoadingOverlay from "@/components/LoadingOverlay";
 import SettingsModal from "@/components/SettingsModal";
+import AccountWidget, { BillingUpdateDetail } from "@/components/AccountWidget";
+import AdBanner from "@/components/AdBanner";
 import { LLMConfig } from "@/lib/analysis/llmProxy";
 import { formatMarketPrice, getMarketCurrencySymbol, normalizeManualSymbolInput } from "@/lib/analysis/market";
 import { Candle, IchimokuResult } from "@/lib/analysis/indicators";
@@ -69,6 +71,11 @@ interface StockAnalysisData {
   isMock?: boolean;
   dataSource?: "yahoo" | "yahoo-chart" | "eastmoney" | "tonghuashun" | "kabutan" | "tencent" | "twelve-data" | "fmp" | "provider" | "mock";
   currencySymbol?: string;
+  billing?: BillingUpdateDetail & {
+    aiSource: "platform" | "byok" | "none";
+    chargedCents: number;
+    chargeMethod: "free_use" | "balance" | "none" | null;
+  };
 }
 
 interface AnalysisCacheEntry {
@@ -92,6 +99,10 @@ interface SearchResponse {
 
 interface ApiErrorResponse {
   error?: string;
+  needLogin?: boolean;
+  needTopup?: boolean;
+  balanceCents?: number;
+  freeUsesRemaining?: number;
 }
 
 const APP_LANGUAGES: AppLanguage[] = ["auto", "zh-CN", "zh-TW", "en", "ja"];
@@ -145,7 +156,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     loadingText: "加载中...",
     noSupport: "无",
     noResistance: "无",
-    customEndpointOption: "Custom Endpoint (apimax等中转站)",
+    customEndpointOption: "Custom Endpoint（OpenAI 兼容中转）",
     fallbackLabel: "启用本地非AI指标兜底分析",
     fallbackDesc: "若大模型因额度不足/网络异常等原因生成失败，允许自动降级并启用内置技术指标算法计算评分与报表。"
   },
@@ -189,7 +200,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     loadingText: "加載中...",
     noSupport: "無",
     noResistance: "無",
-    customEndpointOption: "Custom Endpoint (apimax等中轉站)",
+    customEndpointOption: "Custom Endpoint（OpenAI 相容中轉）",
     fallbackLabel: "啟用本地非AI指標兜底分析",
     fallbackDesc: "若大模型因額度不足/網絡異常等原因生成失敗，允許自動降級並啟用內置技術指標算法計算評分與報表。"
   },
@@ -233,7 +244,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     loadingText: "Loading...",
     noSupport: "None",
     noResistance: "None",
-    customEndpointOption: "Custom Endpoint (apimax & other relays)",
+    customEndpointOption: "Custom Endpoint (OpenAI-compatible relay)",
     fallbackLabel: "Enable Local Non-AI Fallback Analysis",
     fallbackDesc: "If LLM generation fails due to network/quota limits, allow automatic fallback to built-in technical indicators scoring & report."
   },
@@ -277,7 +288,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     loadingText: "読込中...",
     noSupport: "なし",
     noResistance: "なし",
-    customEndpointOption: "Custom Endpoint (apimax等の代理サーバー)",
+    customEndpointOption: "Custom Endpoint（OpenAI互換プロキシ）",
     fallbackLabel: "ローカルの非AIバックアップ分析を有効にする",
     fallbackDesc: "大モデルの生成がネットワークエラーやクォータ不足で失敗した場合、組み込みのテクニカル分析アルゴリズムによるスコアとレポートへの自动切り替えを許可します。"
   }
@@ -672,8 +683,6 @@ export default function Home() {
       }
     });
 
-    // Load APIMax banner - default always visible
-
     // Close suggestions on click outside
     const handleClickOutside = (event: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
@@ -799,6 +808,15 @@ export default function Home() {
       if (!res.ok) {
         const err = await res.json() as ApiErrorResponse;
         if (analyzeAbortRef.current !== controller) return;
+        if (err.needLogin) {
+          window.location.href = "/auth";
+          return;
+        }
+        if (err.needTopup) {
+          window.dispatchEvent(new CustomEvent("zenith:open-recharge"));
+          alert(err.error || "余额不足，请先充值");
+          return;
+        }
         alert(`${requestT.queryFailed}: ${err.error || "Unknown Error"}`);
         return;
       }
@@ -810,6 +828,14 @@ export default function Home() {
       }
       const resolvedSymbol = data.symbol || requestedSymbol;
       setStockData(data);
+      if (data.billing) {
+        window.dispatchEvent(new CustomEvent<BillingUpdateDetail>("zenith:billing-update", {
+          detail: {
+            balanceCents: data.billing.balanceCents,
+            freeUsesRemaining: data.billing.freeUsesRemaining,
+          },
+        }));
+      }
       if (resolvedSymbol !== requestedSymbol) {
         lastRequestedSymbolRef.current = resolvedSymbol;
         setActiveSymbol(resolvedSymbol);
@@ -1048,6 +1074,7 @@ export default function Home() {
 
         {/* Toolbar Settings */}
         <div style={styles.headerRight}>
+          <AccountWidget />
           <div style={styles.langSelectContainer}>
             <span style={{ fontSize: "14px" }}>🌐</span>
             <select
@@ -1077,6 +1104,8 @@ export default function Home() {
           </button>
         </div>
       </header>
+
+      <AdBanner position="top" />
 
       {/* 2. Mock Data Warning Banner */}
       {stockData?.isMock && showMockWarning && (
@@ -1383,16 +1412,6 @@ export default function Home() {
                 .guide-step-number {
                   animation: guide-number-pulse 2s ease-in-out infinite;
                 }
-                .apimax-ad-card {
-                  background: linear-gradient(135deg, rgba(13, 27, 62, 0.8) 0%, rgba(26, 16, 64, 0.6) 50%, rgba(10, 14, 26, 0.9) 100%) !important;
-                  border: 1px solid rgba(41, 98, 255, 0.25) !important;
-                  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
-                }
-                .apimax-ad-card:hover {
-                  border-color: rgba(96, 165, 250, 0.6) !important;
-                  box-shadow: 0 8px 30px rgba(41, 98, 255, 0.2), 0 0 20px rgba(96, 165, 250, 0.1) !important;
-                  transform: translateY(-2px);
-                }
               `}</style>
               
               <div style={styles.welcomeHero}>
@@ -1565,67 +1584,6 @@ export default function Home() {
                       {effectiveLang === "ja" && "右上の「AIモデル設定」からAPIキーを入力し、AI分析レポートを有効にします"}
                     </span>
                   </div>
-                  <div style={styles.guideStepItem}>
-                    <span style={styles.guideStepNumber}>4</span>
-                    <span>
-                      {effectiveLang === "zh-CN" && (
-                        <>
-                          还没有大模型 API Key？推荐前往{" "}
-                          <a
-                            href="https://apimax.io"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ color: "#60a5fa", fontWeight: "bold", textDecoration: "underline" }}
-                          >
-                            APIMax.io
-                          </a>{" "}
-                          一键购买多合一 API 和 Token，极速启用 AI 研报分析。
-                        </>
-                      )}
-                      {effectiveLang === "zh-TW" && (
-                        <>
-                          還沒有大模型 API Key？推薦前往{" "}
-                          <a
-                            href="https://apimax.io"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ color: "#60a5fa", fontWeight: "bold", textDecoration: "underline" }}
-                          >
-                            APIMax.io
-                          </a>{" "}
-                          一鍵購買多合一 API 和 Token，極速啟用 AI 研報分析。
-                        </>
-                      )}
-                      {effectiveLang === "en" && (
-                        <>
-                          No API Key? Visit{" "}
-                          <a
-                            href="https://apimax.io"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ color: "#60a5fa", fontWeight: "bold", textDecoration: "underline" }}
-                          >
-                            APIMax.io
-                          </a>{" "}
-                          to purchase a multi-model API key and token to unlock AI report features.
-                        </>
-                      )}
-                      {effectiveLang === "ja" && (
-                        <>
-                          APIキーをお持ちでないですか？{" "}
-                          <a
-                            href="https://apimax.io"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ color: "#60a5fa", fontWeight: "bold", textDecoration: "underline" }}
-                          >
-                            APIMax.io
-                          </a>{" "}
-                          でマルチモデルのAPIキーとトークンを購入し、AI分析レポートを有効にします。
-                        </>
-                      )}
-                    </span>
-                  </div>
                 </div>
               </div>
 
@@ -1658,90 +1616,9 @@ export default function Home() {
 
       </div>
 
-      {/* 4. APIMax.io Bottom Banner Ad - tri-language - Always Constant */}
-      <div style={{
-        background: "linear-gradient(90deg, rgba(10, 14, 26, 0.95) 0%, rgba(20, 36, 78, 0.95) 40%, rgba(32, 20, 78, 0.95) 70%, rgba(10, 14, 26, 0.95) 100%)",
-        borderTop: "1px solid rgba(41, 98, 255, 0.4)",
-        padding: "10px 24px",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        gap: "16px",
-        fontSize: "13.5px",
-        color: "#d1d4dc",
-        zIndex: 99,
-        backdropFilter: "blur(16px)",
-        boxShadow: "0 -4px 20px rgba(0, 0, 0, 0.5), 0 0 15px rgba(41, 98, 255, 0.1)",
-        transition: "all 0.3s ease",
-      }}>
-        <Zap size={15} style={{ color: "#fbbf24", fill: "#fbbf24", filter: "drop-shadow(0 0 4px #fbbf24)", flexShrink: 0 }} />
-        <span style={{ letterSpacing: "0.3px", flexGrow: 1, textAlign: "center" }}>
-          {effectiveLang === "en" && (
-            <>
-              No API Key yet? Get all-in-one API access at{" "}
-              <a
-                href="https://apimax.io"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ color: "#60a5fa", fontWeight: "bold", textDecoration: "underline" }}
-              >
-                APIMax.io
-              </a>{" "}
-              — one key for GPT, Claude, Gemini, DeepSeek & more, with quick setup.
-            </>
-          )}
-          {effectiveLang === "ja" && (
-            <>
-              APIキーをお持ちでないですか？{" "}
-              <a
-                href="https://apimax.io"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ color: "#60a5fa", fontWeight: "bold", textDecoration: "underline" }}
-              >
-                APIMax.io
-              </a>{" "}
-              — GPT / Claude / Gemini / DeepSeek などのマルチモデルAPIキーとトークンを一撃で購入。
-            </>
-          )}
-          {(effectiveLang === "zh-CN" || effectiveLang === "zh-TW") && (
-            <>
-              还没有 API Key？前往{" "}
-              <a
-                href="https://apimax.io"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ color: "#60a5fa", fontWeight: "bold", textDecoration: "underline" }}
-              >
-                APIMax.io
-              </a>{" "}
-              一键购买多合一大模型 API 和 Token（支持 GPT / Claude / Gemini / DeepSeek 等主流模型）
-            </>
-          )}
-        </span>
-        <a
-          href="https://apimax.io"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="quick-badge-btn"
-          style={{
-            backgroundColor: "#2962ff",
-            color: "#fff",
-            padding: "6px 16px",
-            borderRadius: "20px",
-            fontSize: "12px",
-            fontWeight: "bold",
-            textDecoration: "none",
-            whiteSpace: "nowrap",
-            flexShrink: 0,
-            boxShadow: "0 0 10px rgba(41, 98, 255, 0.4)",
-            transition: "transform 0.2s, background-color 0.2s",
-          }}
-        >
-          {effectiveLang === "en" ? "Buy API Key & Token" : effectiveLang === "ja" ? "APIトークンを購入" : "购买 API 和 Token"}
-        </a>
-      </div>
 
+
+      <AdBanner position="bottom" />
 
       {/* 3. Settings Dialog */}
       {isSettingsOpen && (

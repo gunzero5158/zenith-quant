@@ -80,6 +80,9 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
+    // All setState calls in load() happen after an await, so this cannot
+    // cascade synchronous renders; the lint rule can't see across the call.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     load().catch(() => setAuthorized(false));
   }, [load]);
 
