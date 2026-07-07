@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface MeUser {
   email: string;
@@ -61,11 +61,30 @@ export default function AccountWidget() {
     }
   }, []);
 
+  // Latest user snapshot for event handlers that must not re-subscribe.
+  const userRef = useRef<MeUser | null>(null);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
   const onBilling = useCallback((e: Event) => {
     const detail = (e as CustomEvent<BillingUpdateDetail>).detail;
     setUser((prev) => (prev ? { ...prev, ...detail } : prev));
   }, []);
-  const onOpenRecharge = useCallback(() => setShowRecharge(true), []);
+  const onOpenRecharge = useCallback(() => {
+    // A 402 can race a session expiry: with no user the modal never renders,
+    // so send the visitor to login instead of silently doing nothing.
+    if (!userRef.current) {
+      window.location.href = "/auth";
+      return;
+    }
+    setShowRecharge(true);
+  }, []);
+  // Refresh on focus so the balance recovers after Stripe checkout returns
+  // or after a charge whose response this tab never saw (aborted request).
+  const onFocus = useCallback(() => {
+    if (userRef.current) void refresh();
+  }, [refresh]);
 
   useEffect(() => {
     // All setState calls in refresh() happen after an await, so this cannot
@@ -74,11 +93,13 @@ export default function AccountWidget() {
     void refresh();
     window.addEventListener("zenith:billing-update", onBilling);
     window.addEventListener("zenith:open-recharge", onOpenRecharge);
+    window.addEventListener("focus", onFocus);
     return () => {
       window.removeEventListener("zenith:billing-update", onBilling);
       window.removeEventListener("zenith:open-recharge", onOpenRecharge);
+      window.removeEventListener("focus", onFocus);
     };
-  }, [refresh, onBilling, onOpenRecharge]);
+  }, [refresh, onBilling, onOpenRecharge, onFocus]);
 
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -160,9 +181,9 @@ export default function AccountWidget() {
               <input
                 style={{ flex: 1, background: "#131722", border: "1px solid #2a2e39", borderRadius: 6, color: "#d1d4dc", padding: "8px 10px", fontSize: 13 }}
                 type="number"
-                min={1}
+                min={5}
                 max={500}
-                placeholder="自定义金额（1–500 元）"
+                placeholder="自定义金额（5–500 元）"
                 value={customYuan}
                 onChange={(e) => setCustomYuan(e.target.value)}
               />

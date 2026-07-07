@@ -1,7 +1,25 @@
-import nodemailer from "nodemailer";
+import nodemailer, { Transporter } from "nodemailer";
 
 export function isSmtpConfigured(): boolean {
   return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+}
+
+// One pooled transporter per process: SMTP connect + TLS + AUTH is far too
+// expensive to redo per email, and rapid reconnects trip provider throttles.
+let transporter: Transporter | null = null;
+
+function getTransporter(): Transporter {
+  if (!transporter) {
+    const port = Number(process.env.SMTP_PORT || 465);
+    transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port,
+      secure: port === 465,
+      pool: true,
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    });
+  }
+  return transporter;
 }
 
 export async function sendVerificationEmail(to: string, code: string): Promise<void> {
@@ -12,14 +30,7 @@ export async function sendVerificationEmail(to: string, code: string): Promise<v
     console.log(`[DEV] Verification code for ${to}: ${code}`);
     return;
   }
-  const port = Number(process.env.SMTP_PORT || 465);
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port,
-    secure: port === 465,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
-  await transporter.sendMail({
+  await getTransporter().sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to,
     subject: `【Zenith Quant】邮箱验证码：${code}`,

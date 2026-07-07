@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { ensureDbReady, schema } from "@/lib/db";
 import { isValidEmail } from "@/lib/auth/verification";
-import { createSessionToken, attachSessionCookie, isAdminEmail } from "@/lib/auth/session";
+import { createSessionToken, attachSessionCookie } from "@/lib/auth/session";
 import { rateLimit, clientIp } from "@/lib/auth/ratelimit";
 
 export async function POST(req: NextRequest) {
@@ -35,11 +35,6 @@ export async function POST(req: NextRequest) {
         { error: "邮箱尚未验证，请先完成邮箱验证", needVerify: true },
         { status: 403 },
       );
-    }
-
-    const shouldBeAdmin = isAdminEmail(email);
-    if (shouldBeAdmin !== user.isAdmin) {
-      await db.update(schema.users).set({ isAdmin: shouldBeAdmin }).where(eq(schema.users.id, user.id));
     }
 
     const res = NextResponse.json({ ok: true });

@@ -1,5 +1,5 @@
 import { SignJWT, jwtVerify } from "jose";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { ensureDbReady, schema } from "@/lib/db";
 
@@ -9,10 +9,14 @@ const SESSION_DAYS = 7;
 function getSecret(): Uint8Array {
   const secret = process.env.AUTH_SECRET;
   if (!secret) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("AUTH_SECRET must be set in production");
+    // Only true local development/tests may run keyless — staging, preview or
+    // any misconfigured deployment must fail fast, or sessions become
+    // forgeable with this publicly visible string.
+    const env = process.env.NODE_ENV;
+    if (env === "development" || env === "test") {
+      return new TextEncoder().encode("zenith-dev-secret-do-not-use-in-prod");
     }
-    return new TextEncoder().encode("zenith-dev-secret-do-not-use-in-prod");
+    throw new Error("AUTH_SECRET must be set");
   }
   return new TextEncoder().encode(secret);
 }
@@ -39,19 +43,8 @@ export function clearSessionCookie(res: NextResponse): void {
   res.cookies.set(COOKIE_NAME, "", { httpOnly: true, maxAge: 0, path: "/" });
 }
 
-function readSessionCookie(req: Request): string | null {
-  const header = req.headers.get("cookie") || "";
-  for (const part of header.split(/;\s*/)) {
-    const eq = part.indexOf("=");
-    if (eq > 0 && part.slice(0, eq) === COOKIE_NAME) {
-      return decodeURIComponent(part.slice(eq + 1));
-    }
-  }
-  return null;
-}
-
-export async function getSessionUserId(req: Request): Promise<string | null> {
-  const token = readSessionCookie(req);
+export async function getSessionUserId(req: NextRequest): Promise<string | null> {
+  const token = req.cookies.get(COOKIE_NAME)?.value;
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, getSecret());
@@ -63,7 +56,7 @@ export async function getSessionUserId(req: Request): Promise<string | null> {
 
 export type SessionUser = typeof schema.users.$inferSelect;
 
-export async function getSessionUser(req: Request): Promise<SessionUser | null> {
+export async function getSessionUser(req: NextRequest): Promise<SessionUser | null> {
   const userId = await getSessionUserId(req);
   if (!userId) return null;
   const db = await ensureDbReady();

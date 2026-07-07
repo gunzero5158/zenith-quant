@@ -1,0 +1,1 @@
+CREATE INDEX `idx_ledger_type_created` ON `credit_ledger` (`type`,`created_at`);

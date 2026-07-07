@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import YahooFinance from "yahoo-finance2";
 import { Candle, IchimokuResult, calculateEMA, calculateBOLL, calculateMACD, calculateKDJ, calculateRSI, calculateATR, calculateIchimoku } from "@/lib/analysis/indicators";
 import { analyzePriceVolume, VolumeAnalysisResult } from "@/lib/analysis/volumeForce";
@@ -16,7 +16,7 @@ import { fetchProviderMarketData } from "@/lib/analysis/marketDataProviders";
 import { getSessionUser } from "@/lib/auth/session";
 import { getPlatformLlmConfig } from "@/lib/billing/settings";
 import {
-  chargeForAnalysis, refundAnalysis, getUserBillingSnapshot,
+  chargeForAnalysis, refundAnalysis,
   InsufficientBalanceError, ChargeResult,
 } from "@/lib/billing/charge";
 import { fetchTencentMarketData } from "@/lib/analysis/tencent";
@@ -427,7 +427,7 @@ async function improveCompanyName(symbol: string, currentName: string, englishNa
   return resolved;
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { symbol, llmConfig, language, useFallback } = body as { symbol: string; llmConfig?: LLMConfig; language?: string; useFallback?: boolean };
@@ -892,7 +892,10 @@ export async function POST(request: Request) {
     const analysisId = crypto.randomUUID();
     let chargeResult: ChargeResult | null = null;
 
-    if (techData.isMock && useFallback) {
+    // Mock candles must never reach the PAID platform model — users would be
+    // charged for an AI report about fabricated prices. BYOK users keep the
+    // old behavior (their key, their call).
+    if (techData.isMock && (useFallback || !isByok)) {
       const fallback = generateFallbackReport(
         `${techData.companyName} (${cleanSymbol})`,
         techData.price,
@@ -917,22 +920,49 @@ export async function POST(request: Request) {
       reportRecommendation = fallback.recommendation;
       reportTechnical = fallback.technicalAnalysis;
     } else if (effectiveLlmConfig && effectiveLlmConfig.apiKey) {
+      let insufficientBalance: InsufficientBalanceError | null = null;
       if (!isByok) {
         try {
           chargeResult = await chargeForAnalysis(sessionUser.id, analysisId);
         } catch (err) {
           if (err instanceof InsufficientBalanceError) {
-            const snapshot = await getUserBillingSnapshot(sessionUser.id);
-            return NextResponse.json({
-              error: `余额不足：本次 AI 分析需 ¥${(err.priceCents / 100).toFixed(2)}，请先充值`,
-              needTopup: true,
-              priceCents: err.priceCents,
-              ...snapshot,
-            }, { status: 402 });
+            // With the local fallback enabled the user still gets a free
+            // rule-based report instead of a hard 402.
+            if (useFallback) {
+              insufficientBalance = err;
+            } else {
+              return NextResponse.json({
+                error: `余额不足：本次 AI 分析需 ¥${(err.priceCents / 100).toFixed(2)}，请先充值`,
+                needTopup: true,
+                priceCents: err.priceCents,
+                balanceCents: sessionUser.balanceCents,
+                freeUsesRemaining: sessionUser.freeUsesRemaining,
+              }, { status: 402 });
+            }
+          } else {
+            throw err;
           }
-          throw err;
         }
       }
+      if (insufficientBalance) {
+        const fallback = generateFallbackReport(
+          `${techData.companyName} (${cleanSymbol})`,
+          techData.price,
+          techData.changePercent,
+          techData.score,
+          techData.volumeAnalysis,
+          techData.patterns,
+          techData.wave,
+          techData.chanlun,
+          techData.sr,
+          effectiveLang,
+          buildFallbackExtras(techData)
+        );
+        const prefix = `⚠️ **余额不足（AI 分析需 ¥${(insufficientBalance.priceCents / 100).toFixed(2)}/次），已使用本地规则引擎免费生成。充值后可获得 AI 研报。**\n\n`;
+        reportOverview = prefix + fallback.overview;
+        reportRecommendation = fallback.recommendation;
+        reportTechnical = fallback.technicalAnalysis;
+      } else
       try {
         const prompt = replaceDollarPriceSymbols(
           buildAnalystPrompt(cleanSymbol, techData, effectiveLang, currencySymbol),
@@ -957,15 +987,26 @@ export async function POST(request: Request) {
           recommendation: string;
           technicalAnalysis: string;
         }>;
-        reportOverview = parsed.overview || "";
+        // Parseable JSON with the wrong shape must not pass as a delivered
+        // report — the user would be charged for three empty sections.
+        if (typeof parsed !== "object" || parsed === null || typeof parsed.overview !== "string" || !parsed.overview.trim()) {
+          throw new Error("LLM returned JSON without the expected report fields");
+        }
+        reportOverview = parsed.overview;
         reportRecommendation = parsed.recommendation || "";
         reportTechnical = parsed.technicalAnalysis || "";
         isLLMUsed = true;
       } catch (err: unknown) {
         console.error("LLM Generation or parsing failed:", err);
         // The AI report was not delivered — reverse any charge before degrading.
+        // A failed refund must not escape this catch, or the fallback report
+        // (and the ledger trail) would be lost with the money.
         if (chargeResult) {
-          await refundAnalysis(sessionUser.id, analysisId, chargeResult);
+          try {
+            await refundAnalysis(sessionUser.id, analysisId, chargeResult);
+          } catch (refundErr) {
+            console.error(`Refund failed for user=${sessionUser.id} analysis=${analysisId}:`, refundErr);
+          }
           chargeResult = null;
         }
         // Only fallback to local engine if useFallback is explicitly enabled
@@ -1052,7 +1093,10 @@ export async function POST(request: Request) {
         aiSource: isLLMUsed ? (isByok ? "byok" : "platform") : "none",
         chargedCents: chargeResult ? chargeResult.priceCents : 0,
         chargeMethod: chargeResult?.method ?? null,
-        ...(await getUserBillingSnapshot(sessionUser.id)),
+        // Post-charge values come back from the charge itself; uncharged
+        // requests report the session snapshot — no extra DB roundtrip.
+        balanceCents: chargeResult?.balanceCents ?? sessionUser.balanceCents,
+        freeUsesRemaining: chargeResult?.freeUsesRemaining ?? sessionUser.freeUsesRemaining,
       },
       reportOverview,
       reportRecommendation,

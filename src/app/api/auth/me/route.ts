@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/auth/session";
+import { getSessionUser, isAdminEmail } from "@/lib/auth/session";
 import { getPricePerUseCents } from "@/lib/billing/settings";
 
 export async function GET(req: NextRequest) {
@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
         email: user.email,
         balanceCents: user.balanceCents,
         freeUsesRemaining: user.freeUsesRemaining,
-        isAdmin: user.isAdmin,
+        isAdmin: isAdminEmail(user.email),
       },
       pricePerUseCents: await getPricePerUseCents(),
     });

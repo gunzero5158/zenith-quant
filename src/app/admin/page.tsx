@@ -10,7 +10,6 @@ interface AdminSettings {
     baseUrl: string;
     modelName: string;
     apiKeyMasked: string;
-    hasApiKey: boolean;
   } | null;
 }
 
@@ -61,7 +60,10 @@ export default function AdminPage() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/admin/settings");
+    const [res, statsRes] = await Promise.all([
+      fetch("/api/admin/settings"),
+      fetch("/api/admin/stats"),
+    ]);
     if (!res.ok) {
       setAuthorized(false);
       return;
@@ -75,7 +77,6 @@ export default function AdminPage() {
       setModelName(data.platformLlm.modelName);
       setKeyMasked(data.platformLlm.apiKeyMasked);
     }
-    const statsRes = await fetch("/api/admin/stats");
     if (statsRes.ok) setStats((await statsRes.json()) as AdminStats);
   }, []);
 

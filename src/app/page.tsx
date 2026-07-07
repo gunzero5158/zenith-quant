@@ -843,9 +843,14 @@ export default function Home() {
       setShowMockWarning(true);
 
       if (!data.isMock) {
+        // The billing block is per-user account data (balance, free uses) —
+        // it must never land in the symbol-keyed localStorage cache, which is
+        // shared across whoever uses this browser profile.
+        const cacheable = { ...data };
+        delete cacheable.billing;
         writeAnalysisCache(resolvedSymbol, {
           timestamp: Date.now(),
-          data
+          data: cacheable
         });
       }
 

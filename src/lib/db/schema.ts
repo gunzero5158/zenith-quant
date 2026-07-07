@@ -38,7 +38,12 @@ export const creditLedger = sqliteTable(
     note: text("note"),
     createdAt: integer("created_at").notNull(),
   },
-  (t) => [index("idx_ledger_user").on(t.userId, t.createdAt)],
+  (t) => [
+    index("idx_ledger_user").on(t.userId, t.createdAt),
+    // Admin stats filter by type (+date) — without this the dashboard scans
+    // the whole ledger.
+    index("idx_ledger_type_created").on(t.type, t.createdAt),
+  ],
 );
 
 export const appSettings = sqliteTable("app_settings", {

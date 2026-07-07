@@ -17,6 +17,11 @@ function createDb(): Database {
   if (url) {
     return drizzle(createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN }), { schema });
   }
+  if (process.env.NODE_ENV === "production") {
+    // Refusing to start beats silently writing balances and Stripe credits
+    // to an ephemeral per-instance file.
+    throw new Error("TURSO_DATABASE_URL must be set in production");
+  }
   // Local development / tests fall back to a SQLite file with the same driver.
   const file = process.env.DEV_DATABASE_FILE || path.join(process.cwd(), "dev.db");
   return drizzle(createClient({ url: `file:${file}` }), { schema });
@@ -33,10 +38,15 @@ export function getDb(): Database {
 // production run `npm run db:migrate` once against Turso instead.
 export async function ensureDbReady(): Promise<Database> {
   const db = getDb();
-  if (process.env.NODE_ENV !== "production" || !process.env.TURSO_DATABASE_URL) {
+  if (process.env.NODE_ENV !== "production") {
     if (!globalForDb.__zenithDbMigrated) {
       globalForDb.__zenithDbMigrated = migrate(db, {
         migrationsFolder: path.join(process.cwd(), "drizzle"),
+      }).catch((err) => {
+        // Never cache a rejected migration: a transient failure at cold start
+        // must not poison every later request in this process.
+        globalForDb.__zenithDbMigrated = undefined;
+        throw err;
       });
     }
     await globalForDb.__zenithDbMigrated;

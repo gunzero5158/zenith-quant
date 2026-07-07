@@ -23,7 +23,6 @@ export async function GET(req: NextRequest) {
           baseUrl: llm.baseUrl || "",
           modelName: llm.modelName || "",
           apiKeyMasked: maskKey(llm.apiKey),
-          hasApiKey: true,
         }
       : null,
   });

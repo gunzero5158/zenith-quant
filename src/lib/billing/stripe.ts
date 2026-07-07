@@ -20,5 +20,7 @@ export function getStripeForWebhooks(): Stripe {
   return new Stripe("sk_webhook_verify_only");
 }
 
-export const MIN_TOPUP_CENTS = 100;    // ¥1
+// Stripe rejects charges below the CNY equivalent of ~$0.50 with
+// amount_too_small, so the floor must stay comfortably above that.
+export const MIN_TOPUP_CENTS = 500;    // ¥5
 export const MAX_TOPUP_CENTS = 50_000; // ¥500

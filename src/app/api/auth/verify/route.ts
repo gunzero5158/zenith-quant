@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { ensureDbReady, schema } from "@/lib/db";
 import { hashCode, isValidEmail, CODE_MAX_ATTEMPTS } from "@/lib/auth/verification";
-import { createSessionToken, attachSessionCookie, isAdminEmail } from "@/lib/auth/session";
+import { createSessionToken, attachSessionCookie } from "@/lib/auth/session";
 import { rateLimit, clientIp } from "@/lib/auth/ratelimit";
 
 export async function POST(req: NextRequest) {
@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
     }
 
     await db.update(schema.users)
-      .set({ emailVerifiedAt: user.emailVerifiedAt ?? now, isAdmin: isAdminEmail(email) })
+      .set({ emailVerifiedAt: user.emailVerifiedAt ?? now })
       .where(eq(schema.users.id, user.id));
     await db.delete(schema.verificationCodes).where(eq(schema.verificationCodes.email, email));
 
