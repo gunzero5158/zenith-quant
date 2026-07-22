@@ -14,6 +14,7 @@ import { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
 import { ChanLunResult } from "@/lib/analysis/chanlun";
 import { SupportResistanceResult } from "@/lib/analysis/supportResistance";
 import { VolumeAnalysisResult } from "@/lib/analysis/volumeForce";
+import { isAShareAnalysisCacheReusable, isAShareSymbol } from "@/lib/analysis/analysisCache";
 
 // Keep lightweight-charts out of the initial bundle
 const StockChart = dynamic(() => import("@/components/StockChart"), { ssr: false });
@@ -92,6 +93,23 @@ interface SearchResponse {
 
 interface ApiErrorResponse {
   error?: string;
+}
+
+async function fetchQuoteMap(symbols: string): Promise<Record<string, WatchQuote>> {
+  const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(symbols)}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Quote request failed (${res.status})`);
+  }
+
+  const data = await res.json() as QuotesResponse;
+  const quotes = data.quotes || {};
+  return Object.fromEntries(
+    Object.entries(quotes).filter(([, quote]) => (
+      Number.isFinite(quote?.price) && Number.isFinite(quote?.change)
+    ))
+  );
 }
 
 const APP_LANGUAGES: AppLanguage[] = ["auto", "zh-CN", "zh-TW", "en", "ja"];
@@ -702,13 +720,9 @@ export default function Home() {
 
     const fetchWatchlistQuotes = async () => {
       try {
-        const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(watchlistKey)}`);
-        if (res.ok) {
-          const data = await res.json() as QuotesResponse;
-          const newQuotes = data.quotes || {};
-          setWatchlistQuotes(newQuotes);
-          localStorage.setItem("watchlistQuotes", JSON.stringify(newQuotes));
-        }
+        const newQuotes = await fetchQuoteMap(watchlistKey);
+        setWatchlistQuotes(newQuotes);
+        localStorage.setItem("watchlistQuotes", JSON.stringify(newQuotes));
       } catch (e) {
         console.error("Fetch watchlist quotes failed:", e);
       }
@@ -721,20 +735,57 @@ export default function Home() {
     const isForce = forceFetch === true || (forceFetch && typeof forceFetch === "object" && "nativeEvent" in forceFetch);
     const requestedSymbol = activeSymbol;
     const config = overrideConfig ?? llmConfig;
+    currentRequestSymbolRef.current = requestedSymbol;
 
     if (!isForce) {
       const cachedObj = readAnalysisCache(requestedSymbol);
       if (cachedObj) {
         try {
+          const cachedData = cachedObj.data;
           const cacheDate = new Date(cachedObj.timestamp);
           const now = new Date();
           const isSameDay = cacheDate.toDateString() === now.toDateString();
-          if (isSameDay && isNonTradingHours(requestedSymbol)) {
-            console.log("[CACHE] Using cached analysis for", requestedSymbol);
-            const cachedData = cachedObj.data;
-            if (cachedData.isMock) {
+          const outsideTradingHours = isNonTradingHours(requestedSymbol);
+
+          if (cachedData.isMock) {
+            removeAnalysisCache(requestedSymbol);
+          } else if (outsideTradingHours) {
+            let canReuseCache = isSameDay;
+
+            if (isAShareSymbol(requestedSymbol)) {
+              canReuseCache = false;
+              try {
+                const latestQuotes = await fetchQuoteMap(requestedSymbol);
+                if (currentRequestSymbolRef.current !== requestedSymbol) return;
+
+                const latestQuote = latestQuotes[requestedSymbol.toUpperCase()];
+                if (latestQuote) {
+                  setWatchlistQuotes((previous) => {
+                    const updated = { ...previous, [requestedSymbol]: latestQuote };
+                    localStorage.setItem("watchlistQuotes", JSON.stringify(updated));
+                    return updated;
+                  });
+
+                  canReuseCache = isAShareAnalysisCacheReusable({
+                    symbol: requestedSymbol,
+                    cacheTimestamp: cachedObj.timestamp,
+                    nowTimestamp: Date.now(),
+                    cachedQuote: {
+                      price: cachedData.price,
+                      change: cachedData.changePercent,
+                    },
+                    latestQuote,
+                  });
+                }
+              } catch (e) {
+                console.warn("Validate A-share analysis cache failed:", e);
+              }
+            }
+
+            if (!canReuseCache) {
               removeAnalysisCache(requestedSymbol);
             } else {
+              console.log("[CACHE] Using cached analysis for", requestedSymbol);
               touchAnalysisCache(requestedSymbol);
               const resolvedSymbol = cachedData.symbol || requestedSymbol;
               // A cache hit supersedes any in-flight analysis request
