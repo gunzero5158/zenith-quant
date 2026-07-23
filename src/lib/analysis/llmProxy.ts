@@ -68,6 +68,33 @@ function sanitizeModelName(modelName: string | undefined, fallback: string): str
   return name;
 }
 
+function resolveOpenAICompatibleEndpoint(baseUrl: string | undefined): string {
+  const base = resolveBaseUrl(baseUrl, "https://api.openai.com/v1");
+  const parsed = new URL(base);
+  const pathname = parsed.pathname.replace(/\/+$/, "");
+
+  if (!pathname) {
+    parsed.pathname = "/v1";
+  }
+
+  const normalized = parsed.toString().replace(/\/+$/, "");
+  return /\/chat\/completions$/i.test(parsed.pathname)
+    ? normalized
+    : `${normalized}/chat/completions`;
+}
+
+async function parseUpstreamJson<T>(provider: string, res: Response): Promise<T> {
+  try {
+    return await res.json() as T;
+  } catch {
+    const contentType = res.headers?.get?.("content-type") || "";
+    if (/text\/html/i.test(contentType)) {
+      throw new Error(`${provider} API returned HTML instead of JSON. Check that the Base URL points to an OpenAI-compatible API (usually ending in /v1).`);
+    }
+    throw new Error(`${provider} API returned invalid JSON${contentType ? ` (${contentType})` : ""}.`);
+  }
+}
+
 /** Builds an error without echoing unbounded upstream response bodies back to the client. */
 async function upstreamError(provider: string, res: Response): Promise<Error> {
   let detail = "";
@@ -140,7 +167,7 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
       throw await upstreamError("Gemini", res);
     }
 
-    const data = await res.json();
+    const data = await parseUpstreamJson<{ candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }>("Gemini", res);
     return data?.candidates?.[0]?.content?.parts?.[0]?.text || "Gemini返回数据为空。";
   }
 
@@ -175,13 +202,12 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
       throw await upstreamError("Anthropic", res);
     }
 
-    const data = await res.json();
+    const data = await parseUpstreamJson<{ content?: Array<{ text?: string }> }>("Anthropic", res);
     return data?.content?.[0]?.text || "Anthropic返回数据为空。";
   }
 
   // --- 3. OpenAI / DeepSeek / Custom OpenAI-compatible ---
-  const openaiBase = resolveBaseUrl(baseUrl, "https://api.openai.com/v1");
-  const openaiUrl = `${openaiBase}/chat/completions`;
+  const openaiUrl = resolveOpenAICompatibleEndpoint(baseUrl);
 
   const payload = {
     model: sanitizeModelName(modelName, "gpt-4o-mini"),
@@ -215,6 +241,6 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
     throw await upstreamError(provider.toUpperCase(), res);
   }
 
-  const data = await res.json();
+  const data = await parseUpstreamJson<{ choices?: Array<{ message?: { content?: string } }> }>(provider.toUpperCase(), res);
   return data?.choices?.[0]?.message?.content || `${provider}返回数据为空。`;
 }

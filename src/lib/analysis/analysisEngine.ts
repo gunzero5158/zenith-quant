@@ -28,7 +28,7 @@ import {
 } from "./technicalSignals";
 import { analyzePriceVolume } from "./volumeForce";
 import { analyzeWaveTheory } from "./waveTheory";
-import { mergeCurrentWeekFromDaily } from "./weeklyCandles";
+import { mergeCurrentWeekFromDaily, toIsoDateKey } from "./weeklyCandles";
 import { EvidenceSnapshot } from "./evidence";
 
 export interface AnalysisEngineInput {
@@ -118,16 +118,19 @@ function latestFinite(values: number[]): number {
 
 export function runAnalysisEngine(input: AnalysisEngineInput): AnalysisEngineResult {
   if (input.dailyCandles.length === 0) throw new Error("Analysis requires at least one daily candle");
-  const dailyCandles = [...input.dailyCandles].sort((left, right) => String(left.date).localeCompare(String(right.date)));
-  const weeklyCandles = mergeCurrentWeekFromDaily(input.weeklyCandles, dailyCandles);
+  const normalizeAndSortCandles = (candles: Candle[]): Candle[] => candles
+    .map((candle) => ({ ...candle, date: toIsoDateKey(candle.date) }))
+    .sort((left, right) => String(left.date).localeCompare(String(right.date)));
+  const dailyCandles = normalizeAndSortCandles(input.dailyCandles);
+  const weeklyCandles = mergeCurrentWeekFromDaily(normalizeAndSortCandles(input.weeklyCandles), dailyCandles);
   const price = dailyCandles.at(-1)!.close;
   const dataQuality = buildDataQuality({
     symbol: input.symbol,
     asOf: input.asOf,
     dailySamples: dailyCandles.length,
     weeklySamples: weeklyCandles.length,
-    latestDailyDate: String(dailyCandles.at(-1)!.date).slice(0, 10),
-    latestWeeklyDate: weeklyCandles.length > 0 ? String(weeklyCandles.at(-1)!.date).slice(0, 10) : undefined,
+    latestDailyDate: String(dailyCandles.at(-1)!.date),
+    latestWeeklyDate: weeklyCandles.length > 0 ? String(weeklyCandles.at(-1)!.date) : undefined,
   });
 
   const daily = calculateFrame(dailyCandles);

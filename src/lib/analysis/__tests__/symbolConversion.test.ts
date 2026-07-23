@@ -92,6 +92,22 @@ describe("buildWeeklyCandles", () => {
     expect(weekly.map((c) => c.date)).toEqual(["2026-06-29", "2026-07-06"]);
   });
 
+  it("accepts Date objects returned by the Yahoo SDK", () => {
+    const daily: Candle[] = [
+      { date: new Date("2026-07-20T00:00:00.000Z"), open: 10, high: 12, low: 9, close: 11, volume: 100 },
+      { date: new Date("2026-07-21T00:00:00.000Z"), open: 11, high: 13, low: 10, close: 12, volume: 150 },
+    ];
+
+    expect(buildWeeklyCandles(daily)).toEqual([{
+      date: "2026-07-20",
+      open: 10,
+      high: 13,
+      low: 9,
+      close: 12,
+      volume: 250,
+    }]);
+  });
+
   it("replaces the provider current week with the week rebuilt from realtime daily bars", () => {
     const provider: Candle[] = [
       { date: "2026-07-13", open: 100, high: 110, low: 95, close: 105, volume: 5000 },

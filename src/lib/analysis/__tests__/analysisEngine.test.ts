@@ -64,4 +64,21 @@ describe("pure analysis engine", () => {
     expect(prompt).toContain(result.snapshot.items[0].id);
     expect(prompt).toContain('"hardCap"');
   });
+
+  it("normalizes and chronologically sorts Yahoo Date candles before analysis", () => {
+    const dailyCandles = tradingDays(80)
+      .map((candle) => ({ ...candle, date: new Date(`${String(candle.date)}T00:00:00.000Z`) }))
+      .reverse();
+
+    const result = runAnalysisEngine({
+      symbol: "AAPL",
+      dailyCandles,
+      weeklyCandles: [],
+      asOf: "2026-07-23T06:00:00.000Z",
+      language: "zh-CN",
+    });
+
+    expect(result.dailyCandles.at(-1)?.date).toBe("2026-07-23");
+    expect(result.snapshot.price).toBe(114);
+  });
 });
