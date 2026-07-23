@@ -8,13 +8,15 @@ import SettingsModal from "@/components/SettingsModal";
 import { LLMConfig } from "@/lib/analysis/llmProxy";
 import { formatMarketPrice, getMarketCurrencySymbol, normalizeManualSymbolInput } from "@/lib/analysis/market";
 import { Candle, IchimokuResult } from "@/lib/analysis/indicators";
-import { ScoreDetail } from "@/lib/analysis/scoring";
+import { EntryAssessment, ScoreDetail } from "@/lib/analysis/scoring";
 import { PatternResult } from "@/lib/analysis/patterns";
 import { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
 import { ChanLunResult } from "@/lib/analysis/chanlun";
 import { SupportResistanceResult } from "@/lib/analysis/supportResistance";
 import { VolumeAnalysisResult } from "@/lib/analysis/volumeForce";
 import { isAShareAnalysisCacheReusable, isAShareSymbol } from "@/lib/analysis/analysisCache";
+import { DataQuality, ScenarioStatus } from "@/lib/analysis/evidence";
+import { buildEntryScorePresentation } from "@/lib/analysis/presentation";
 
 // Keep lightweight-charts out of the initial bundle
 const StockChart = dynamic(() => import("@/components/StockChart"), { ssr: false });
@@ -55,6 +57,8 @@ interface StockAnalysisData {
   price: number;
   changePercent: number;
   score: ScoreDetail;
+  entryAssessment?: EntryAssessment;
+  dataQuality?: DataQuality;
   dailyCandles: Candle[];
   weeklyCandles: Candle[];
   indicators: TechnicalIndicators;
@@ -990,6 +994,14 @@ export default function Home() {
     );
   };
 
+  const scorePresentation = stockData?.entryAssessment
+    ? buildEntryScorePresentation(stockData.entryAssessment, effectiveLang, stockData.dataQuality)
+    : undefined;
+  const scenarioTone = (status: ScenarioStatus): React.CSSProperties => ({
+    color: status === "triggered" ? "#089981" : status === "too_late" ? "#f23645" : status === "watch" ? "#fbbf24" : "#787b86",
+    borderColor: status === "triggered" ? "rgba(8,153,129,0.45)" : status === "too_late" ? "rgba(242,54,69,0.45)" : status === "watch" ? "rgba(251,191,36,0.45)" : "#363c4e",
+  });
+
   return (
     <div style={styles.container}>
       <style>{`
@@ -1237,6 +1249,9 @@ export default function Home() {
                     {stockData.dataSource === "fmp" && (
                       <span style={styles.providerBadge}>🌐 FMP</span>
                     )}
+                    {scorePresentation?.dataStatus && (
+                      <span style={styles.dataStatus}>{scorePresentation.dataStatus}</span>
+                    )}
                     {stockData.dataSource === "mock" && (
                       <span style={styles.mockBadge}>⚠️ 模拟演示</span>
                     )}
@@ -1257,14 +1272,32 @@ export default function Home() {
 
                 <div style={styles.statsContainer}>
                   <div style={styles.statItem}>
-                    <span style={styles.statLabel}>{t.scoreLabel}</span>
+                    <span style={styles.statLabel}>{scorePresentation?.finalLabel || t.scoreLabel}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                       <div style={styles.statValue}>
-                        <span style={{ fontSize: "20px", color: "#2962ff" }}>{stockData.score.totalScore.toFixed(1)}</span>
+                        <span style={{ fontSize: "20px", color: "#2962ff" }}>{scorePresentation?.finalText || stockData.score.totalScore.toFixed(1)}</span>
                         <span style={{ fontSize: "11px", color: "#787b86" }}>/ 5.0</span>
                       </div>
-                      <div>{renderStarRating(stockData.score.totalScore)}</div>
+                      <div>{renderStarRating(stockData.entryAssessment?.finalScore ?? stockData.score.totalScore)}</div>
                     </div>
+                    {scorePresentation && stockData.entryAssessment && (
+                      <>
+                        <div style={styles.scoreBreakdownRow}>
+                          <span>{scorePresentation.ruleLabel} {scorePresentation.ruleText}</span>
+                          <span style={{ color: stockData.entryAssessment.aiAdjustment < 0 ? "#f23645" : stockData.entryAssessment.aiAdjustment > 0 ? "#089981" : "#787b86" }}>
+                            {scorePresentation.adjustmentLabel} {scorePresentation.adjustmentText}
+                          </span>
+                        </div>
+                        <div style={styles.scenarioRow}>
+                          <span style={{ ...styles.scenarioBadge, ...scenarioTone(stockData.entryAssessment.leftStatus) }}>
+                            {scorePresentation.leftLabel} {scorePresentation.leftText}
+                          </span>
+                          <span style={{ ...styles.scenarioBadge, ...scenarioTone(stockData.entryAssessment.rightStatus) }}>
+                            {scorePresentation.rightLabel} {scorePresentation.rightText}
+                          </span>
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   <div style={styles.statDivider} />
@@ -2069,6 +2102,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "center",
     gap: "20px",
+    flexWrap: "wrap",
   },
   statsContainer: {
     display: "flex",
@@ -2078,6 +2112,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "8px",
     padding: "12px 24px",
     gap: "24px",
+    flexWrap: "wrap",
+    justifyContent: "center",
     boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
   },
   statItem: {
@@ -2103,6 +2139,38 @@ const styles: Record<string, React.CSSProperties> = {
     width: "1px",
     height: "36px",
     backgroundColor: "#2a2e39",
+  },
+  scoreBreakdownRow: {
+    display: "flex",
+    gap: "10px",
+    marginTop: "6px",
+    color: "#787b86",
+    fontSize: "11px",
+    lineHeight: 1.35,
+    flexWrap: "wrap",
+    justifyContent: "center",
+  },
+  scenarioRow: {
+    display: "flex",
+    gap: "6px",
+    marginTop: "6px",
+    flexWrap: "wrap",
+    justifyContent: "center",
+  },
+  scenarioBadge: {
+    border: "1px solid #363c4e",
+    borderRadius: "4px",
+    padding: "2px 5px",
+    fontSize: "10.5px",
+    lineHeight: 1.2,
+    whiteSpace: "nowrap",
+  },
+  dataStatus: {
+    color: "#787b86",
+    fontSize: "10.5px",
+    lineHeight: 1.3,
+    maxWidth: "260px",
+    overflowWrap: "anywhere",
   },
   leftColumn: {
     display: "flex",
