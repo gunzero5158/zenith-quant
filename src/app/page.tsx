@@ -1003,7 +1003,7 @@ export default function Home() {
   });
 
   return (
-    <div style={styles.container}>
+    <div className="app-shell" style={styles.container}>
       <style>{`
         @keyframes indicator-pulse {
           0%, 100% { transform: scale(1); opacity: 0.75; }
@@ -1029,8 +1029,8 @@ export default function Home() {
         }
       `}</style>
       {/* 1. Header Area */}
-      <header style={styles.header}>
-        <div style={styles.brand}>
+      <header className="app-header" style={styles.header}>
+        <div className="app-brand" style={styles.brand}>
           <svg
             width="20"
             height="20"
@@ -1054,9 +1054,9 @@ export default function Home() {
               </linearGradient>
             </defs>
           </svg>
-          <span style={styles.logoText}>
+          <span className="app-logo-text" style={styles.logoText}>
             Antigravity{" "}
-            <span style={{ color: "#2962ff" }}>
+            <span className="app-logo-accent" style={{ color: "#2962ff" }}>
               {effectiveLang === "zh-CN" && "天顶分析"}
               {effectiveLang === "zh-TW" && "天頂分析"}
               {effectiveLang === "en" && "ZenithAnalysis"}
@@ -1066,7 +1066,7 @@ export default function Home() {
         </div>
 
         {/* Search & Autocomplete */}
-        <div ref={searchRef} style={styles.searchContainer}>
+        <div ref={searchRef} className="app-search" style={styles.searchContainer}>
           <Search size={16} style={styles.searchIcon} />
           <input
             type="text"
@@ -1110,8 +1110,8 @@ export default function Home() {
         </div>
 
         {/* Toolbar Settings */}
-        <div style={styles.headerRight}>
-          <div style={styles.langSelectContainer}>
+        <div className="app-header-actions" style={styles.headerRight}>
+          <div className="app-language" style={styles.langSelectContainer}>
             <span style={{ fontSize: "14px" }}>🌐</span>
             <select
               value={appLanguage}
@@ -1131,11 +1131,11 @@ export default function Home() {
             </select>
           </div>
 
-          <button onClick={() => setIsSettingsOpen(true)} style={styles.settingsBtn}>
+          <button className="app-settings" aria-label={t.llmSettings} onClick={() => setIsSettingsOpen(true)} style={styles.settingsBtn}>
             <Settings size={18} style={{ marginRight: "6px" }} />
-            {t.llmSettings}
+            <span className="app-settings-label">{t.llmSettings}</span>
           </button>
-          <button onClick={() => fetchActiveStockData(true)} style={styles.refreshBtn}>
+          <button className="app-refresh" aria-label="Refresh" onClick={() => fetchActiveStockData(true)} style={styles.refreshBtn}>
             <RefreshCw size={18} />
           </button>
         </div>
@@ -1143,7 +1143,7 @@ export default function Home() {
 
       {/* 2. Mock Data Warning Banner */}
       {stockData?.isMock && showMockWarning && (
-        <div style={styles.mockWarningBanner}>
+        <div className="mock-warning" style={styles.mockWarningBanner}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <span style={{ fontSize: "16px" }}>⚠️</span>
             <span>
@@ -1163,11 +1163,11 @@ export default function Home() {
       )}
 
       {/* 3. Main Dashboard Layout */}
-      <div style={styles.body}>
+      <div className="app-body" style={styles.body}>
         {/* Left Watchlist Sidebar */}
-        <aside style={styles.sidebar}>
-          <div style={styles.sidebarHeader}>{t.watchlist}</div>
-          <div style={styles.watchlistContainer}>
+        <aside className="app-sidebar" style={styles.sidebar}>
+          <div className="app-sidebar-header" style={styles.sidebarHeader}>{t.watchlist}</div>
+          <div className="app-watchlist" style={styles.watchlistContainer}>
             {watchlist.map((sym) => {
               const quote = watchlistQuotes[sym];
               const isUp = quote ? quote.change >= 0 : true;
@@ -1175,6 +1175,7 @@ export default function Home() {
                 <div
                   key={sym}
                   onClick={() => setActiveSymbol(sym)}
+                  className="app-watch-item"
                   style={{
                     ...styles.watchItem,
                     backgroundColor: activeSymbol === sym ? "#2a2e39" : "transparent",
@@ -1221,12 +1222,12 @@ export default function Home() {
         </aside>
 
         {/* Center/Right Main Content Area */}
-        <main style={styles.main}>
+        <main className="app-main" style={styles.main}>
           {loading ? (
             <LoadingOverlay key={activeSymbol} symbol={activeSymbol} effectiveLang={effectiveLang} />
           ) : stockData ? (
-            <div style={styles.dashboardGrid}>
-              <div style={styles.topRow}>
+            <div className="dashboard-grid" style={styles.dashboardGrid}>
+              <div className="dashboard-top" style={styles.topRow}>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" }}>
                     <h1 style={styles.tickerName}>{renderStockName()}</h1>
@@ -1270,8 +1271,8 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div style={styles.statsContainer}>
-                  <div style={styles.statItem}>
+                <div className="stats-grid" style={styles.statsContainer}>
+                  <div className="stat-item stat-item-score" style={styles.statItem}>
                     <span style={styles.statLabel}>{scorePresentation?.finalLabel || t.scoreLabel}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                       <div style={styles.statValue}>
@@ -1300,27 +1301,27 @@ export default function Home() {
                     )}
                   </div>
 
-                  <div style={styles.statDivider} />
+                  <div className="stat-divider" style={styles.statDivider} />
 
-                  <div style={styles.statItem}>
+                  <div className="stat-item" style={styles.statItem}>
                     <span style={styles.statLabel}>{t.supportLabel}</span>
                     <span style={{ ...styles.statValue, color: "#089981" }}>
                       {stockData.sr.horizontalSupports[0] ? `${stockData.currencySymbol || getMarketCurrencySymbol(stockData.symbol || activeSymbol)}${stockData.sr.horizontalSupports[0].toFixed(2)}` : t.noSupport}
                     </span>
                   </div>
 
-                  <div style={styles.statDivider} />
+                  <div className="stat-divider" style={styles.statDivider} />
 
-                  <div style={styles.statItem}>
+                  <div className="stat-item" style={styles.statItem}>
                     <span style={styles.statLabel}>{t.resistanceLabel}</span>
                     <span style={{ ...styles.statValue, color: "#f23645" }}>
                       {stockData.sr.horizontalResistances[0] ? `${stockData.currencySymbol || getMarketCurrencySymbol(stockData.symbol || activeSymbol)}${stockData.sr.horizontalResistances[0].toFixed(2)}` : t.noResistance}
                     </span>
                   </div>
 
-                  <div style={styles.statDivider} />
+                  <div className="stat-divider" style={styles.statDivider} />
 
-                  <div style={styles.statItem}>
+                  <div className="stat-item" style={styles.statItem}>
                     <span style={styles.statLabel}>{t.pocLabel}</span>
                     <span style={{ ...styles.statValue, color: "#fbbf24" }}>
                       {stockData.currencySymbol || getMarketCurrencySymbol(stockData.symbol || activeSymbol)}{stockData.sr.volumePOC.toFixed(2)}
@@ -1329,17 +1330,17 @@ export default function Home() {
                 </div>
               </div>
 
-              <div style={styles.workspaceGrid}>
-                <div style={styles.leftColumn}>
-                  <div style={styles.summaryCard}>
+              <div className="workspace-grid" style={styles.workspaceGrid}>
+                <div className="workspace-primary" style={styles.leftColumn}>
+                  <div className="summary-card" style={styles.summaryCard}>
                     <div style={styles.cardHeader}>{t.overviewHeader}</div>
                     <div style={styles.cardBodyAutoScroll}>
                       <MarkdownBlock text={stockData.reportOverview} effectiveLang={effectiveLang} />
                     </div>
                   </div>
                   
-                  <div style={styles.chartArea}>
-                    <div style={styles.chartSelector}>
+                  <div className="chart-area" style={styles.chartArea}>
+                    <div className="chart-selector" style={styles.chartSelector}>
                       <button
                         onClick={() => setChartPeriod("daily")}
                         style={{
@@ -1409,15 +1410,15 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div style={styles.rightColumn}>
-                  <div style={styles.recommendationCard}>
+                <div className="workspace-secondary" style={styles.rightColumn}>
+                  <div className="recommendation-card" style={styles.recommendationCard}>
                     <div style={styles.cardHeader}>{t.strategyHeader}</div>
                     <div style={styles.cardBodyAutoScroll}>
                       <MarkdownBlock text={stockData.reportRecommendation} effectiveLang={effectiveLang} />
                     </div>
                   </div>
 
-                  <div style={styles.reportArea}>
+                  <div className="report-area" style={styles.reportArea}>
                     <div style={styles.reportHeader}>
                       <span>{t.technicalHeader}</span>
                       {stockData.isLLMUsed ? (
@@ -1434,7 +1435,7 @@ export default function Home() {
               </div>
             </div>
           ) : (
-            <div style={{
+            <div className="welcome-container" style={{
               ...styles.welcomeContainer,
               background: "radial-gradient(circle at center, #182030 0%, #131722 100%)",
               padding: "40px 20px",
@@ -1479,7 +1480,7 @@ export default function Home() {
                 }
               `}</style>
               
-              <div style={styles.welcomeHero}>
+              <div className="welcome-hero" style={styles.welcomeHero}>
                 <div style={{
                   position: "relative",
                   width: "80px",
@@ -1542,7 +1543,7 @@ export default function Home() {
               </div>
 
               {/* Bento-style Features Grid */}
-              <div style={styles.welcomeFeatures}>
+              <div className="welcome-features" style={styles.welcomeFeatures}>
                 <div className="feature-card" style={styles.featureCard}>
                   <div style={styles.featureIcon}>🔬</div>
                   <h3 style={styles.featureTitle}>
@@ -1714,7 +1715,7 @@ export default function Home() {
               </div>
 
               {/* Quick Tickers Experiencing */}
-              <div style={styles.welcomeQuickStart}>
+              <div className="welcome-quick-start" style={styles.welcomeQuickStart}>
                 <h4 style={styles.quickStartTitle}>
                   {effectiveLang === "zh-CN" && "🚀 一键快捷体验特色股票"}
                   {effectiveLang === "zh-TW" && "🚀 一鍵快捷體驗特色股票"}
@@ -1743,7 +1744,7 @@ export default function Home() {
       </div>
 
       {/* 4. APIMax.io Bottom Banner Ad - tri-language - Always Constant */}
-      <div style={{
+      <div className="apimax-footer" style={{
         background: "linear-gradient(90deg, rgba(10, 14, 26, 0.95) 0%, rgba(20, 36, 78, 0.95) 40%, rgba(32, 20, 78, 0.95) 70%, rgba(10, 14, 26, 0.95) 100%)",
         borderTop: "1px solid rgba(41, 98, 255, 0.4)",
         padding: "10px 24px",
@@ -1759,7 +1760,7 @@ export default function Home() {
         transition: "all 0.3s ease",
       }}>
         <Zap size={15} style={{ color: "#fbbf24", fill: "#fbbf24", filter: "drop-shadow(0 0 4px #fbbf24)", flexShrink: 0 }} />
-        <span style={{ letterSpacing: "0.3px", flexGrow: 1, textAlign: "center" }}>
+        <span className="apimax-footer-copy" style={{ letterSpacing: "0.3px", flexGrow: 1, textAlign: "center" }}>
           {effectiveLang === "en" && (
             <>
               No API Key yet? Get all-in-one API access at{" "}
@@ -1807,7 +1808,7 @@ export default function Home() {
           href="https://apimax.io"
           target="_blank"
           rel="noopener noreferrer"
-          className="quick-badge-btn"
+          className="quick-badge-btn apimax-footer-cta"
           style={{
             backgroundColor: "#2962ff",
             color: "#fff",

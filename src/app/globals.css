@@ -75,3 +75,260 @@ button {
 .down-bg {
   background-color: var(--color-down-bg) !important;
 }
+
+/* The dashboard uses inline component styles; these classes provide the
+   breakpoint-specific layout contract without changing its desktop theme. */
+@media (max-width: 1400px) {
+  .dashboard-top {
+    align-items: stretch !important;
+  }
+
+  .stats-grid {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+    gap: 0 !important;
+    padding: 12px !important;
+  }
+
+  .stat-item {
+    min-width: 0;
+    padding: 8px 12px;
+  }
+
+  .stat-item-score {
+    grid-column: 1 / -1;
+    border-bottom: 1px solid var(--border-color);
+    padding-top: 0;
+    padding-bottom: 12px;
+  }
+
+  .stat-divider {
+    display: none !important;
+  }
+}
+
+@media (max-width: 1024px) {
+  .app-sidebar {
+    width: 180px !important;
+    flex: 0 0 180px;
+  }
+
+  .workspace-grid {
+    display: flex !important;
+    flex-direction: column;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  .workspace-primary,
+  .workspace-secondary {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  .workspace-primary {
+    border-right: 0 !important;
+  }
+
+  .summary-card,
+  .recommendation-card {
+    max-height: none !important;
+  }
+
+  .summary-card > div:last-child,
+  .recommendation-card > div:last-child,
+  .report-area > div:last-child {
+    overflow-y: visible !important;
+  }
+
+  .report-area {
+    overflow: visible !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-shell {
+    height: 100dvh !important;
+    min-height: 100dvh;
+  }
+
+  .app-header {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto;
+    height: auto !important;
+    min-height: 96px;
+    padding: 8px 10px !important;
+    gap: 8px 10px;
+  }
+
+  .app-brand {
+    min-width: 0;
+  }
+
+  .app-logo-text {
+    min-width: 0;
+    font-size: 14px !important;
+    white-space: nowrap;
+  }
+
+  .app-logo-accent,
+  .app-language,
+  .app-settings-label {
+    display: none !important;
+  }
+
+  .app-search {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100% !important;
+    min-width: 0;
+  }
+
+  .app-header-actions {
+    gap: 4px !important;
+  }
+
+  .app-settings,
+  .app-refresh {
+    width: 32px;
+    height: 32px;
+    padding: 0 !important;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .app-settings svg {
+    margin-right: 0 !important;
+  }
+
+  .mock-warning {
+    padding: 7px 10px !important;
+    font-size: 11px !important;
+    line-height: 1.35;
+    gap: 8px;
+  }
+
+  .app-body {
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .app-sidebar {
+    width: 100% !important;
+    flex: 0 0 auto;
+    height: 64px;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .app-sidebar-header {
+    display: none !important;
+  }
+
+  .app-watchlist {
+    display: flex;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+  }
+
+  .app-watch-item {
+    min-width: 118px;
+    height: 63px;
+    padding: 8px 10px !important;
+    border-right: 1px solid var(--panel-bg);
+    border-bottom: 0 !important;
+  }
+
+  .app-main {
+    width: 100%;
+    min-height: 0;
+  }
+
+  .dashboard-top {
+    padding: 12px !important;
+    gap: 12px !important;
+  }
+
+  .dashboard-top h1 {
+    font-size: 21px !important;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 10px 6px !important;
+  }
+
+  .stat-item {
+    padding: 8px 4px;
+    text-align: center;
+  }
+
+  .stat-item > span:first-child {
+    font-size: 10px !important;
+    line-height: 1.25;
+  }
+
+  .stat-item > span:last-child {
+    font-size: 15px !important;
+  }
+
+  .chart-selector {
+    flex-wrap: wrap;
+  }
+
+  .chart-area {
+    min-height: 430px !important;
+  }
+
+  .welcome-container {
+    align-items: stretch !important;
+    justify-content: flex-start !important;
+    padding: 24px 14px !important;
+  }
+
+  .welcome-hero {
+    width: 100%;
+    margin-bottom: 20px !important;
+  }
+
+  .welcome-hero h1 {
+    font-size: 25px !important;
+    line-height: 1.25;
+  }
+
+  .welcome-features {
+    grid-template-columns: minmax(0, 1fr) !important;
+    margin-bottom: 20px !important;
+  }
+
+  .guide-step-card {
+    padding: 16px !important;
+    margin-bottom: 20px !important;
+  }
+
+  .welcome-quick-start {
+    width: 100%;
+  }
+
+  .apimax-footer {
+    display: none !important;
+  }
+}
+
+@media (max-width: 420px) {
+  .stats-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .stat-item-score {
+    grid-column: auto;
+  }
+
+  .stat-item + .stat-item {
+    border-top: 1px solid var(--border-color);
+  }
+}
