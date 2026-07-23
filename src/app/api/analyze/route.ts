@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import YahooFinance from "yahoo-finance2";
-import { Candle, IchimokuResult, calculateEMA, calculateBOLL, calculateMACD, calculateKDJ, calculateRSI, calculateATR, calculateIchimoku } from "@/lib/analysis/indicators";
-import { analyzePriceVolume, VolumeAnalysisResult } from "@/lib/analysis/volumeForce";
-import { calculateSupportResistance, SupportResistanceResult } from "@/lib/analysis/supportResistance";
-import { analyzeWaveTheory, WaveAnalysisResult } from "@/lib/analysis/waveTheory";
-import { analyzeChanLun, ChanLunResult } from "@/lib/analysis/chanlun";
-import { analyzePatterns, PatternResult } from "@/lib/analysis/patterns";
-import { calculateStockScore, ScoreDetail } from "@/lib/analysis/scoring";
-import { generateFallbackReport } from "@/lib/analysis/fallbackReport";
+import { Candle, IchimokuResult } from "@/lib/analysis/indicators";
+import { VolumeAnalysisResult } from "@/lib/analysis/volumeForce";
+import { SupportResistanceResult } from "@/lib/analysis/supportResistance";
+import { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
+import { ChanLunResult } from "@/lib/analysis/chanlun";
+import { PatternResult } from "@/lib/analysis/patterns";
+import { EntryAssessment, ScoreDetail, toLegacyScoreDetail } from "@/lib/analysis/scoring";
+import { StructuredReport } from "@/lib/analysis/fallbackReport";
 import { generateLLMReport, LLMConfig } from "@/lib/analysis/llmProxy";
 import { generateMockCandles } from "@/lib/analysis/mockData";
 import { getMarketCurrencySymbol, normalizeManualSymbolInput, replaceDollarPriceSymbols } from "@/lib/analysis/market";
@@ -27,6 +27,11 @@ import {
   getEastMoneySecidCandidates,
 } from "@/lib/analysis/symbolConversion";
 import { buildWeeklyCandles as buildWeeklyCandlesFromDaily } from "@/lib/analysis/weeklyCandles";
+import { runAnalysisEngine } from "@/lib/analysis/analysisEngine";
+import { EvidenceSnapshot } from "@/lib/analysis/evidence";
+import { StrategyAdvice } from "@/lib/analysis/strategyAdvice";
+import { validateAiScoreReview, ValidatedAiScoreReview } from "@/lib/analysis/aiScoreReview";
+import { buildEvidenceAnalystPrompt } from "@/lib/analysis/analysisPrompt";
 
 const yahooFinance = new YahooFinance();
 const EAST_MONEY_KLINE_HOSTS = [
@@ -87,6 +92,10 @@ interface CacheEntry {
     companyName: string;
     companyNameEn?: string;
     volumeAnalysis: VolumeAnalysisResult;
+    snapshot: EvidenceSnapshot;
+    entryAssessment: EntryAssessment;
+    strategyAdvice: StrategyAdvice;
+    localReport: StructuredReport;
     isMock?: boolean;
     dataSource?: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'tonghuashun' | 'kabutan' | 'tencent' | 'twelve-data' | 'fmp' | 'provider' | 'mock';
   };
@@ -473,7 +482,6 @@ export async function POST(request: Request) {
         let weeklyCandles: Candle[] = [];
         let companyName = cleanSymbol;
         let companyNameEn = "";
-        let currentPrice = 0;
         let changePercent = 0;
         let isMock = false;
         let usedRealtimeQuote = false;
@@ -520,7 +528,6 @@ export async function POST(request: Request) {
           const nameData = nameResult.status === "fulfilled" ? nameResult.value : null;
           companyName = nameData?.data?.f58 || companyNameEn || cleanSymbol;
 
-          currentPrice = quote?.regularMarketPrice || 0;
           changePercent = quote?.regularMarketChangePercent || 0;
 
           // 2. Historical candles (fetched in parallel above)
@@ -570,7 +577,6 @@ export async function POST(request: Request) {
             weeklyCandles = chartData.weeklyCandles;
             companyName = chartData.companyName || cleanSymbol;
             companyNameEn = chartData.companyNameEn || "";
-            currentPrice = chartData.price;
             changePercent = chartData.changePercent;
             isMock = false;
             dataSource = "yahoo-chart";
@@ -588,7 +594,6 @@ export async function POST(request: Request) {
               weeklyCandles = kabutanData.weeklyCandles;
               companyName = kabutanData.companyName || cleanSymbol;
               companyNameEn = "";
-              currentPrice = kabutanData.price;
               changePercent = kabutanData.changePercent;
               isMock = false;
               dataSource = "kabutan";
@@ -622,7 +627,6 @@ export async function POST(request: Request) {
                   const lastCandle = dailyCandles[dailyCandles.length - 1];
                   const prevCandle = dailyCandles[dailyCandles.length - 2] || lastCandle;
 
-                  currentPrice = lastCandle.close;
                   changePercent = ((lastCandle.close - prevCandle.close) / prevCandle.close) * 100;
 
                   // Fetch company name from EastMoney Web API
@@ -664,7 +668,6 @@ export async function POST(request: Request) {
                 weeklyCandles = tonghuashunData.weeklyCandles;
                 companyName = tonghuashunData.companyName || cleanSymbol;
                 companyNameEn = "";
-                currentPrice = tonghuashunData.price;
                 changePercent = tonghuashunData.changePercent;
                 isMock = false;
                 dataSource = "tonghuashun";
@@ -685,7 +688,6 @@ export async function POST(request: Request) {
                 weeklyCandles = providerData.weeklyCandles;
                 companyName = providerData.companyName || cleanSymbol;
                 companyNameEn = "";
-                currentPrice = providerData.price;
                 changePercent = providerData.changePercent;
                 isMock = false;
                 dataSource = providerData.source;
@@ -706,7 +708,6 @@ export async function POST(request: Request) {
                 weeklyCandles = tencentData.weeklyCandles;
                 companyName = tencentData.companyName || cleanSymbol;
                 companyNameEn = "";
-                currentPrice = tencentData.price;
                 changePercent = tencentData.changePercent;
                 isMock = false;
                 dataSource = "tencent";
@@ -728,7 +729,6 @@ export async function POST(request: Request) {
             dailyCandles = mockDaily.candles;
             weeklyCandles = mockWeekly.candles;
             companyName = mockDaily.companyName;
-            currentPrice = mockDaily.price;
             changePercent = mockDaily.changePercent;
           }
         }
@@ -736,7 +736,6 @@ export async function POST(request: Request) {
         if (!isMock && isAShareRequest) {
           const realtimeQuote = await fetchAShareRealtimeQuote(cleanSymbol);
           if (realtimeQuote) {
-            currentPrice = realtimeQuote.price;
             changePercent = realtimeQuote.changePercent;
             dailyCandles = mergeRealtimeQuoteIntoDailyCandles(dailyCandles, realtimeQuote);
             if (realtimeQuote.name && companyName === cleanSymbol) {
@@ -747,102 +746,53 @@ export async function POST(request: Request) {
           }
         }
 
-        const latestPrice = currentPrice || dailyCandles[dailyCandles.length - 1].close;
         companyName = await improveCompanyName(cleanSymbol, companyName, companyNameEn, isMock);
 
-        // 3. Run Technical Calculations
-        // Daily Indicators
-        const dailyEma5 = calculateEMA(dailyCandles, 5);
-        const dailyEma10 = calculateEMA(dailyCandles, 10);
-        const dailyEma20 = calculateEMA(dailyCandles, 20);
-        const dailyEma60 = calculateEMA(dailyCandles, 60);
-      
-        const dailyBoll = calculateBOLL(dailyCandles, 20, 2);
-        const dailyMacd = calculateMACD(dailyCandles, 12, 26, 9);
-        const dailyKdj = calculateKDJ(dailyCandles, 9, 3, 3);
-        const dailyRsi = calculateRSI(dailyCandles, 14);
-        const dailyAtr = calculateATR(dailyCandles, 14);
-        const dailyIchimoku = calculateIchimoku(dailyCandles);
-
-        // Weekly Indicators (for resonance)
-        const weeklyEma5 = calculateEMA(weeklyCandles, 5);
-        const weeklyEma10 = calculateEMA(weeklyCandles, 10);
-        const weeklyEma20 = calculateEMA(weeklyCandles, 20);
-        const weeklyEma60 = calculateEMA(weeklyCandles, 60);
-        const weeklyMacd = calculateMACD(weeklyCandles, 12, 26, 9);
-
-        // Detailed Engines
-        const dailyVolumeAnalysis = analyzePriceVolume(dailyCandles);
-        const dailyWaveResult = analyzeWaveTheory(dailyCandles);
-        const dailyChanLunResult = analyzeChanLun(dailyCandles);
-
-        const latestIdx = dailyCandles.length - 1;
-        const dailyPatterns = analyzePatterns(
+        // 3. Run the pure analysis engine from the synchronized candle snapshot.
+        const engine = runAnalysisEngine({
+          symbol: cleanSymbol,
           dailyCandles,
-          dailyMacd.dif,
-          dailyRsi,
-          dailyKdj.k
-        );
-
-        const dailySupportResistance = calculateSupportResistance(
-          dailyCandles,
-          latestPrice,
-          dailyEma20[latestIdx],
-          dailyEma60[latestIdx],
-          dailyBoll.upper[latestIdx],
-          dailyBoll.lower[latestIdx]
-        );
-
-        const stockScore = calculateStockScore(
-          dailyCandles,
-          { ema5: dailyEma5, ema10: dailyEma10, ema20: dailyEma20, ema60: dailyEma60 },
-          dailyMacd,
-          dailyKdj,
-          dailyRsi,
-          dailyAtr,
-          dailyIchimoku,
-          dailyVolumeAnalysis,
-          dailyPatterns,
-          dailyWaveResult,
-          dailySupportResistance,
-          dailyChanLunResult,
           weeklyCandles,
-          { ema5: weeklyEma5, ema10: weeklyEma10, ema20: weeklyEma20, ema60: weeklyEma60 },
-          weeklyMacd
-        );
+          asOf: new Date(now).toISOString(),
+          language: effectiveLang,
+        });
 
         // Save to tech data structure
         const freshData: CacheEntry["data"] = {
-          dailyCandles,
-          weeklyCandles,
-          price: latestPrice,
+          dailyCandles: engine.dailyCandles,
+          weeklyCandles: engine.weeklyCandles,
+          price: engine.snapshot.price,
           changePercent,
           companyName,
           companyNameEn,
           indicators: {
-            ema5: dailyEma5,
-            ema10: dailyEma10,
-            ema20: dailyEma20,
-            ema60: dailyEma60,
-            bollUpper: dailyBoll.upper,
-            bollMiddle: dailyBoll.middle,
-            bollLower: dailyBoll.lower,
-            macdDif: dailyMacd.dif,
-            macdDea: dailyMacd.dea,
-            macdHist: dailyMacd.hist,
-            kdjK: dailyKdj.k,
-            kdjD: dailyKdj.d,
-            kdjJ: dailyKdj.j,
-            rsi: dailyRsi,
-            atr: dailyAtr,
-            ichimoku: dailyIchimoku,
+            ema5: engine.daily.ema5,
+            ema10: engine.daily.ema10,
+            ema20: engine.daily.ema20,
+            ema60: engine.daily.ema60,
+            bollUpper: engine.daily.boll.upper,
+            bollMiddle: engine.daily.boll.middle,
+            bollLower: engine.daily.boll.lower,
+            macdDif: engine.daily.macd.dif,
+            macdDea: engine.daily.macd.dea,
+            macdHist: engine.daily.macd.hist,
+            kdjK: engine.daily.kdj.k,
+            kdjD: engine.daily.kdj.d,
+            kdjJ: engine.daily.kdj.j,
+            rsi: engine.daily.rsi,
+            atr: engine.daily.atr,
+            ichimoku: engine.daily.ichimoku,
           },
-          patterns: dailyPatterns,
-          wave: dailyWaveResult,
-          chanlun: dailyChanLunResult,
-          sr: dailySupportResistance,
-          score: stockScore,
-          volumeAnalysis: dailyVolumeAnalysis,
+          patterns: engine.patterns,
+          wave: engine.wave,
+          chanlun: engine.chanlun,
+          sr: engine.supportResistance,
+          score: engine.legacyScore,
+          volumeAnalysis: engine.daily.volume,
+          snapshot: engine.snapshot,
+          entryAssessment: engine.entryAssessment,
+          strategyAdvice: engine.strategyAdvice,
+          localReport: engine.localReport,
           isMock,
           dataSource,
         };
@@ -873,21 +823,11 @@ export async function POST(request: Request) {
     let reportRecommendation = "";
     let reportTechnical = "";
     let isLLMUsed = false;
+    let finalAssessment: EntryAssessment = techData.entryAssessment;
+    let aiScoreReview: ValidatedAiScoreReview | undefined;
 
     if (techData.isMock && useFallback) {
-      const fallback = generateFallbackReport(
-        `${techData.companyName} (${cleanSymbol})`,
-        techData.price,
-        techData.changePercent,
-        techData.score,
-        techData.volumeAnalysis,
-        techData.patterns,
-        techData.wave,
-        techData.chanlun,
-        techData.sr,
-        effectiveLang,
-        buildFallbackExtras(techData)
-      );
+      const fallback = techData.localReport;
       const mockPrefix = effectiveLang === "en"
         ? "⚠️ **Live market data is unavailable; this is an offline demo report based on simulated candles. LLM analysis was skipped to avoid analyzing mock data.**\n\n"
         : effectiveLang === "ja"
@@ -900,10 +840,15 @@ export async function POST(request: Request) {
       reportTechnical = fallback.technicalAnalysis;
     } else if (llmConfig && llmConfig.apiKey) {
       try {
-        const prompt = replaceDollarPriceSymbols(
-          buildAnalystPrompt(cleanSymbol, techData, effectiveLang, currencySymbol),
-          currencySymbol
-        );
+        const prompt = buildEvidenceAnalystPrompt({
+          snapshot: techData.snapshot,
+          entryAssessment: techData.entryAssessment,
+          strategyAdvice: techData.strategyAdvice,
+          dailyCandles: techData.dailyCandles,
+          weeklyCandles: techData.weeklyCandles,
+          language: effectiveLang,
+          currencySymbol,
+        });
         const reportText = await generateLLMReport(prompt, llmConfig);
         
         // Clean markdown blocks if LLM accidentally outputted them
@@ -920,30 +865,31 @@ export async function POST(request: Request) {
 
         const parsed = JSON.parse(cleanedText) as Partial<{
           overview: string;
-          recommendation: string;
           technicalAnalysis: string;
+          strategyCommentary: string;
+          scoreReview: unknown;
         }>;
-        reportOverview = parsed.overview || "";
-        reportRecommendation = parsed.recommendation || "";
-        reportTechnical = parsed.technicalAnalysis || "";
+        aiScoreReview = validateAiScoreReview(
+          parsed.scoreReview,
+          techData.snapshot.items.map((item) => item.id),
+          techData.entryAssessment.ruleScore,
+          techData.entryAssessment.hardCap
+        );
+        finalAssessment = {
+          ...techData.entryAssessment,
+          aiAdjustment: aiScoreReview.appliedAdjustment,
+          finalScore: aiScoreReview.finalScore,
+        };
+        const verifiedScoreBlock = `### ${effectiveLang === "en" ? "Verified entry score" : "经验证的入场评分"}\n- Rule: ${finalAssessment.ruleScore.toFixed(1)}/5\n- AI: ${finalAssessment.aiAdjustment >= 0 ? "+" : ""}${finalAssessment.aiAdjustment.toFixed(1)}\n- Final: ${finalAssessment.finalScore.toFixed(1)}/5\n`;
+        reportOverview = `${verifiedScoreBlock}\n${parsed.overview || techData.localReport.overview}`;
+        reportRecommendation = `${techData.localReport.recommendation}${parsed.strategyCommentary ? `\n\n### AI\n${parsed.strategyCommentary}` : ""}`;
+        reportTechnical = `${techData.localReport.technicalAnalysis}${parsed.technicalAnalysis ? `\n\n### AI\n${parsed.technicalAnalysis}` : ""}`;
         isLLMUsed = true;
       } catch (err: unknown) {
         console.error("LLM Generation or parsing failed:", err);
         // Only fallback to local engine if useFallback is explicitly enabled
         if (useFallback) {
-          const fallback = generateFallbackReport(
-            `${techData.companyName} (${cleanSymbol})`,
-            techData.price,
-            techData.changePercent,
-            techData.score,
-            techData.volumeAnalysis,
-            techData.patterns,
-            techData.wave,
-            techData.chanlun,
-            techData.sr,
-            effectiveLang,
-            buildFallbackExtras(techData)
-          );
+          const fallback = techData.localReport;
           let errorPrefix = "⚠️ **大模型分析失败，已自动使用本地规则引擎兜底生成。**\n";
           if (effectiveLang === "zh-TW") errorPrefix = "⚠️ **大模型分析失敗，已自動使用本地規則引擎兜底生成。**\n";
           else if (effectiveLang === "en") errorPrefix = "⚠️ **AI analysis failed, fallback report generated by local engine.**\n";
@@ -961,19 +907,7 @@ export async function POST(request: Request) {
       }
     } else if (useFallback) {
       // No API key but fallback is enabled
-      const fallback = generateFallbackReport(
-        `${techData.companyName} (${cleanSymbol})`,
-        techData.price,
-        techData.changePercent,
-        techData.score,
-        techData.volumeAnalysis,
-        techData.patterns,
-        techData.wave,
-        techData.chanlun,
-        techData.sr,
-        effectiveLang,
-        buildFallbackExtras(techData)
-      );
+      const fallback = techData.localReport;
       reportOverview = fallback.overview;
       reportRecommendation = fallback.recommendation;
       reportTechnical = fallback.technicalAnalysis;
@@ -990,6 +924,7 @@ export async function POST(request: Request) {
     reportOverview = replaceDollarPriceSymbols(reportOverview, currencySymbol);
     reportRecommendation = replaceDollarPriceSymbols(reportRecommendation, currencySymbol);
     reportTechnical = replaceDollarPriceSymbols(reportTechnical, currencySymbol);
+    const responseScore = toLegacyScoreDetail(finalAssessment);
 
     return NextResponse.json({
       symbol: cleanSymbol,
@@ -997,7 +932,11 @@ export async function POST(request: Request) {
       companyNameEn: techData.companyNameEn,
       price: techData.price,
       changePercent: techData.changePercent,
-      score: techData.score,
+      score: responseScore,
+      entryAssessment: finalAssessment,
+      strategyAdvice: techData.strategyAdvice,
+      dataQuality: techData.snapshot.dataQuality,
+      aiScoreReview,
       dailyCandles: techData.dailyCandles,
       weeklyCandles: techData.weeklyCandles,
       indicators: techData.indicators,

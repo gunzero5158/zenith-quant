@@ -693,12 +693,13 @@ export function analyzePatterns(
   candles: Candle[],
   dif: number[],
   rsi: number[],
-  k: number[]
+  k: number[],
+  volume: PatternVolumeContext = {}
 ): PatternResult {
   const { counts: tdSequential, latestSignal: tdSignal } = calculateTDSequential(candles);
   const fibonacci = calculateSwingFibonacci(candles);
   const fibonacciLevels = fibonacci?.levels ?? [];
-  const patternDetection = detectPatterns(candles);
+  const patternDetection = detectPatterns(candles, volume);
   const macdDivergence = detectDivergence(candles, dif, 30);
   const rsiDivergence = detectDivergence(candles, rsi, 30);
   const kdjDivergence = detectDivergence(candles, k, 30);
