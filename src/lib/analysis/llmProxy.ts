@@ -7,6 +7,7 @@ export interface LLMConfig {
 
 const OFFICIAL_PROVIDER_TIMEOUT_MS = 180_000;
 const MAX_UPSTREAM_ERROR_CHARS = 240;
+const ANALYSIS_SYSTEM_BOUNDARY = "You are reviewing an immutable technical-analysis evidence snapshot. Interpret the supplied facts and challenge the rule score only when cited evidence supports it. Do not recalculate indicators, invent market data, or introduce outside facts. Any score adjustment must stay within +/-0.5 and cite provided evidence IDs.";
 
 // Hostnames/IP ranges that must never be reachable through a user-supplied baseUrl.
 // This blocks SSRF against cloud metadata endpoints and internal networks.
@@ -115,6 +116,9 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
     const url = `${base}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
     const payload = {
+      systemInstruction: {
+        parts: [{ text: ANALYSIS_SYSTEM_BOUNDARY }],
+      },
       contents: [
         {
           parts: [
@@ -148,7 +152,7 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
     const payload = {
       model: sanitizeModelName(modelName, "claude-sonnet-5"),
       max_tokens: 4096,
-      system: "You are a professional Wall Street quantitative analyst specializing in TradingView stock ideas. Write extremely insightful technical analysis reports with clear headings and bullet points in the language requested by the user.",
+      system: ANALYSIS_SYSTEM_BOUNDARY,
       messages: [
         {
           role: "user",
@@ -184,7 +188,7 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
     messages: [
       {
         role: "system",
-        content: "You are a professional Wall Street quantitative analyst specializing in TradingView stock ideas. Write extremely insightful technical analysis reports with clear headings and bullet points in the language requested by the user."
+        content: ANALYSIS_SYSTEM_BOUNDARY
       },
       {
         role: "user",
