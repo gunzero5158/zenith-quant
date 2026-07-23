@@ -63,6 +63,33 @@ describe("pure analysis engine", () => {
     expect(prompt).toContain("weeklyBarComplete");
     expect(prompt).toContain(result.snapshot.items[0].id);
     expect(prompt).toContain('"hardCap"');
+    expect(prompt).toContain("Output language: Simplified Chinese");
+    expect(prompt).toContain("Do not translate or enumerate the raw evidence list");
+    expect(prompt).toContain("Omit categories that have no distinctive or actionable information");
+    expect(prompt).toContain("Never omit confirmed or recent trigger events");
+    expect(prompt).toContain("current fact or value");
+    expect(prompt).toContain("plain-language meaning");
+    expect(prompt).toContain("5-20 trading-day decision");
+
+    const languageNames = {
+      "zh-CN": "Simplified Chinese",
+      "zh-TW": "Traditional Chinese",
+      en: "English",
+      ja: "Japanese",
+    } as const;
+    for (const [language, languageName] of Object.entries(languageNames)) {
+      const localizedPrompt = buildEvidenceAnalystPrompt({
+        snapshot: result.snapshot,
+        entryAssessment: result.entryAssessment,
+        strategyAdvice: result.strategyAdvice,
+        dailyCandles: result.dailyCandles,
+        weeklyCandles: result.weeklyCandles,
+        language,
+        currencySymbol: "¥",
+      });
+      expect(localizedPrompt).toContain(`Output language: ${languageName}`);
+      expect(localizedPrompt).toContain("Write every user-visible string in that language");
+    }
   });
 
   it("normalizes and chronologically sorts Yahoo Date candles before analysis", () => {

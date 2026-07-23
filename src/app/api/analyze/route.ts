@@ -7,7 +7,7 @@ import { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
 import { ChanLunResult } from "@/lib/analysis/chanlun";
 import { PatternResult } from "@/lib/analysis/patterns";
 import { EntryAssessment, ScoreDetail, toLegacyScoreDetail } from "@/lib/analysis/scoring";
-import { StructuredReport } from "@/lib/analysis/fallbackReport";
+import { generateLocalReport } from "@/lib/analysis/fallbackReport";
 import { generateLLMReport, LLMConfig } from "@/lib/analysis/llmProxy";
 import { generateMockCandles } from "@/lib/analysis/mockData";
 import { getMarketCurrencySymbol, normalizeManualSymbolInput, replaceDollarPriceSymbols } from "@/lib/analysis/market";
@@ -32,6 +32,7 @@ import { EvidenceSnapshot } from "@/lib/analysis/evidence";
 import { StrategyAdvice } from "@/lib/analysis/strategyAdvice";
 import { validateAiScoreReview, ValidatedAiScoreReview } from "@/lib/analysis/aiScoreReview";
 import { buildEvidenceAnalystPrompt } from "@/lib/analysis/analysisPrompt";
+import { AiReportFields, composeAiReport } from "@/lib/analysis/reportComposition";
 
 const yahooFinance = new YahooFinance();
 const EAST_MONEY_KLINE_HOSTS = [
@@ -95,7 +96,6 @@ interface CacheEntry {
     snapshot: EvidenceSnapshot;
     entryAssessment: EntryAssessment;
     strategyAdvice: StrategyAdvice;
-    localReport: StructuredReport;
     isMock?: boolean;
     dataSource?: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'tonghuashun' | 'kabutan' | 'tencent' | 'twelve-data' | 'fmp' | 'provider' | 'mock';
   };
@@ -792,7 +792,6 @@ export async function POST(request: Request) {
           snapshot: engine.snapshot,
           entryAssessment: engine.entryAssessment,
           strategyAdvice: engine.strategyAdvice,
-          localReport: engine.localReport,
           isMock,
           dataSource,
         };
@@ -818,6 +817,13 @@ export async function POST(request: Request) {
       }
     }
 
+    // Localized prose is request-specific even when the technical snapshot came from cache.
+    const localReport = generateLocalReport({
+      snapshot: techData.snapshot,
+      entryAssessment: techData.entryAssessment,
+      strategyAdvice: techData.strategyAdvice,
+    }, effectiveLang);
+
     // 4. Generate Report (Either LLM or Fallback)
     let reportOverview = "";
     let reportRecommendation = "";
@@ -827,7 +833,7 @@ export async function POST(request: Request) {
     let aiScoreReview: ValidatedAiScoreReview | undefined;
 
     if (techData.isMock && useFallback) {
-      const fallback = techData.localReport;
+      const fallback = localReport;
       const mockPrefix = effectiveLang === "en"
         ? "⚠️ **Live market data is unavailable; this is an offline demo report based on simulated candles. LLM analysis was skipped to avoid analyzing mock data.**\n\n"
         : effectiveLang === "ja"
@@ -863,12 +869,9 @@ export async function POST(request: Request) {
         }
         cleanedText = cleanedText.trim();
 
-        const parsed = JSON.parse(cleanedText) as Partial<{
-          overview: string;
-          technicalAnalysis: string;
-          strategyCommentary: string;
+        const parsed = JSON.parse(cleanedText) as AiReportFields & {
           scoreReview: unknown;
-        }>;
+        };
         aiScoreReview = validateAiScoreReview(
           parsed.scoreReview,
           techData.snapshot.items.map((item) => item.id),
@@ -880,16 +883,16 @@ export async function POST(request: Request) {
           aiAdjustment: aiScoreReview.appliedAdjustment,
           finalScore: aiScoreReview.finalScore,
         };
-        const verifiedScoreBlock = `### ${effectiveLang === "en" ? "Verified entry score" : "经验证的入场评分"}\n- Rule: ${finalAssessment.ruleScore.toFixed(1)}/5\n- AI: ${finalAssessment.aiAdjustment >= 0 ? "+" : ""}${finalAssessment.aiAdjustment.toFixed(1)}\n- Final: ${finalAssessment.finalScore.toFixed(1)}/5\n`;
-        reportOverview = `${verifiedScoreBlock}\n${parsed.overview || techData.localReport.overview}`;
-        reportRecommendation = `${techData.localReport.recommendation}${parsed.strategyCommentary ? `\n\n### AI\n${parsed.strategyCommentary}` : ""}`;
-        reportTechnical = `${techData.localReport.technicalAnalysis}${parsed.technicalAnalysis ? `\n\n### AI\n${parsed.technicalAnalysis}` : ""}`;
+        const composedReport = composeAiReport(parsed, localReport, effectiveLang);
+        reportOverview = composedReport.overview;
+        reportRecommendation = composedReport.recommendation;
+        reportTechnical = composedReport.technicalAnalysis;
         isLLMUsed = true;
       } catch (err: unknown) {
         console.error("LLM Generation or parsing failed:", err);
         // Only fallback to local engine if useFallback is explicitly enabled
         if (useFallback) {
-          const fallback = techData.localReport;
+          const fallback = localReport;
           let errorPrefix = "⚠️ **大模型分析失败，已自动使用本地规则引擎兜底生成。**\n";
           if (effectiveLang === "zh-TW") errorPrefix = "⚠️ **大模型分析失敗，已自動使用本地規則引擎兜底生成。**\n";
           else if (effectiveLang === "en") errorPrefix = "⚠️ **AI analysis failed, fallback report generated by local engine.**\n";
@@ -907,7 +910,7 @@ export async function POST(request: Request) {
       }
     } else if (useFallback) {
       // No API key but fallback is enabled
-      const fallback = techData.localReport;
+      const fallback = localReport;
       reportOverview = fallback.overview;
       reportRecommendation = fallback.recommendation;
       reportTechnical = fallback.technicalAnalysis;

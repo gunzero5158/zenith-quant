@@ -35,4 +35,18 @@ describe("evidence-based local report", () => {
       expect(report.technicalAnalysis).toContain(section);
     }
   });
+
+  it("keeps score composition out of the report overview", () => {
+    const report = generateLocalReport(reportFixture(), "zh-CN");
+    expect(report.overview).not.toContain("规则基础分");
+    expect(report.overview).not.toContain("AI +");
+    expect(report.overview).not.toContain("最终综合分");
+  });
+
+  it("localizes the fallback overview price line", () => {
+    expect(generateLocalReport(reportFixture(), "zh-CN").overview).toContain("当前价格 100.00");
+    expect(generateLocalReport(reportFixture(), "zh-TW").overview).toContain("目前價格 100.00");
+    expect(generateLocalReport(reportFixture(), "en").overview).toContain("Current price 100.00");
+    expect(generateLocalReport(reportFixture(), "ja").overview).toContain("現在値 100.00");
+  });
 });

@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  isAnalysisCacheLanguageCompatible,
   isAShareAnalysisCacheReusable,
   isAShareSymbol,
   type AShareAnalysisCacheCandidate,
 } from "../analysisCache";
+
+describe("analysis report cache language", () => {
+  it("reuses reports only when the generated and requested languages match", () => {
+    expect(isAnalysisCacheLanguageCompatible("zh-CN", "zh-CN")).toBe(true);
+    expect(isAnalysisCacheLanguageCompatible("zh-CN", "en")).toBe(false);
+    expect(isAnalysisCacheLanguageCompatible(undefined, "zh-CN")).toBe(false);
+  });
+});
 
 const beijingTime = (value: string): number => Date.parse(`${value}+08:00`);
 

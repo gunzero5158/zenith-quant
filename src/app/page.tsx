@@ -14,7 +14,7 @@ import { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
 import { ChanLunResult } from "@/lib/analysis/chanlun";
 import { SupportResistanceResult } from "@/lib/analysis/supportResistance";
 import { VolumeAnalysisResult } from "@/lib/analysis/volumeForce";
-import { isAShareAnalysisCacheReusable, isAShareSymbol } from "@/lib/analysis/analysisCache";
+import { isAnalysisCacheLanguageCompatible, isAShareAnalysisCacheReusable, isAShareSymbol } from "@/lib/analysis/analysisCache";
 import { DataQuality, ScenarioStatus } from "@/lib/analysis/evidence";
 import { buildEntryScorePresentation } from "@/lib/analysis/presentation";
 
@@ -78,6 +78,7 @@ interface StockAnalysisData {
 
 interface AnalysisCacheEntry {
   timestamp: number;
+  language: EffectiveLanguage;
   data: StockAnalysisData;
 }
 
@@ -389,6 +390,15 @@ const removeAnalysisCache = (symbol: string) => {
   }
 };
 
+const resolveEffectiveLanguage = (language: AppLanguage): EffectiveLanguage => {
+  if (language !== "auto") return language;
+  const navLang = typeof navigator !== "undefined" ? navigator.language.toLowerCase() : "zh-cn";
+  if (navLang.includes("zh-tw") || navLang.includes("zh-hk") || navLang.includes("zh-mo")) return "zh-TW";
+  if (navLang.includes("zh")) return "zh-CN";
+  if (navLang.includes("ja")) return "ja";
+  return "en";
+};
+
 const isNonTradingHours = (symbol: string): boolean => {
   const now = new Date();
   const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
@@ -579,19 +589,7 @@ export default function Home() {
 
   const getEffectiveLang = (): EffectiveLanguage => {
     if (!mounted) return "zh-CN"; // SSR and first hydration render must be identical to avoid mismatch
-    if (appLanguage !== "auto") return appLanguage;
-    if (typeof navigator === "undefined") return "zh-CN";
-    const navLang = navigator.language.toLowerCase();
-    if (navLang.includes("zh-tw") || navLang.includes("zh-hk") || navLang.includes("zh-mo")) {
-      return "zh-TW";
-    }
-    if (navLang.includes("zh")) {
-      return "zh-CN";
-    }
-    if (navLang.includes("ja")) {
-      return "ja";
-    }
-    return "en";
+    return resolveEffectiveLanguage(appLanguage);
   };
 
   const effectiveLang = getEffectiveLang();
@@ -739,10 +737,15 @@ export default function Home() {
     const isForce = forceFetch === true || (forceFetch && typeof forceFetch === "object" && "nativeEvent" in forceFetch);
     const requestedSymbol = activeSymbol;
     const config = overrideConfig ?? llmConfig;
+    const requestLang = resolveEffectiveLanguage(appLanguage);
     currentRequestSymbolRef.current = requestedSymbol;
 
     if (!isForce) {
-      const cachedObj = readAnalysisCache(requestedSymbol);
+      let cachedObj = readAnalysisCache(requestedSymbol);
+      if (cachedObj && !isAnalysisCacheLanguageCompatible(cachedObj.language, requestLang)) {
+        removeAnalysisCache(requestedSymbol);
+        cachedObj = null;
+      }
       if (cachedObj) {
         try {
           const cachedData = cachedObj.data;
@@ -823,19 +826,6 @@ export default function Home() {
 
     setLoading(true);
 
-    let requestLang: EffectiveLanguage = appLanguage === "auto" ? "zh-CN" : appLanguage;
-    if (appLanguage === "auto") {
-      const navLang = typeof navigator !== "undefined" ? navigator.language.toLowerCase() : "zh-cn";
-      if (navLang.includes("zh-tw") || navLang.includes("zh-hk") || navLang.includes("zh-mo")) {
-        requestLang = "zh-TW";
-      } else if (navLang.includes("zh")) {
-        requestLang = "zh-CN";
-      } else if (navLang.includes("ja")) {
-        requestLang = "ja";
-      } else {
-        requestLang = "en";
-      }
-    }
     const requestT = TRANSLATIONS[requestLang];
 
     try {
@@ -874,6 +864,7 @@ export default function Home() {
       if (!data.isMock) {
         writeAnalysisCache(resolvedSymbol, {
           timestamp: Date.now(),
+          language: requestLang,
           data
         });
       }
@@ -899,6 +890,15 @@ export default function Home() {
   useEffect(() => {
     fetchActiveStockDataRef.current = fetchActiveStockData;
   }, [fetchActiveStockData]);
+
+  const previousLanguageSelectionRef = useRef<AppLanguage>(appLanguage);
+  useEffect(() => {
+    if (previousLanguageSelectionRef.current === appLanguage) return;
+    previousLanguageSelectionRef.current = appLanguage;
+    if (!activeSymbol) return;
+    removeAnalysisCache(activeSymbol);
+    queueMicrotask(() => fetchActiveStockDataRef.current(true));
+  }, [activeSymbol, appLanguage]);
 
   // Main fetch call for active stock data
   useEffect(() => {
