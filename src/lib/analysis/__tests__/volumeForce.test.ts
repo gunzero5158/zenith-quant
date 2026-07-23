@@ -60,6 +60,31 @@ function generateCandles(
   });
 }
 
+describe('structured volume evidence', () => {
+  it('reports bearish expansion against the prior 20 completed bars', () => {
+    const base = generateCandles(25, { startClose: 100, closeStep: 0, volume: 1000, highSpread: 1, lowSpread: 1 });
+    const selloff = makeCandle({ open: 100, high: 101, low: 89, close: 90, volume: 3000 });
+    const result = analyzePriceVolume([...base, selloff]);
+
+    expect(result).toMatchObject({
+      relativeVolume: 3,
+      volumeDirection: 'bearish',
+      cmfTrend: 'falling',
+      obvTrend: 'falling',
+      isLowVolumePullback: false,
+    });
+  });
+
+  it('identifies a low-volume pullback after a rising sequence', () => {
+    const trend = generateCandles(25, { startClose: 90, closeStep: 1, volume: 1200 });
+    const pullback = makeCandle({ open: 114, high: 114.5, low: 112, close: 113, volume: 500 });
+    expect(analyzePriceVolume([...trend, pullback])).toMatchObject({
+      volumeDirection: 'neutral',
+      isLowVolumePullback: true,
+    });
+  });
+});
+
 // ===========================================================================
 // calculateOBV
 // ===========================================================================

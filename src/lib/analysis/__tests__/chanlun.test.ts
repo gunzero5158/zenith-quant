@@ -216,6 +216,21 @@ describe('chanlun', () => {
     });
   });
 
+  describe('structured Chanlun evidence', () => {
+    it('exposes a forming bottom fractal after a down stroke', () => {
+      const closes = [18, 20, 18, 16, 14, 10, 12, 13, 14];
+      const candles = makeCandles(closes, {
+        highs: closes.map((close, index) => index === 1 ? 21 : close + 0.5),
+        lows: closes.map((close, index) => index === 5 ? 9 : close - 0.5),
+      });
+
+      expect(analyzeChanLun(candles)).toMatchObject({
+        currentStrokeDirection: 'down',
+        formingFractal: 'bottom',
+      });
+    });
+  });
+
   describe('analyzeChanLun', () => {
     it('should return default description when there are no strokes', () => {
       const candles = makeCandles([10, 10, 10, 10]);
