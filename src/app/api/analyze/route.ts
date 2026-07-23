@@ -990,6 +990,8 @@ function joinMoneyLevels(values: number[], currencySymbol: string): string {
   return values.length > 0 ? values.map((p) => `${currencySymbol}${p}`).join(", ") : "None";
 }
 
+/** @deprecated Kept for compatibility with older route-adjacent integrations. */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function buildFallbackExtras(data: CacheEntry["data"]) {
   const atr = latestValue(data.indicators.atr);
   return {
@@ -1108,6 +1110,8 @@ Return JSON only:
 }`;
 }
 
+/** @deprecated New analysis requests use buildEvidenceAnalystPrompt. */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function buildAnalystPrompt(symbol: string, data: CacheEntry["data"], language: string = "zh-CN", currencySymbol = "$"): string {
   return buildUnifiedAnalystPrompt(symbol, data, language, currencySymbol);
 }

@@ -6,7 +6,7 @@ import { Candle } from "../indicators";
 function tradingDays(count: number): Candle[] {
   const candles: Candle[] = [];
   const start = new Date("2026-04-01T00:00:00Z");
-  let cursor = new Date(start);
+  const cursor = new Date(start);
   while (candles.length < count) {
     if (cursor.getUTCDay() !== 0 && cursor.getUTCDay() !== 6) {
       const index = candles.length;

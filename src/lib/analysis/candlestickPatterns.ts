@@ -221,5 +221,8 @@ export function detectCandlestickPatterns(
   }
   return [...primaryByEndIndex.values()]
     .sort((left, right) => right.endIndex - left.endIndex)
-    .map(({ priority: _priority, ...signal }) => signal);
+    .map(({ priority, ...signal }) => {
+      void priority;
+      return signal;
+    });
 }
