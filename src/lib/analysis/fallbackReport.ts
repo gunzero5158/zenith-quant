@@ -1,10 +1,12 @@
-import { ScoreDetail } from "./scoring";
+import { EntryAssessment, ScoreDetail } from "./scoring";
 import { VolumeAnalysisResult } from "./volumeForce";
 import { PatternResult } from "./patterns";
 import { WaveAnalysisResult } from "./waveTheory";
 import { ChanLunResult } from "./chanlun";
 import { SupportResistanceResult } from "./supportResistance";
 import { IchimokuResult } from "./indicators";
+import { EvidenceItem, EvidenceSnapshot, SIGNAL_CATALOG, SignalFamily } from "./evidence";
+import { StrategyAdvice } from "./strategyAdvice";
 
 export interface StructuredReport {
   overview: string;
@@ -16,6 +18,95 @@ export interface FallbackAnalysisExtras {
   atr?: number;
   atrPct?: number;
   ichimoku?: IchimokuResult;
+}
+
+export interface LocalReportInput {
+  snapshot: EvidenceSnapshot;
+  entryAssessment: EntryAssessment;
+  strategyAdvice: StrategyAdvice;
+}
+
+const FAMILY_LABELS: Record<SignalFamily, string> = {
+  ema: "EMA",
+  boll: "BOLL",
+  ichimoku: "一目均衡表",
+  macd: "MACD",
+  kdj: "KDJ",
+  rsi: "RSI14",
+  atr: "ATR",
+  volume: "量价",
+  cmf: "CMF",
+  obv: "OBV",
+  vpvr: "VPVR",
+  horizontal: "水平支撑阻力",
+  fibonacci: "斐波那契",
+  classicalPattern: "经典形态",
+  candlestick: "K线组合",
+  tdSequential: "神奇九转",
+  elliottWave: "艾略特波浪",
+  chanlun: "缠论",
+};
+
+function localizedState(item: EvidenceItem, lang: string): string {
+  if (lang !== "zh-CN" && lang !== "zh-TW" && lang !== "zh-HK") return `${FAMILY_LABELS[item.family]} ${item.state}`;
+  const states: Record<string, string> = {
+    golden_cross: "金叉",
+    death_cross: "死叉",
+    bullish: "多头",
+    bearish: "空头",
+    neutral: "中性/暂无触发",
+    insufficient: "样本不足",
+    bottom_divergence: "底背离",
+    top_divergence: "顶背离",
+    near_trigger: "接近触发",
+    confirmed: "已确认",
+    failed: "已失效",
+    forming: "形成中",
+  };
+  const state = states[item.state] ?? (item.state.startsWith("up_") ? `上穿${item.state.slice(3)}` : item.state.startsWith("down_") ? `下穿${item.state.slice(5)}` : item.state);
+  return `${FAMILY_LABELS[item.family]}${state}`;
+}
+
+function reportLabels(lang: string) {
+  if (lang === "en") return { overview: "Entry assessment", recommendation: "Strategy", technical: "Technical evidence", rule: "Rule score", final: "Final score" };
+  if (lang === "ja") return { overview: "エントリー評価", recommendation: "戦略", technical: "テクニカル根拠", rule: "ルールスコア", final: "最終スコア" };
+  if (lang === "zh-TW" || lang === "zh-HK") return { overview: "進場評估", recommendation: "交易策略", technical: "技術證據", rule: "規則基礎分", final: "最終綜合分" };
+  return { overview: "入场评估", recommendation: "交易策略", technical: "技术证据", rule: "规则基础分", final: "最终综合分" };
+}
+
+export function generateLocalReport(input: LocalReportInput, lang: string = "zh-CN"): StructuredReport {
+  const { snapshot, entryAssessment, strategyAdvice } = input;
+  const labels = reportLabels(lang);
+  const overview = `### ${labels.overview}\n${snapshot.symbol} ${snapshot.price.toFixed(2)}；${labels.rule} ${entryAssessment.ruleScore.toFixed(1)}/5，AI ${entryAssessment.aiAdjustment >= 0 ? "+" : ""}${entryAssessment.aiAdjustment.toFixed(1)}，${labels.final} ${entryAssessment.finalScore.toFixed(1)}/5。周线环境 ${snapshot.weeklyRegime}，日线阶段 ${snapshot.dailyPhase}。`;
+  const recommendation = [
+    `### ${labels.recommendation}`,
+    `- 持仓：${strategyAdvice.holder.text}`,
+    `- 开仓/左侧：${strategyAdvice.leftEntry.text}`,
+    `- 加仓/右侧：${strategyAdvice.rightAdd.text}`,
+    `- 退出/止损：${strategyAdvice.exitStop.text}`,
+  ].join("\n");
+
+  const sections: string[] = [`### ${labels.technical}`];
+  const orderedSections = [...new Set(SIGNAL_CATALOG.map((definition) => definition.reportSection))];
+  for (const section of orderedSections) {
+    sections.push(`\n#### ${section}`);
+    const families = SIGNAL_CATALOG.filter((definition) => definition.reportSection === section).map((definition) => definition.family);
+    for (const family of families) {
+      const familyItems = snapshot.items.filter((candidate) => candidate.family === family);
+      if (familyItems.length === 0) {
+        sections.push(`- ${FAMILY_LABELS[family]}：暂无有效证据。`);
+        continue;
+      }
+      for (const evidence of familyItems) {
+        const provisional = evidence.provisional ? "（未完成K线，暂定）" : "";
+        sections.push(`- ${localizedState(evidence, lang)}${provisional}：${evidence.description}`);
+      }
+    }
+  }
+  if (snapshot.dataQuality.warnings.length > 0) {
+    sections.push(`\n#### 数据状态\n${snapshot.dataQuality.warnings.map((warning) => `- ${warning}`).join("\n")}`);
+  }
+  return { overview, recommendation, technicalAnalysis: sections.join("\n") };
 }
 
 /**
