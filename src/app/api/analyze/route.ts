@@ -33,6 +33,11 @@ import { StrategyAdvice } from "@/lib/analysis/strategyAdvice";
 import { validateAiScoreReview, ValidatedAiScoreReview } from "@/lib/analysis/aiScoreReview";
 import { buildEvidenceAnalystPrompt } from "@/lib/analysis/analysisPrompt";
 import { AiReportFields, composeAiReport } from "@/lib/analysis/reportComposition";
+import {
+  applyAnalysisQuoteSnapshot,
+  getShanghaiDateKey,
+  parseAnalysisQuoteSnapshot,
+} from "@/lib/analysis/analysisQuoteSnapshot";
 
 const yahooFinance = new YahooFinance();
 const EAST_MONEY_KLINE_HOSTS = [
@@ -433,7 +438,13 @@ async function improveCompanyName(symbol: string, currentName: string, englishNa
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { symbol, llmConfig, language, useFallback } = body as { symbol: string; llmConfig?: LLMConfig; language?: string; useFallback?: boolean };
+    const { symbol, llmConfig, language, useFallback, quoteSnapshot } = body as {
+      symbol: string;
+      llmConfig?: LLMConfig;
+      language?: string;
+      useFallback?: boolean;
+      quoteSnapshot?: unknown;
+    };
 
     if (!symbol) {
       return NextResponse.json({ error: "Missing stock symbol" }, { status: 400 });
@@ -454,6 +465,12 @@ export async function POST(request: Request) {
     const currencySymbol = getMarketCurrencySymbol(cleanSymbol);
     const now = Date.now();
     const isAShareRequest = convertSymbolToEastMoneyAShareSecid(cleanSymbol) !== null;
+    const analysisQuoteSnapshot = isAShareRequest
+      ? parseAnalysisQuoteSnapshot(quoteSnapshot, requestedSymbol)
+      : null;
+    const inflightKey = analysisQuoteSnapshot
+      ? `${cacheKey}:${analysisQuoteSnapshot.price}:${analysisQuoteSnapshot.change}`
+      : cacheKey;
 
     let techData: CacheEntry["data"];
 
@@ -472,7 +489,7 @@ export async function POST(request: Request) {
       }
 
       // Coalesce concurrent requests for the same symbol into a single upstream fetch.
-      const existingFetch = inflightTechFetches.get(cacheKey);
+      const existingFetch = inflightTechFetches.get(inflightKey);
       if (existingFetch) {
         techData = await existingFetch;
       } else {
@@ -486,6 +503,9 @@ export async function POST(request: Request) {
         let isMock = false;
         let usedRealtimeQuote = false;
         let dataSource: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'tonghuashun' | 'kabutan' | 'tencent' | 'twelve-data' | 'fmp' | 'provider' | 'mock' = 'yahoo';
+        const realtimeQuotePromise = isAShareRequest
+          ? fetchAShareRealtimeQuote(cleanSymbol)
+          : Promise.resolve(null);
 
         try {
           const oneYearAgo = new Date();
@@ -734,7 +754,11 @@ export async function POST(request: Request) {
         }
 
         if (!isMock && isAShareRequest) {
-          const realtimeQuote = await fetchAShareRealtimeQuote(cleanSymbol);
+          const realtimeQuote = applyAnalysisQuoteSnapshot(
+            await realtimeQuotePromise,
+            analysisQuoteSnapshot,
+            getShanghaiDateKey(now),
+          );
           if (realtimeQuote) {
             changePercent = realtimeQuote.changePercent;
             dailyCandles = mergeRealtimeQuoteIntoDailyCandles(dailyCandles, realtimeQuote);
@@ -808,11 +832,11 @@ export async function POST(request: Request) {
           return freshData;
         })();
 
-        inflightTechFetches.set(cacheKey, techDataPromise);
+        inflightTechFetches.set(inflightKey, techDataPromise);
         try {
           techData = await techDataPromise;
         } finally {
-          inflightTechFetches.delete(cacheKey);
+          inflightTechFetches.delete(inflightKey);
         }
       }
     }

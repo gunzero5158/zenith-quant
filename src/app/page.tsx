@@ -17,6 +17,7 @@ import { VolumeAnalysisResult } from "@/lib/analysis/volumeForce";
 import { isAnalysisCacheLanguageCompatible, isAShareAnalysisCacheReusable, isAShareSymbol } from "@/lib/analysis/analysisCache";
 import { DataQuality, ScenarioStatus } from "@/lib/analysis/evidence";
 import { buildEntryScorePresentation } from "@/lib/analysis/presentation";
+import { mergeAnalysisQuoteIntoWatchlist, WatchQuote } from "@/lib/analysis/watchlistQuote";
 
 // Keep lightweight-charts out of the initial bundle
 const StockChart = dynamic(() => import("@/components/StockChart"), { ssr: false });
@@ -82,12 +83,6 @@ interface AnalysisCacheEntry {
   data: StockAnalysisData;
 }
 
-interface WatchQuote {
-  price: number;
-  change: number;
-  isMock?: boolean;
-}
-
 interface QuotesResponse {
   quotes?: Record<string, WatchQuote>;
 }
@@ -100,9 +95,10 @@ interface ApiErrorResponse {
   error?: string;
 }
 
-async function fetchQuoteMap(symbols: string): Promise<Record<string, WatchQuote>> {
+async function fetchQuoteMap(symbols: string, signal?: AbortSignal): Promise<Record<string, WatchQuote>> {
   const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(symbols)}`, {
     cache: "no-store",
+    signal,
   });
   if (!res.ok) {
     throw new Error(`Quote request failed (${res.status})`);
@@ -569,6 +565,19 @@ export default function Home() {
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [watchlistQuotes, setWatchlistQuotes] = useState<Record<string, WatchQuote>>({});
 
+  const syncAnalysisQuoteToWatchlist = useCallback((data: StockAnalysisData, symbol: string) => {
+    setWatchlistQuotes((previous) => {
+      const updated = mergeAnalysisQuoteIntoWatchlist(previous, {
+        symbol,
+        price: data.price,
+        changePercent: data.changePercent,
+        isMock: data.isMock,
+      });
+      localStorage.setItem("watchlistQuotes", JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
   const [isRedUp, setIsRedUp] = useState(true);
 
   const toggleColorMode = () => {
@@ -829,6 +838,26 @@ export default function Home() {
     const requestT = TRANSLATIONS[requestLang];
 
     try {
+      let quoteSnapshot: { symbol: string; price: number; change: number } | undefined;
+      if (isAShareSymbol(requestedSymbol)) {
+        const latestQuotes = await fetchQuoteMap(requestedSymbol, controller.signal);
+        if (analyzeAbortRef.current !== controller || currentRequestSymbolRef.current !== requestedSymbol) return;
+
+        const latestQuote = latestQuotes[requestedSymbol.toUpperCase()];
+        if (latestQuote && !latestQuote.isMock) {
+          quoteSnapshot = {
+            symbol: requestedSymbol.toUpperCase(),
+            price: latestQuote.price,
+            change: latestQuote.change,
+          };
+          setWatchlistQuotes((previous) => {
+            const updated = { ...previous, [requestedSymbol]: latestQuote };
+            localStorage.setItem("watchlistQuotes", JSON.stringify(updated));
+            return updated;
+          });
+        }
+      }
+
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -837,6 +866,7 @@ export default function Home() {
           llmConfig: config.apiKey ? config : undefined,
           language: requestLang,
           useFallback,
+          quoteSnapshot,
         }),
         signal: controller.signal,
       });
@@ -855,6 +885,7 @@ export default function Home() {
       }
       const resolvedSymbol = data.symbol || requestedSymbol;
       setStockData(data);
+      syncAnalysisQuoteToWatchlist(data, resolvedSymbol);
       if (resolvedSymbol !== requestedSymbol) {
         lastRequestedSymbolRef.current = resolvedSymbol;
         setActiveSymbol(resolvedSymbol);
@@ -884,7 +915,7 @@ export default function Home() {
         setLoading(false);
       }
     }
-  }, [activeSymbol, appLanguage, llmConfig, useFallback]);
+  }, [activeSymbol, appLanguage, llmConfig, syncAnalysisQuoteToWatchlist, useFallback]);
 
   const fetchActiveStockDataRef = useRef(fetchActiveStockData);
   useEffect(() => {

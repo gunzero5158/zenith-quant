@@ -137,6 +137,12 @@ describe("Tonghuashun market data provider", () => {
       changePercent: ((451.2 - 431.2) / 431.2) * 100,
       companyName: "Tencent",
       source: "tonghuashun",
+      date: "2026-07-06",
+      open: 432.8,
+      high: 453.4,
+      low: 425.4,
+      previousClose: 431.2,
+      volume: 38675073,
     });
   });
 
@@ -165,6 +171,12 @@ describe("Tonghuashun market data provider", () => {
       changePercent: ((452 - 431.2) / 431.2) * 100,
       companyName: "Tencent",
       source: "tonghuashun",
+      date: "2026-07-06",
+      open: 432.8,
+      high: 453.4,
+      low: 425.4,
+      previousClose: 431.2,
+      volume: 38675073,
     });
   });
 });

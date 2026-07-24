@@ -9,6 +9,12 @@ export interface TonghuashunQuote {
   changePercent: number;
   companyName?: string;
   source: "tonghuashun";
+  date?: string;
+  open?: number;
+  high?: number;
+  low?: number;
+  previousClose?: number;
+  volume?: number;
 }
 
 export interface TonghuashunMarketData extends TonghuashunQuote {
@@ -100,6 +106,12 @@ export async function fetchTonghuashunQuote(symbol: string): Promise<Tonghuashun
       changePercent: prev?.close ? ((active.close - prev.close) / prev.close) * 100 : 0,
       companyName: today?.companyName || last.companyName,
       source: "tonghuashun",
+      date: String(active.date),
+      open: active.open,
+      high: active.high,
+      low: active.low,
+      previousClose: prev?.close,
+      volume: active.volume,
     };
   } catch (error: unknown) {
     console.warn(`Tonghuashun quote failed for ${symbol}:`, error);

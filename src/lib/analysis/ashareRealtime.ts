@@ -1,12 +1,14 @@
 import { Candle } from "@/lib/analysis/indicators";
 import { fetchEastMoneyJson } from "@/lib/analysis/eastmoneyHttp";
 import { convertSymbolToEastMoneyAShareSecid } from "@/lib/analysis/symbolConversion";
+import { fetchTonghuashunQuote } from "@/lib/analysis/tonghuashun";
 
 export { convertSymbolToEastMoneyAShareSecid };
 
 const EAST_MONEY_REALTIME_TIMEOUT_MS = 2000;
+const A_SHARE_REALTIME_CACHE_TTL_MS = 30 * 1000;
 
-export type AShareRealtimeSource = "eastmoney-realtime";
+export type AShareRealtimeSource = "eastmoney-realtime" | "tonghuashun" | "quote-api";
 
 export interface AShareRealtimeQuote {
   source: AShareRealtimeSource;
@@ -34,6 +36,19 @@ interface EastMoneyRealtimeResponse {
     f170?: number | string;
   };
 }
+
+interface AShareRealtimeStore {
+  cache: Map<string, { timestamp: number; quote: AShareRealtimeQuote }>;
+  inflight: Map<string, Promise<AShareRealtimeQuote | null>>;
+}
+
+const globalRealtimeScope = globalThis as typeof globalThis & {
+  __zenithAShareRealtimeStore?: AShareRealtimeStore;
+};
+const realtimeStore = globalRealtimeScope.__zenithAShareRealtimeStore ??= {
+  cache: new Map(),
+  inflight: new Map(),
+};
 
 export function parseEastMoneyRealtimeQuote(response: EastMoneyRealtimeResponse): AShareRealtimeQuote | null {
   const data = response.data;
@@ -66,12 +81,50 @@ export async function fetchAShareRealtimeQuote(symbol: string): Promise<AShareRe
   const secid = convertSymbolToEastMoneyAShareSecid(symbol);
   if (!secid) return null;
 
+  const cacheKey = symbol.trim().toUpperCase();
+  const cached = realtimeStore.cache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < A_SHARE_REALTIME_CACHE_TTL_MS) {
+    return cached.quote;
+  }
+
+  const existing = realtimeStore.inflight.get(cacheKey);
+  if (existing) return existing;
+
+  const request = fetchFreshAShareRealtimeQuote(symbol, secid);
+  realtimeStore.inflight.set(cacheKey, request);
+  try {
+    const quote = await request;
+    if (quote) {
+      realtimeStore.cache.set(cacheKey, { timestamp: Date.now(), quote });
+    }
+    return quote;
+  } finally {
+    realtimeStore.inflight.delete(cacheKey);
+  }
+}
+
+async function fetchFreshAShareRealtimeQuote(symbol: string, secid: string): Promise<AShareRealtimeQuote | null> {
   try {
     const eastMoneyQuote = await fetchEastMoneyRealtimeQuote(secid);
     if (eastMoneyQuote) return eastMoneyQuote;
   } catch (error: unknown) {
     console.warn(`EastMoney realtime quote failed for ${symbol}:`, error);
-    return null;
+  }
+
+  const tonghuashunQuote = await fetchTonghuashunQuote(symbol);
+  if (tonghuashunQuote) {
+    return {
+      source: "tonghuashun",
+      name: tonghuashunQuote.companyName,
+      price: tonghuashunQuote.price,
+      open: tonghuashunQuote.open,
+      high: tonghuashunQuote.high,
+      low: tonghuashunQuote.low,
+      previousClose: tonghuashunQuote.previousClose,
+      volume: tonghuashunQuote.volume,
+      date: tonghuashunQuote.date,
+      changePercent: tonghuashunQuote.changePercent,
+    };
   }
 
   return null;
