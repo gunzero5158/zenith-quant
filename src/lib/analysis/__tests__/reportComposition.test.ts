@@ -1,44 +1,49 @@
 import { describe, expect, it } from "vitest";
+import type { AiAnalysisResult } from "../aiAnalysisResult";
 import { composeAiReport } from "../reportComposition";
 
-const localReport = {
-  overview: "### 入场评估\n本地综述",
-  recommendation: "### 交易策略\n- 持仓：执行本地策略",
-  technicalAnalysis: "### 技术证据\n- EMA：本地原始证据",
+const aiResult: AiAnalysisResult = {
+  overview: "The setup is improving, but confirmation is incomplete.",
+  technicalAnalysis: "### Momentum\nMACD is improving.",
+  strategyCommentary: "The assessment changes if price loses support.",
+  scoreAssessment: {
+    source: "ai",
+    finalScore: 3.6,
+    confidence: 0.74,
+    leftStatus: "watch",
+    rightStatus: "not_formed",
+    activeSetup: "left",
+    riskPlan: {},
+    reasons: [{ evidenceIds: ["daily.macd.rising"], text: "Momentum is improving." }],
+  },
+  strategyAdvice: {
+    holder: { action: "hold_protect", text: "Hold with protection." },
+    leftEntry: { action: "wait", text: "Wait for a reversal trigger." },
+    rightAdd: { action: "wait_breakout", text: "Wait for a breakout." },
+    exitStop: { trigger: "close", text: "Exit on a close below support." },
+  },
 };
 
-describe("AI report composition", () => {
-  it("shows synthesized AI prose without raw local evidence or duplicate score blocks", () => {
-    const report = composeAiReport({
-      overview: "短期趋势偏弱，反弹仍需确认。",
-      technicalAnalysis: "### 趋势与动量\nMACD仍在零轴下方，但绿柱收敛，说明下跌动能有所缓和。",
-      strategyCommentary: "若放量站回关键压力位，右侧条件才会改善。",
-    }, localReport, "zh-CN");
+describe("AI-native report composition", () => {
+  it("uses AI prose and all four AI strategy decisions without a local report", () => {
+    const report = composeAiReport(aiResult, "en");
 
-    expect(report.overview).toBe("短期趋势偏弱，反弹仍需确认。");
-    expect(report.technicalAnalysis).toContain("下跌动能有所缓和");
-    expect(report.technicalAnalysis).not.toContain("技术证据");
-    expect(report.technicalAnalysis).not.toContain("本地原始证据");
-    expect(report.overview).not.toContain("经验证的入场评分");
-    expect(report.recommendation).toContain("执行本地策略");
-    expect(report.recommendation).toContain("### AI补充判断");
-    expect(report.recommendation).toContain("右侧条件才会改善");
+    expect(report.overview).toBe(aiResult.overview);
+    expect(report.technicalAnalysis).toBe(aiResult.technicalAnalysis);
+    expect(report.recommendation).toContain("Hold with protection.");
+    expect(report.recommendation).toContain("Wait for a reversal trigger.");
+    expect(report.recommendation).toContain("Wait for a breakout.");
+    expect(report.recommendation).toContain("Exit on a close below support.");
+    expect(report.recommendation).toContain(aiResult.strategyCommentary);
   });
 
-  it("uses localized local fields only when the matching AI field is absent", () => {
-    const report = composeAiReport({
-      overview: "   ",
-      technicalAnalysis: undefined,
-      strategyCommentary: "",
-    }, localReport, "zh-CN");
+  it("localizes the fixed strategy headings while leaving AI text unchanged", () => {
+    const report = composeAiReport(aiResult, "zh-CN");
 
-    expect(report.overview).toBe(localReport.overview);
-    expect(report.technicalAnalysis).toBe(localReport.technicalAnalysis);
-    expect(report.recommendation).toBe(localReport.recommendation);
-  });
-
-  it("localizes the optional AI strategy heading", () => {
-    const report = composeAiReport({ strategyCommentary: "Wait for confirmation." }, localReport, "en");
-    expect(report.recommendation).toContain("### AI follow-up");
+    expect(report.recommendation).toContain("### 持仓策略");
+    expect(report.recommendation).toContain("### 左侧入场");
+    expect(report.recommendation).toContain("### 右侧加仓");
+    expect(report.recommendation).toContain("### 退出与止损");
+    expect(report.recommendation).toContain("Hold with protection.");
   });
 });

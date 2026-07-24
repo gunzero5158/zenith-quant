@@ -29,7 +29,7 @@ function tradingDays(count: number): Candle[] {
 }
 
 describe("pure analysis engine", () => {
-  it("builds one coherent realtime snapshot for indicators, score, strategy, and report", () => {
+  it("builds technical facts and evidence without local scoring or report decisions", () => {
     const result = runAnalysisEngine({
       symbol: "300757.SZ",
       dailyCandles: tradingDays(80),
@@ -43,14 +43,14 @@ describe("pure analysis engine", () => {
 
     expect(result.weeklyCandles.at(-1)?.close).toBe(114);
     expect(result.snapshot.price).toBe(114);
-    expect(result.entryAssessment.ruleScore).toBe(result.legacyScore.totalScore);
-    expect(result.localReport.recommendation).toContain(result.strategyAdvice.exitStop.text);
     expect(result.snapshot.dataQuality.dailyBarComplete).toBe(false);
+    expect(result).not.toHaveProperty("entryAssessment");
+    expect(result).not.toHaveProperty("legacyScore");
+    expect(result).not.toHaveProperty("strategyAdvice");
+    expect(result).not.toHaveProperty("localReport");
 
     const prompt = buildEvidenceAnalystPrompt({
       snapshot: result.snapshot,
-      entryAssessment: result.entryAssessment,
-      strategyAdvice: result.strategyAdvice,
       dailyCandles: result.dailyCandles,
       weeklyCandles: result.weeklyCandles,
       language: "zh-CN",
@@ -62,7 +62,15 @@ describe("pure analysis engine", () => {
     expect(prompt).toContain("TD Sequential");
     expect(prompt).toContain("weeklyBarComplete");
     expect(prompt).toContain(result.snapshot.items[0].id);
-    expect(prompt).toContain('"hardCap"');
+    expect(prompt).not.toContain('"hardCap"');
+    expect(prompt).not.toContain('"scoreCap"');
+    expect(prompt).not.toContain('"ruleAssessment"');
+    expect(prompt).not.toContain('"strategy"');
+    expect(prompt).toContain('"scoreAssessment"');
+    expect(prompt).toContain('"finalScore"');
+    expect(prompt).toContain('"confidence"');
+    expect(prompt).toContain('"strategyAdvice"');
+    expect(prompt).toContain('"evidenceIds"');
     expect(prompt).toContain("Output language: Simplified Chinese");
     expect(prompt).toContain("Do not translate or enumerate the raw evidence list");
     expect(prompt).toContain("Omit categories that have no distinctive or actionable information");
@@ -80,8 +88,6 @@ describe("pure analysis engine", () => {
     for (const [language, languageName] of Object.entries(languageNames)) {
       const localizedPrompt = buildEvidenceAnalystPrompt({
         snapshot: result.snapshot,
-        entryAssessment: result.entryAssessment,
-        strategyAdvice: result.strategyAdvice,
         dailyCandles: result.dailyCandles,
         weeklyCandles: result.weeklyCandles,
         language,

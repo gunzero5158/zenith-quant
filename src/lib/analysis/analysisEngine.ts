@@ -2,7 +2,6 @@ import { analyzeChanLun } from "./chanlun";
 import { detectCandlestickPatterns } from "./candlestickPatterns";
 import { buildDataQuality } from "./dataQuality";
 import { buildEvidenceSnapshot, TechnicalFrameEvidence } from "./evidenceBuilder";
-import { generateLocalReport, StructuredReport } from "./fallbackReport";
 import {
   calculateATR,
   calculateBOLL,
@@ -14,8 +13,6 @@ import {
   Candle,
 } from "./indicators";
 import { analyzePatterns, calculateTDSequential } from "./patterns";
-import { calculateEntryAssessment, EntryAssessment, ScoreDetail, toLegacyScoreDetail } from "./scoring";
-import { buildStrategyAdvice, StrategyAdvice } from "./strategyAdvice";
 import { calculateSupportResistance } from "./supportResistance";
 import {
   analyzeAtr,
@@ -59,10 +56,6 @@ export interface AnalysisEngineResult {
   daily: CalculatedFrame;
   weekly: CalculatedFrame;
   snapshot: EvidenceSnapshot;
-  entryAssessment: EntryAssessment;
-  legacyScore: ScoreDetail;
-  strategyAdvice: StrategyAdvice;
-  localReport: StructuredReport;
   patterns: ReturnType<typeof analyzePatterns>;
   wave: ReturnType<typeof analyzeWaveTheory>;
   chanlun: ReturnType<typeof analyzeChanLun>;
@@ -186,20 +179,12 @@ export function runAnalysisEngine(input: AnalysisEngineInput): AnalysisEngineRes
     },
     levels: supportResistance.typedLevels ?? [],
   });
-  const entryAssessment = calculateEntryAssessment(snapshot);
-  const legacyScore = toLegacyScoreDetail(entryAssessment);
-  const strategyAdvice = buildStrategyAdvice(snapshot, entryAssessment);
-  const localReport = generateLocalReport({ snapshot, entryAssessment, strategyAdvice }, input.language ?? "zh-CN");
   return {
     dailyCandles,
     weeklyCandles,
     daily,
     weekly,
     snapshot,
-    entryAssessment,
-    legacyScore,
-    strategyAdvice,
-    localReport,
     patterns,
     wave,
     chanlun,

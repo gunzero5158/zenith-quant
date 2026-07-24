@@ -16,8 +16,6 @@ interface SettingsModalProps {
   initialConfig: LLMConfig;
   appLanguage: AppLanguage;
   onLanguageChange: (lang: AppLanguage) => void;
-  useFallback: boolean;
-  onToggleFallback: () => void;
   effectiveLang: EffectiveLanguage;
   t: Record<string, string>;
   onSave: (config: LLMConfig) => void;
@@ -29,8 +27,6 @@ export default function SettingsModal({
   initialConfig,
   appLanguage,
   onLanguageChange,
-  useFallback,
-  onToggleFallback,
   effectiveLang,
   t,
   onSave,
@@ -144,51 +140,6 @@ export default function SettingsModal({
               <option value="en">{t.langEn}</option>
               <option value="ja">{t.langJa}</option>
             </select>
-          </div>
-
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            backgroundColor: "rgba(41, 98, 255, 0.05)",
-            border: "1px dashed rgba(41, 98, 255, 0.25)",
-            borderRadius: "6px",
-            padding: "10px 12px",
-            marginTop: "6px"
-          }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1, paddingRight: "12px" }}>
-              <span style={{ fontSize: "13px", fontWeight: "bold", color: "#ffffff" }}>
-                {t.fallbackLabel}
-              </span>
-              <span style={{ fontSize: "11px", color: "#787b86", lineHeight: "1.4" }}>
-                {t.fallbackDesc}
-              </span>
-            </div>
-            <div
-              onClick={onToggleFallback}
-              style={{
-                width: "44px",
-                height: "22px",
-                borderRadius: "11px",
-                backgroundColor: useFallback ? "#2962ff" : "#2a2e39",
-                position: "relative",
-                cursor: "pointer",
-                transition: "background-color 0.2s",
-                border: "1px solid " + (useFallback ? "#2962ff" : "#363c4e")
-              }}
-            >
-              <div style={{
-                width: "18px",
-                height: "18px",
-                borderRadius: "50%",
-                backgroundColor: "#ffffff",
-                position: "absolute",
-                top: "1px",
-                left: useFallback ? "23px" : "2px",
-                transition: "left 0.2s",
-                boxShadow: "0 1px 3px rgba(0,0,0,0.4)"
-              }} />
-            </div>
           </div>
 
           <div style={styles.modalActions}>

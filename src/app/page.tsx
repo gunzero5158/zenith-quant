@@ -8,7 +8,8 @@ import SettingsModal from "@/components/SettingsModal";
 import { LLMConfig } from "@/lib/analysis/llmProxy";
 import { formatMarketPrice, getMarketCurrencySymbol, normalizeManualSymbolInput } from "@/lib/analysis/market";
 import { Candle, IchimokuResult } from "@/lib/analysis/indicators";
-import { EntryAssessment, ScoreDetail } from "@/lib/analysis/scoring";
+import type { ScoreDetail } from "@/lib/analysis/scoring";
+import type { AiEntryAssessment } from "@/lib/analysis/aiAnalysisResult";
 import { PatternResult } from "@/lib/analysis/patterns";
 import { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
 import { ChanLunResult } from "@/lib/analysis/chanlun";
@@ -58,7 +59,7 @@ interface StockAnalysisData {
   price: number;
   changePercent: number;
   score: ScoreDetail;
-  entryAssessment?: EntryAssessment;
+  entryAssessment?: AiEntryAssessment;
   dataQuality?: DataQuality;
   dailyCandles: Candle[];
   weeklyCandles: Candle[];
@@ -594,7 +595,6 @@ export default function Home() {
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [appLanguage, setAppLanguage] = useState<AppLanguage>("auto");
-  const [useFallback, setUseFallback] = useState(true);
 
   const getEffectiveLang = (): EffectiveLanguage => {
     if (!mounted) return "zh-CN"; // SSR and first hydration render must be identical to avoid mismatch
@@ -694,11 +694,6 @@ export default function Home() {
         setAppLanguage(savedLanguage);
       }
 
-      // 4. Load Fallback toggle
-      const savedFallback = localStorage.getItem("zenith_use_fallback");
-      if (savedFallback === "false") {
-        setUseFallback(false);
-      }
     });
 
     // Load APIMax banner - default always visible
@@ -865,7 +860,6 @@ export default function Home() {
           symbol: requestedSymbol,
           llmConfig: config.apiKey ? config : undefined,
           language: requestLang,
-          useFallback,
           quoteSnapshot,
         }),
         signal: controller.signal,
@@ -915,7 +909,7 @@ export default function Home() {
         setLoading(false);
       }
     }
-  }, [activeSymbol, appLanguage, llmConfig, syncAnalysisQuoteToWatchlist, useFallback]);
+  }, [activeSymbol, appLanguage, llmConfig, syncAnalysisQuoteToWatchlist]);
 
   const fetchActiveStockDataRef = useRef(fetchActiveStockData);
   useEffect(() => {
@@ -988,17 +982,13 @@ export default function Home() {
   const handleSaveSettings = (newConfig: LLMConfig) => {
     const prevConfigStr = localStorage.getItem("llmConfig");
     const prevApiKey = prevConfigStr ? JSON.parse(prevConfigStr).apiKey : "";
-    // The state default is `true` and the loader only flips it off for the
-    // literal "false", so a missing key must also be treated as `true`.
-    const prevFallback = localStorage.getItem("zenith_use_fallback") !== "false";
 
     localStorage.setItem("llmConfig", JSON.stringify(newConfig));
     localStorage.setItem("appLanguage", appLanguage);
-    localStorage.setItem("zenith_use_fallback", useFallback ? "true" : "false");
     setLlmConfig(newConfig);
     setIsSettingsOpen(false);
 
-    if (activeSymbol && (prevApiKey !== newConfig.apiKey || prevFallback !== useFallback)) {
+    if (activeSymbol && prevApiKey !== newConfig.apiKey) {
       fetchActiveStockData(true, newConfig);
     }
   };
@@ -1304,10 +1294,10 @@ export default function Home() {
 
                 <div className="stats-grid" style={styles.statsContainer}>
                   <div className="stat-item stat-item-score" style={styles.statItem}>
-                    <span style={styles.statLabel}>{scorePresentation?.finalLabel || t.scoreLabel}</span>
+                    <span style={styles.statLabel}>{scorePresentation?.scoreLabel || t.scoreLabel}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                       <div style={styles.statValue}>
-                        <span style={{ fontSize: "20px", color: "#2962ff" }}>{scorePresentation?.finalText || stockData.score.totalScore.toFixed(1)}</span>
+                        <span style={{ fontSize: "20px", color: "#2962ff" }}>{scorePresentation?.scoreText || stockData.score.totalScore.toFixed(1)}</span>
                         <span style={{ fontSize: "11px", color: "#787b86" }}>/ 5.0</span>
                       </div>
                       <div>{renderStarRating(stockData.entryAssessment?.finalScore ?? stockData.score.totalScore)}</div>
@@ -1315,10 +1305,7 @@ export default function Home() {
                     {scorePresentation && stockData.entryAssessment && (
                       <>
                         <div style={styles.scoreBreakdownRow}>
-                          <span>{scorePresentation.ruleLabel} {scorePresentation.ruleText}</span>
-                          <span style={{ color: stockData.entryAssessment.aiAdjustment < 0 ? "#f23645" : stockData.entryAssessment.aiAdjustment > 0 ? "#089981" : "#787b86" }}>
-                            {scorePresentation.adjustmentLabel} {scorePresentation.adjustmentText}
-                          </span>
+                          <span>{scorePresentation.confidenceLabel} {scorePresentation.confidenceText}</span>
                         </div>
                         <div style={styles.scenarioRow}>
                           <span style={{ ...styles.scenarioBadge, ...scenarioTone(stockData.entryAssessment.leftStatus) }}>
@@ -1866,8 +1853,6 @@ export default function Home() {
           initialConfig={llmConfig}
           appLanguage={appLanguage}
           onLanguageChange={setAppLanguage}
-          useFallback={useFallback}
-          onToggleFallback={() => setUseFallback(!useFallback)}
           effectiveLang={effectiveLang}
           t={t}
           onSave={handleSaveSettings}

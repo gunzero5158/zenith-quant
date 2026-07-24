@@ -6,8 +6,6 @@ import { SupportResistanceResult } from "@/lib/analysis/supportResistance";
 import { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
 import { ChanLunResult } from "@/lib/analysis/chanlun";
 import { PatternResult } from "@/lib/analysis/patterns";
-import { EntryAssessment, ScoreDetail, toLegacyScoreDetail } from "@/lib/analysis/scoring";
-import { generateLocalReport } from "@/lib/analysis/fallbackReport";
 import { generateLLMReport, LLMConfig } from "@/lib/analysis/llmProxy";
 import { generateMockCandles } from "@/lib/analysis/mockData";
 import { getMarketCurrencySymbol, normalizeManualSymbolInput, replaceDollarPriceSymbols } from "@/lib/analysis/market";
@@ -29,10 +27,10 @@ import {
 import { buildWeeklyCandles as buildWeeklyCandlesFromDaily } from "@/lib/analysis/weeklyCandles";
 import { runAnalysisEngine } from "@/lib/analysis/analysisEngine";
 import { EvidenceSnapshot } from "@/lib/analysis/evidence";
-import { StrategyAdvice } from "@/lib/analysis/strategyAdvice";
-import { validateAiScoreReview, ValidatedAiScoreReview } from "@/lib/analysis/aiScoreReview";
+import { toLegacyAiScoreDetail, validateAiAnalysisResult } from "@/lib/analysis/aiAnalysisResult";
+import type { AiAnalysisResult } from "@/lib/analysis/aiAnalysisResult";
 import { buildEvidenceAnalystPrompt } from "@/lib/analysis/analysisPrompt";
-import { AiReportFields, composeAiReport } from "@/lib/analysis/reportComposition";
+import { composeAiReport } from "@/lib/analysis/reportComposition";
 import {
   applyAnalysisQuoteSnapshot,
   getShanghaiDateKey,
@@ -92,15 +90,12 @@ interface CacheEntry {
     wave: WaveAnalysisResult;
     chanlun: ChanLunResult;
     sr: SupportResistanceResult;
-    score: ScoreDetail;
     price: number;
     changePercent: number;
     companyName: string;
     companyNameEn?: string;
     volumeAnalysis: VolumeAnalysisResult;
     snapshot: EvidenceSnapshot;
-    entryAssessment: EntryAssessment;
-    strategyAdvice: StrategyAdvice;
     isMock?: boolean;
     dataSource?: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'tonghuashun' | 'kabutan' | 'tencent' | 'twelve-data' | 'fmp' | 'provider' | 'mock';
   };
@@ -438,11 +433,10 @@ async function improveCompanyName(symbol: string, currentName: string, englishNa
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { symbol, llmConfig, language, useFallback, quoteSnapshot } = body as {
+    const { symbol, llmConfig, language, quoteSnapshot } = body as {
       symbol: string;
       llmConfig?: LLMConfig;
       language?: string;
-      useFallback?: boolean;
       quoteSnapshot?: unknown;
     };
 
@@ -457,6 +451,14 @@ export async function POST(request: Request) {
     }
 
     const effectiveLang = typeof language === "string" && SUPPORTED_LANGUAGES.includes(language) ? language : "zh-CN";
+    if (!llmConfig?.apiKey) {
+      const error = effectiveLang === "en"
+        ? "This experimental version requires an AI API key. Configure it in Settings before running analysis."
+        : effectiveLang === "ja"
+          ? "この実験版では AI API キーが必須です。分析前に設定画面で構成してください。"
+          : "此实验版本必须配置 AI API Key，请先在右上角设置中完成配置。";
+      return NextResponse.json({ error }, { status: 400 });
+    }
 
     const requestedSymbol = symbol.trim().toUpperCase();
     const cleanSymbol = await resolveInputSymbol(requestedSymbol);
@@ -811,11 +813,8 @@ export async function POST(request: Request) {
           wave: engine.wave,
           chanlun: engine.chanlun,
           sr: engine.supportResistance,
-          score: engine.legacyScore,
           volumeAnalysis: engine.daily.volume,
           snapshot: engine.snapshot,
-          entryAssessment: engine.entryAssessment,
-          strategyAdvice: engine.strategyAdvice,
           isMock,
           dataSource,
         };
@@ -841,117 +840,50 @@ export async function POST(request: Request) {
       }
     }
 
-    // Localized prose is request-specific even when the technical snapshot came from cache.
-    const localReport = generateLocalReport({
-      snapshot: techData.snapshot,
-      entryAssessment: techData.entryAssessment,
-      strategyAdvice: techData.strategyAdvice,
-    }, effectiveLang);
-
-    // 4. Generate Report (Either LLM or Fallback)
-    let reportOverview = "";
-    let reportRecommendation = "";
-    let reportTechnical = "";
-    let isLLMUsed = false;
-    let finalAssessment: EntryAssessment = techData.entryAssessment;
-    let aiScoreReview: ValidatedAiScoreReview | undefined;
-
-    if (techData.isMock && useFallback) {
-      const fallback = localReport;
-      const mockPrefix = effectiveLang === "en"
-        ? "⚠️ **Live market data is unavailable; this is an offline demo report based on simulated candles. LLM analysis was skipped to avoid analyzing mock data.**\n\n"
+    if (techData.isMock) {
+      const error = effectiveLang === "en"
+        ? "Live market data is unavailable. AI analysis was not run on simulated candles."
         : effectiveLang === "ja"
-          ? "⚠️ **リアルタイム市場データを取得できないため、これはシミュレーション足に基づくデモレポートです。模擬データをAIに分析させないため、LLM分析はスキップしました。**\n\n"
-          : effectiveLang === "zh-TW"
-            ? "⚠️ **真實行情暫不可用，以下為基於模擬K線的離線演示報告。為避免讓 AI 分析模擬數據，本次已跳過大模型分析。**\n\n"
-            : "⚠️ **真实行情暂不可用，以下为基于模拟K线的离线演示报告。为避免让 AI 分析模拟数据，本次已跳过大模型分析。**\n\n";
-      reportOverview = mockPrefix + fallback.overview;
-      reportRecommendation = fallback.recommendation;
-      reportTechnical = fallback.technicalAnalysis;
-    } else if (llmConfig && llmConfig.apiKey) {
-      try {
-        const prompt = buildEvidenceAnalystPrompt({
-          snapshot: techData.snapshot,
-          entryAssessment: techData.entryAssessment,
-          strategyAdvice: techData.strategyAdvice,
-          dailyCandles: techData.dailyCandles,
-          weeklyCandles: techData.weeklyCandles,
-          language: effectiveLang,
-          currencySymbol,
-        });
-        const reportText = await generateLLMReport(prompt, llmConfig);
-        
-        // Clean markdown blocks if LLM accidentally outputted them
-        let cleanedText = reportText.trim();
-        if (cleanedText.startsWith("```json")) {
-          cleanedText = cleanedText.substring(7);
-        } else if (cleanedText.startsWith("```")) {
-          cleanedText = cleanedText.substring(3);
-        }
-        if (cleanedText.endsWith("```")) {
-          cleanedText = cleanedText.substring(0, cleanedText.length - 3);
-        }
-        cleanedText = cleanedText.trim();
-
-        const parsed = JSON.parse(cleanedText) as AiReportFields & {
-          scoreReview: unknown;
-        };
-        aiScoreReview = validateAiScoreReview(
-          parsed.scoreReview,
-          techData.snapshot.items.map((item) => item.id),
-          techData.entryAssessment.ruleScore,
-          techData.entryAssessment.hardCap
-        );
-        finalAssessment = {
-          ...techData.entryAssessment,
-          aiAdjustment: aiScoreReview.appliedAdjustment,
-          finalScore: aiScoreReview.finalScore,
-        };
-        const composedReport = composeAiReport(parsed, localReport, effectiveLang);
-        reportOverview = composedReport.overview;
-        reportRecommendation = composedReport.recommendation;
-        reportTechnical = composedReport.technicalAnalysis;
-        isLLMUsed = true;
-      } catch (err: unknown) {
-        console.error("LLM Generation or parsing failed:", err);
-        // Only fallback to local engine if useFallback is explicitly enabled
-        if (useFallback) {
-          const fallback = localReport;
-          let errorPrefix = "⚠️ **大模型分析失败，已自动使用本地规则引擎兜底生成。**\n";
-          if (effectiveLang === "zh-TW") errorPrefix = "⚠️ **大模型分析失敗，已自動使用本地規則引擎兜底生成。**\n";
-          else if (effectiveLang === "en") errorPrefix = "⚠️ **AI analysis failed, fallback report generated by local engine.**\n";
-          else if (effectiveLang === "ja") errorPrefix = "⚠️ **AI分析が失敗したため、ローカルルールエンジンによってレポートが生成されました。**\n";
-          
-          reportOverview = `${errorPrefix}*(Error: ${summarizeLLMError(err)})*\n\n` + fallback.overview;
-          reportRecommendation = fallback.recommendation;
-          reportTechnical = fallback.technicalAnalysis;
-        } else {
-          // No fallback allowed: return the raw LLM error
-          return NextResponse.json({
-            error: `AI 分析失败: ${summarizeLLMError(err)}。请检查您的 API Key 与模型配置，或在“大模型配置”中开启本地算法兜底。`,
-          }, { status: 500 });
-        }
-      }
-    } else if (useFallback) {
-      // No API key but fallback is enabled
-      const fallback = localReport;
-      reportOverview = fallback.overview;
-      reportRecommendation = fallback.recommendation;
-      reportTechnical = fallback.technicalAnalysis;
-    } else {
-      // No API key and no fallback: return error guiding user to configure
-      const errMsg = effectiveLang === "en"
-        ? "Please configure your LLM API Key in Settings, or enable the local algorithm fallback engine."
-        : effectiveLang === "ja"
-        ? "設定画面でAIモデルのAPIキーを構成するか、ローカルアルゴリズムのフォールバックを有効にしてください。"
-        : "请在右上角“大模型配置”中填写 API Key，或开启本地算法兜底引擎。";
-      return NextResponse.json({ error: errMsg }, { status: 400 });
+          ? "実際の市場データを取得できません。模擬ローソク足に対する AI 分析は実行していません。"
+          : "真实行情暂不可用，系统不会把模拟 K 线交给 AI 评分。";
+      return NextResponse.json({ error }, { status: 503 });
     }
 
-    reportOverview = replaceDollarPriceSymbols(reportOverview, currencySymbol);
-    reportRecommendation = replaceDollarPriceSymbols(reportRecommendation, currencySymbol);
-    reportTechnical = replaceDollarPriceSymbols(reportTechnical, currencySymbol);
-    const responseScore = toLegacyScoreDetail(finalAssessment);
+    let aiResult: AiAnalysisResult;
+    try {
+      const prompt = buildEvidenceAnalystPrompt({
+        snapshot: techData.snapshot,
+        dailyCandles: techData.dailyCandles,
+        weeklyCandles: techData.weeklyCandles,
+        language: effectiveLang,
+        currencySymbol,
+      });
+      const reportText = await generateLLMReport(prompt, llmConfig);
+      let cleanedText = reportText.trim();
+      if (cleanedText.startsWith("```json")) cleanedText = cleanedText.substring(7);
+      else if (cleanedText.startsWith("```")) cleanedText = cleanedText.substring(3);
+      if (cleanedText.endsWith("```")) cleanedText = cleanedText.substring(0, cleanedText.length - 3);
+
+      aiResult = validateAiAnalysisResult(
+        JSON.parse(cleanedText.trim()),
+        new Set(techData.snapshot.items.map((item) => item.id))
+      );
+    } catch (err: unknown) {
+      console.error("AI analysis generation or validation failed:", err);
+      const detail = summarizeLLMError(err);
+      const error = effectiveLang === "en"
+        ? `AI analysis failed: ${detail}. Check the API key and model configuration.`
+        : effectiveLang === "ja"
+          ? `AI 分析に失敗しました: ${detail}。API キーとモデル設定を確認してください。`
+          : `AI 分析失败：${detail}。请检查 API Key 与模型配置。`;
+      return NextResponse.json({ error }, { status: 502 });
+    }
+
+    const report = composeAiReport(aiResult, effectiveLang);
+    const reportOverview = replaceDollarPriceSymbols(report.overview, currencySymbol);
+    const reportRecommendation = replaceDollarPriceSymbols(report.recommendation, currencySymbol);
+    const reportTechnical = replaceDollarPriceSymbols(report.technicalAnalysis, currencySymbol);
+    const responseScore = toLegacyAiScoreDetail(aiResult.scoreAssessment);
 
     return NextResponse.json({
       symbol: cleanSymbol,
@@ -960,10 +892,9 @@ export async function POST(request: Request) {
       price: techData.price,
       changePercent: techData.changePercent,
       score: responseScore,
-      entryAssessment: finalAssessment,
-      strategyAdvice: techData.strategyAdvice,
+      entryAssessment: aiResult.scoreAssessment,
+      strategyAdvice: aiResult.strategyAdvice,
       dataQuality: techData.snapshot.dataQuality,
-      aiScoreReview,
       dailyCandles: techData.dailyCandles,
       weeklyCandles: techData.weeklyCandles,
       indicators: techData.indicators,
@@ -975,7 +906,7 @@ export async function POST(request: Request) {
       reportOverview,
       reportRecommendation,
       reportTechnical,
-      isLLMUsed,
+      isLLMUsed: true,
       isMock: techData.isMock,
       dataSource: techData.dataSource,
       currencySymbol,
@@ -996,10 +927,10 @@ function summarizeLLMError(err: unknown): string {
     .trim();
 
   if (/524|timeout occurred|cloudflare/i.test(withoutHtml)) {
-    return "LLM endpoint timeout (524). The local fallback report was generated instead.";
+    return "LLM endpoint timeout (524).";
   }
 
-  return withoutHtml.slice(0, 240) || "LLM request failed. The local fallback report was generated instead.";
+  return withoutHtml.slice(0, 240) || "LLM request failed.";
 }
 
 function latestValue(values: number[]): number | undefined {
@@ -1029,7 +960,6 @@ function buildFallbackExtras(data: CacheEntry["data"]) {
 }
 
 function buildUnifiedAnalystPrompt(symbol: string, data: CacheEntry["data"], language: string, currencySymbol: string): string {
-  const score = data.score;
   const sr = data.sr;
   const wave = data.wave;
   const chan = data.chanlun;
@@ -1069,15 +999,10 @@ Daily change: ${data.changePercent.toFixed(2)}%
 
 Scoring semantics:
 - The 0-5 ${scoreLabel} means current buy/accumulate attractiveness, not recent heat.
-- Reward/risk odds are the primary gate; active trading heat alone must not raise the score if upside/downside is poor.
-- Setup confirmation is evaluated through left-side reversal, trend pullback, and right-side breakout paths.
-- Higher score means better current entry expectancy: higher win-rate, better reward/risk, acceptable stop distance, and stronger confirmation.
-- Lower score means avoid buying now, reduce exposure, or wait.
+- Assign the score independently from the supplied market facts without a precomputed local score.
 
 ### 1. ${scoreLabel}
-- ${scoreLabel}: ${score.totalScore.toFixed(1)} / 5.0
-- Reasons:
-${score.scoreReasons.map((r) => `  * ${r}`).join("\n")}
+- Determine the score and reasons from the technical facts below.
 
 ### 2. Trend, Volatility, and Ichimoku
 - EMA5/10/20/60: ${moneyFixed(latestValue(data.indicators.ema5))}, ${moneyFixed(latestValue(data.indicators.ema10))}, ${moneyFixed(latestValue(data.indicators.ema20))}, ${moneyFixed(latestValue(data.indicators.ema60))}
