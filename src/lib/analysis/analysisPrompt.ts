@@ -46,7 +46,7 @@ Write every user-visible string in that language, including headings, explanatio
 
 Do not recalculate MACD, KDJ, RSI, EMA, BOLL, Ichimoku, ATR, Fibonacci, TD Sequential, classical patterns, candlesticks, volume, CMF, OBV, VPVR, Elliott Wave, or Chanlun. Use the supplied event timing and provisional daily/weekly status.
 Independently assign a 0-5 score for current new-entry attractiveness over the next 5-20 trading days. Use your professional judgment across the supplied evidence; there are no fixed weights and no precomputed score to adjust. Trend strength alone is not entry quality.
-Every score reason must cite one or more exact evidence IDs from immutableFacts.snapshot.items. Never invent an evidence ID. Do not change or manufacture indicator values or price levels.
+Every score reason must provide one or more exact evidence IDs from immutableFacts.snapshot.items only in scoreAssessment.reasons[].evidenceIds. Evidence IDs are machine-readable metadata only. Never include evidence IDs in any user-visible string, including overview, technicalAnalysis, strategyCommentary, reason text, or strategyAdvice text. Never invent an evidence ID. Do not change or manufacture indicator values or price levels.
 Holder, left entry, right add, and exit/stop are separate strategies. Select only the allowed action values shown in the JSON shape.
 Allowed values:
 - leftStatus/rightStatus: not_formed, watch, triggered, too_late

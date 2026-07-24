@@ -71,6 +71,8 @@ describe("pure analysis engine", () => {
     expect(prompt).toContain('"confidence"');
     expect(prompt).toContain('"strategyAdvice"');
     expect(prompt).toContain('"evidenceIds"');
+    expect(prompt).toContain("Evidence IDs are machine-readable metadata only");
+    expect(prompt).toContain("Never include evidence IDs in any user-visible string");
     expect(prompt).toContain("Output language: Simplified Chinese");
     expect(prompt).toContain("Do not translate or enumerate the raw evidence list");
     expect(prompt).toContain("Omit categories that have no distinctive or actionable information");

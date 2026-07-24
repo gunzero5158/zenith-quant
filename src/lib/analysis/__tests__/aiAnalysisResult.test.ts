@@ -60,4 +60,30 @@ describe("AI-native analysis result validation", () => {
     value.strategyAdvice.holder.action = "buy_more";
     expect(() => validateAiAnalysisResult(value, evidenceIds)).toThrow(/holder.action/);
   });
+
+  it("removes internal evidence IDs from every user-visible string", () => {
+    const value = validResult();
+    value.overview = "Trend support is improving (`daily.ema.trend`).";
+    value.technicalAnalysis = "### 动量\nMACD正在改善（`daily.macd.cross`、`daily.ema.trend`）。";
+    value.strategyCommentary = "Reassess if momentum weakens (`daily.macd.cross`).";
+    value.scoreAssessment.reasons[0].text = "Trend and momentum agree (`daily.ema.trend`, `daily.macd.cross`).";
+    value.strategyAdvice.holder.text = "Hold with protection (`daily.ema.trend`).";
+    value.strategyAdvice.exitStop.text = "Exit if the setup fails (`daily.macd.cross`).";
+
+    const result = validateAiAnalysisResult(value, evidenceIds);
+    const visibleText = [
+      result.overview,
+      result.technicalAnalysis,
+      result.strategyCommentary,
+      result.scoreAssessment.reasons[0].text,
+      result.strategyAdvice.holder.text,
+      result.strategyAdvice.exitStop.text,
+    ].join("\n");
+
+    expect(visibleText).not.toMatch(/(?:daily|weekly)\./);
+    expect(result.scoreAssessment.reasons[0].evidenceIds).toEqual([
+      "daily.ema.trend",
+      "daily.macd.cross",
+    ]);
+  });
 });

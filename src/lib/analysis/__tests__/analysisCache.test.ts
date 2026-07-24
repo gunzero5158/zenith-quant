@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  ANALYSIS_REPORT_CACHE_VERSION,
   isAnalysisCacheLanguageCompatible,
+  isAnalysisCacheVersionCompatible,
   isAShareAnalysisCacheReusable,
   isAShareSymbol,
   type AShareAnalysisCacheCandidate,
@@ -11,6 +13,14 @@ describe("analysis report cache language", () => {
     expect(isAnalysisCacheLanguageCompatible("zh-CN", "zh-CN")).toBe(true);
     expect(isAnalysisCacheLanguageCompatible("zh-CN", "en")).toBe(false);
     expect(isAnalysisCacheLanguageCompatible(undefined, "zh-CN")).toBe(false);
+  });
+});
+
+describe("analysis report cache schema", () => {
+  it("invalidates reports generated before user-visible evidence IDs were removed", () => {
+    expect(isAnalysisCacheVersionCompatible(undefined)).toBe(false);
+    expect(isAnalysisCacheVersionCompatible(1)).toBe(false);
+    expect(isAnalysisCacheVersionCompatible(ANALYSIS_REPORT_CACHE_VERSION)).toBe(true);
   });
 });
 

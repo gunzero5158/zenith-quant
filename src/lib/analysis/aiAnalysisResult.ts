@@ -47,6 +47,27 @@ function text(value: unknown, path: string): string {
   return value.trim();
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function visibleText(value: unknown, path: string, validEvidenceIds: ReadonlySet<string>): string {
+  let result = text(value, path);
+  result = result.replace(/`(?:daily|weekly)\.[^`\r\n]+`/gu, "");
+  const evidenceIds = [...validEvidenceIds].sort((left, right) => right.length - left.length);
+  for (const evidenceId of evidenceIds) {
+    result = result.replace(new RegExp(escapeRegExp(evidenceId), "gu"), "");
+  }
+
+  return result
+    .replace(/\b(?:daily|weekly)\.[A-Za-z0-9_./-]+\b/gu, "")
+    .replace(/[（(]\s*(?:[,，、;；]\s*)*[)）]/gu, "")
+    .replace(/\s+([,，。.;；:：])/gu, "$1")
+    .replace(/[ \t]{2,}/gu, " ")
+    .replace(/[ \t]+\n/gu, "\n")
+    .trim();
+}
+
 function numberInRange(value: unknown, path: string, min: number, max: number): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) {
     throw new Error(`${path} must be between ${min} and ${max}`);
@@ -72,27 +93,28 @@ function oneOf<T extends string>(value: unknown, path: string, allowed: readonly
 function adviceAction<T extends string>(
   value: unknown,
   path: string,
-  allowed: readonly T[]
+  allowed: readonly T[],
+  validEvidenceIds: ReadonlySet<string>
 ): { action: T; text: string } {
   const item = record(value, path);
   return {
     action: oneOf(item.action, `${path}.action`, allowed),
-    text: text(item.text, `${path}.text`),
+    text: visibleText(item.text, `${path}.text`, validEvidenceIds),
   };
 }
 
-function validateStrategyAdvice(value: unknown): StrategyAdvice {
+function validateStrategyAdvice(value: unknown, validEvidenceIds: ReadonlySet<string>): StrategyAdvice {
   const strategy = record(value, "strategyAdvice");
   const exitStop = record(strategy.exitStop, "strategyAdvice.exitStop");
   return {
-    holder: adviceAction(strategy.holder, "strategyAdvice.holder", ["hold", "hold_protect", "reduce", "exit"]),
-    leftEntry: adviceAction(strategy.leftEntry, "strategyAdvice.leftEntry", ["wait", "probe", "not_applicable"]),
-    rightAdd: adviceAction(strategy.rightAdd, "strategyAdvice.rightAdd", ["wait_breakout", "add_on_retest", "avoid_chasing"]),
+    holder: adviceAction(strategy.holder, "strategyAdvice.holder", ["hold", "hold_protect", "reduce", "exit"], validEvidenceIds),
+    leftEntry: adviceAction(strategy.leftEntry, "strategyAdvice.leftEntry", ["wait", "probe", "not_applicable"], validEvidenceIds),
+    rightAdd: adviceAction(strategy.rightAdd, "strategyAdvice.rightAdd", ["wait_breakout", "add_on_retest", "avoid_chasing"], validEvidenceIds),
     exitStop: {
       structuralStop: optionalNonNegativeNumber(exitStop.structuralStop, "strategyAdvice.exitStop.structuralStop"),
       atrStop: optionalNonNegativeNumber(exitStop.atrStop, "strategyAdvice.exitStop.atrStop"),
       trigger: oneOf(exitStop.trigger, "strategyAdvice.exitStop.trigger", ["close", "intraday"]),
-      text: text(exitStop.text, "strategyAdvice.exitStop.text"),
+      text: visibleText(exitStop.text, "strategyAdvice.exitStop.text", validEvidenceIds),
     },
   };
 }
@@ -117,13 +139,16 @@ export function validateAiAnalysisResult(value: unknown, validEvidenceIds: Reado
       }
       return evidenceId;
     });
-    return { evidenceIds, text: text(reason.text, `scoreAssessment.reasons[${index}].text`) };
+    return {
+      evidenceIds,
+      text: visibleText(reason.text, `scoreAssessment.reasons[${index}].text`, validEvidenceIds),
+    };
   });
 
   return {
-    overview: text(result.overview, "overview"),
-    technicalAnalysis: text(result.technicalAnalysis, "technicalAnalysis"),
-    strategyCommentary: text(result.strategyCommentary, "strategyCommentary"),
+    overview: visibleText(result.overview, "overview", validEvidenceIds),
+    technicalAnalysis: visibleText(result.technicalAnalysis, "technicalAnalysis", validEvidenceIds),
+    strategyCommentary: visibleText(result.strategyCommentary, "strategyCommentary", validEvidenceIds),
     scoreAssessment: {
       source: "ai",
       finalScore: numberInRange(score.finalScore, "scoreAssessment.finalScore", 0, 5),
@@ -139,7 +164,7 @@ export function validateAiAnalysisResult(value: unknown, validEvidenceIds: Reado
       },
       reasons,
     },
-    strategyAdvice: validateStrategyAdvice(result.strategyAdvice),
+    strategyAdvice: validateStrategyAdvice(result.strategyAdvice, validEvidenceIds),
   };
 }
 
