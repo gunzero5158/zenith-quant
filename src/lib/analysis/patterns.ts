@@ -1,6 +1,18 @@
 import { Candle } from "./indicators";
 
 export type PatternBias = "bullish" | "bearish" | "neutral";
+export type PatternStatus = "forming" | "near_trigger" | "confirmed" | "failed";
+
+export const CLASSIC_PATTERN_IDS = [
+  "doubleBottom", "doubleTop", "tripleBottom", "tripleTop",
+  "inverseHeadAndShoulders", "headAndShoulders",
+  "roundingBottom", "roundingTop", "cupAndHandle",
+  "bullFlag", "bearFlag", "rectangle",
+  "symmetricTriangle", "ascendingTriangle", "descendingTriangle", "pennant",
+  "risingWedge", "fallingWedge",
+] as const;
+
+export type ClassicPatternId = typeof CLASSIC_PATTERN_IDS[number];
 
 export interface PatternSignal {
   key: string;
@@ -8,12 +20,34 @@ export interface PatternSignal {
   bias: PatternBias;
   confidence: number;
   description: string;
+  status?: PatternStatus;
+  startIndex?: number;
+  endIndex?: number;
+  triggerPrice?: number;
+  targetPrice?: number;
+  invalidationPrice?: number;
+  volumeConfirmation?: "confirmed" | "unconfirmed" | "contradictory";
+  barsSinceStatus?: number;
+}
+
+export interface PatternVolumeContext {
+  relativeVolume?: number;
+  cmf?: number;
+  retestHeld?: boolean;
+}
+
+export interface FibonacciAnalysis {
+  levels: Array<{ label: string; price: number }>;
+  anchorStartIndex: number;
+  anchorEndIndex: number;
+  direction: "up" | "down";
 }
 
 export interface PatternResult {
   tdSequential: number[];
   tdSignal: string;
   fibonacciLevels: { label: string; price: number }[];
+  fibonacci?: FibonacciAnalysis;
   activePatterns: PatternSignal[];
   isDoubleBottom: boolean;
   isDoubleTop: boolean;
@@ -75,7 +109,11 @@ function pushSignal(
   name: string,
   bias: PatternBias,
   confidence: number,
-  description: string
+  description: string,
+  lifecycle: Partial<Pick<PatternSignal,
+    "status" | "startIndex" | "endIndex" | "triggerPrice" | "targetPrice" |
+    "invalidationPrice" | "volumeConfirmation" | "barsSinceStatus"
+  >> = {}
 ): void {
   signals.push({
     key,
@@ -83,7 +121,36 @@ function pushSignal(
     bias,
     confidence: Number(confidence.toFixed(2)),
     description,
+    status: lifecycle.status ?? "forming",
+    startIndex: lifecycle.startIndex ?? 0,
+    endIndex: lifecycle.endIndex ?? 0,
+    triggerPrice: lifecycle.triggerPrice,
+    targetPrice: lifecycle.targetPrice,
+    invalidationPrice: lifecycle.invalidationPrice,
+    volumeConfirmation: lifecycle.volumeConfirmation ?? "unconfirmed",
+    barsSinceStatus: lifecycle.barsSinceStatus ?? 0,
   });
+}
+
+function lifecycleFor(
+  bias: Exclude<PatternBias, "neutral">,
+  currentPrice: number,
+  triggerPrice: number,
+  invalidationPrice: number,
+  volume: PatternVolumeContext
+): Pick<PatternSignal, "status" | "volumeConfirmation"> {
+  const volumeConfirmation = volume.cmf !== undefined && ((bias === "bullish" && volume.cmf < -0.1) || (bias === "bearish" && volume.cmf > 0.1))
+    ? "contradictory" as const
+    : (volume.relativeVolume ?? 0) >= 1.3 || volume.retestHeld
+      ? "confirmed" as const
+      : "unconfirmed" as const;
+  const brokeTrigger = bias === "bullish" ? currentPrice > triggerPrice : currentPrice < triggerPrice;
+  const nearTrigger = bias === "bullish" ? currentPrice >= triggerPrice * 0.98 : currentPrice <= triggerPrice * 1.02;
+  const failed = bias === "bullish" ? currentPrice < invalidationPrice : currentPrice > invalidationPrice;
+  return {
+    status: failed ? "failed" : brokeTrigger && volumeConfirmation === "confirmed" ? "confirmed" : nearTrigger ? "near_trigger" : "forming",
+    volumeConfirmation,
+  };
 }
 
 function linearSlope(points: { x: number; y: number }[]): number {
@@ -111,7 +178,13 @@ function recentRange(candles: Candle[], length: number): { high: number; low: nu
 /**
  * Calculates TD Sequential. Positive numbers are sell setups, negative numbers are buy setups.
  */
-export function calculateTDSequential(candles: Candle[]): { counts: number[]; latestSignal: string } {
+export function calculateTDSequential(candles: Candle[]): {
+  counts: number[];
+  latestSignal: string;
+  latestCount: number;
+  latestSetup: "buy" | "sell" | "none";
+  barsSinceSetup9?: number;
+} {
   const counts: number[] = Array(candles.length).fill(0);
   let bullCount = 0;
   let bearCount = 0;
@@ -142,7 +215,23 @@ export function calculateTDSequential(candles: Candle[]): { counts: number[]; la
     else if (lastVal === -9) latestSignal = "Buy Setup 9";
   }
 
-  return { counts, latestSignal };
+  const latestCount = counts.at(-1) ?? 0;
+  let latestSetup: "buy" | "sell" | "none" = "none";
+  let barsSinceSetup9: number | undefined;
+  for (let index = counts.length - 1; index >= Math.max(0, counts.length - 3); index--) {
+    if (counts[index] === -9) {
+      latestSetup = "buy";
+      barsSinceSetup9 = counts.length - 1 - index;
+      break;
+    }
+    if (counts[index] === 9) {
+      latestSetup = "sell";
+      barsSinceSetup9 = counts.length - 1 - index;
+      break;
+    }
+  }
+
+  return { counts, latestSignal, latestCount, latestSetup, barsSinceSetup9 };
 }
 
 /**
@@ -274,10 +363,44 @@ function getPivots(candles: Candle[], leftRight: number = 5): PivotPoint[] {
   return pivots;
 }
 
+function fibonacciLevels(startPrice: number, endPrice: number, direction: "up" | "down"): FibonacciAnalysis["levels"] {
+  const low = Math.min(startPrice, endPrice);
+  const high = Math.max(startPrice, endPrice);
+  const diff = high - low;
+  const ratios = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+  return ratios.map((ratio) => ({
+    label: `${(ratio * 100).toFixed(1)}%`,
+    price: Number((direction === "up" ? low + diff * ratio : high - diff * ratio).toFixed(2)),
+  }));
+}
+
+export function calculateSwingFibonacci(candles: Candle[], atrValues: number[] = []): FibonacciAnalysis | undefined {
+  const pivots = getPivots(candles, 5);
+  for (let endCursor = pivots.length - 1; endCursor >= 0; endCursor--) {
+    const end = pivots[endCursor];
+    for (let startCursor = endCursor - 1; startCursor >= 0; startCursor--) {
+      const start = pivots[startCursor];
+      if (start.type === end.type || end.index - start.index < 10) continue;
+      const atr = Number.isFinite(atrValues[end.index])
+        ? atrValues[end.index]
+        : Math.max(candles[end.index].high - candles[end.index].low, Number.EPSILON);
+      if (Math.abs(end.price - start.price) < 3 * atr) continue;
+      const direction = start.type === "low" && end.type === "high" ? "up" : "down";
+      return {
+        levels: fibonacciLevels(start.price, end.price, direction),
+        anchorStartIndex: start.index,
+        anchorEndIndex: end.index,
+        direction,
+      };
+    }
+  }
+  return undefined;
+}
+
 /**
  * Detects classic geometric patterns through pivot and light regression rules.
  */
-export function detectPatterns(candles: Candle[]): PatternDetectionResult {
+export function detectPatterns(candles: Candle[], volume: PatternVolumeContext = {}): PatternDetectionResult {
   const empty: PatternDetectionResult = {
     activePatterns: [],
     isDoubleBottom: false,
@@ -316,7 +439,16 @@ export function detectPatterns(candles: Candle[]): PatternDetectionResult {
 
         if (isFiniteNumber(neckline) && pctDiff(l1.price, l2.price) <= 3 && timeDiff >= 8 && currentPrice >= neckline * 0.98) {
           result.isDoubleBottom = true;
-          pushSignal(signals, "doubleBottom", "Double bottom/W bottom", "bullish", 0.72, `Two major lows are close and price is near or above neckline ${neckline.toFixed(2)}.`);
+          const invalidationPrice = Math.min(l1.price, l2.price);
+          pushSignal(signals, "doubleBottom", "Double bottom/W bottom", "bullish", 0.72, `Two major lows are close and price is near or above neckline ${neckline.toFixed(2)}.`, {
+            ...lifecycleFor("bullish", currentPrice, neckline, invalidationPrice, volume),
+            startIndex: l1.index,
+            endIndex: l2.index,
+            triggerPrice: neckline,
+            targetPrice: Number((neckline + (neckline - invalidationPrice)).toFixed(2)),
+            invalidationPrice,
+            barsSinceStatus: candles.length - 1 - l2.index,
+          });
         }
       }
     }
@@ -334,7 +466,16 @@ export function detectPatterns(candles: Candle[]): PatternDetectionResult {
 
         if (isFiniteNumber(neckline) && pctDiff(h1.price, h2.price) <= 3 && timeDiff >= 8 && currentPrice <= neckline * 1.02) {
           result.isDoubleTop = true;
-          pushSignal(signals, "doubleTop", "Double top", "bearish", 0.7, `Two major highs are close and price is near or below neckline ${neckline.toFixed(2)}.`);
+          const invalidationPrice = Math.max(h1.price, h2.price);
+          pushSignal(signals, "doubleTop", "Double top", "bearish", 0.7, `Two major highs are close and price is near or below neckline ${neckline.toFixed(2)}.`, {
+            ...lifecycleFor("bearish", currentPrice, neckline, invalidationPrice, volume),
+            startIndex: h1.index,
+            endIndex: h2.index,
+            triggerPrice: neckline,
+            targetPrice: Number((neckline - (invalidationPrice - neckline)).toFixed(2)),
+            invalidationPrice,
+            barsSinceStatus: candles.length - 1 - h2.index,
+          });
         }
       }
     }
@@ -392,6 +533,26 @@ export function detectPatterns(candles: Candle[]): PatternDetectionResult {
     }
   }
 
+  if (lows.length >= 3) {
+    const rightShoulder = lows[lows.length - 1];
+    const head = lows[lows.length - 2];
+    const leftShoulder = lows[lows.length - 3];
+    const necklineHighs = highs.filter((high) => high.index > leftShoulder.index && high.index < rightShoulder.index);
+    const neckline = necklineHighs.length > 0 ? Math.max(...necklineHighs.map((high) => high.price)) : NaN;
+    if (head.price < leftShoulder.price && head.price < rightShoulder.price && pctDiff(leftShoulder.price, rightShoulder.price) <= 5) {
+      const invalidationPrice = head.price;
+      pushSignal(signals, "inverseHeadAndShoulders", "Inverse head and shoulders", "bullish", 0.68, "A lower head is flanked by two comparable shoulders.", {
+        ...(isFiniteNumber(neckline) ? lifecycleFor("bullish", currentPrice, neckline, invalidationPrice, volume) : {}),
+        startIndex: leftShoulder.index,
+        endIndex: rightShoulder.index,
+        triggerPrice: isFiniteNumber(neckline) ? neckline : undefined,
+        targetPrice: isFiniteNumber(neckline) ? Number((neckline + (neckline - invalidationPrice)).toFixed(2)) : undefined,
+        invalidationPrice,
+        barsSinceStatus: candles.length - 1 - rightShoulder.index,
+      });
+    }
+  }
+
   if (highs.length >= 2 && lows.length >= 2) {
     const hRight = highs[highs.length - 1];
     const hLeft = highs[highs.length - 2];
@@ -416,6 +577,17 @@ export function detectPatterns(candles: Candle[]): PatternDetectionResult {
     if (h1 > h0 && h2 > h1 && h3 < h2) {
       result.isRoundingTop = true;
       pushSignal(signals, "roundingTop", "圆弧顶", "bearish", 0.62, "高点抬升后开始回落，顶部圆弧雏形出现。");
+    }
+  }
+
+  if (lows.length >= 4) {
+    const [l0, l1, l2, l3] = lows.slice(-4).map((pivot) => pivot.price);
+    if (l1 < l0 && l2 <= l1 * 1.02 && l3 > l2) {
+      pushSignal(signals, "roundingBottom", "Rounding bottom", "bullish", 0.62, "Successive lows flatten and begin to rise.", {
+        startIndex: lows[lows.length - 4].index,
+        endIndex: lows[lows.length - 1].index,
+        barsSinceStatus: candles.length - 1 - lows[lows.length - 1].index,
+      });
     }
   }
 
@@ -465,10 +637,28 @@ export function detectPatterns(candles: Candle[]): PatternDetectionResult {
     const lastLow = recentLows[recentLows.length - 1];
     const startWidth = Math.abs(firstHigh.price - firstLow.price);
     const endWidth = Math.abs(lastHigh.price - lastLow.price);
+    const averagePrice = (box.high + box.low) / 2;
+    const flatSlope = averagePrice * 0.001;
 
     if (highSlope < 0 && lowSlope > 0 && startWidth > endWidth * 1.2) {
       result.isTrianglePennant = true;
+      pushSignal(signals, "symmetricTriangle", "Symmetric triangle", "neutral", 0.6, "Lower highs and higher lows are converging.");
+      const impulseStart = Math.max(0, recentPivots[0].index - 15);
+      const impulseMove = pctChange(candles[impulseStart].close, candles[recentPivots[0].index].close);
+      if (Math.abs(impulseMove) >= 8) {
+        pushSignal(signals, "pennant", "Pennant", impulseMove > 0 ? "bullish" : "bearish", 0.62, "A compact converging range follows a directional impulse.");
+      }
       pushSignal(signals, "trianglePennant", "三角旗形/收敛三角", "neutral", 0.6, "高点下移且低点上移，波动正在收敛，需等待突破方向确认。");
+    }
+
+    if (Math.abs(highSlope) <= flatSlope && lowSlope > flatSlope) {
+      result.isTrianglePennant = true;
+      pushSignal(signals, "ascendingTriangle", "Ascending triangle", "bullish", 0.64, "Flat resistance and rising support are compressing price.");
+    }
+
+    if (highSlope < -flatSlope && Math.abs(lowSlope) <= flatSlope) {
+      result.isTrianglePennant = true;
+      pushSignal(signals, "descendingTriangle", "Descending triangle", "bearish", 0.64, "Falling resistance and flat support are compressing price.");
     }
 
     if (highSlope > 0 && lowSlope > 0 && lowSlope > highSlope * 1.15) {
@@ -503,11 +693,13 @@ export function analyzePatterns(
   candles: Candle[],
   dif: number[],
   rsi: number[],
-  k: number[]
+  k: number[],
+  volume: PatternVolumeContext = {}
 ): PatternResult {
   const { counts: tdSequential, latestSignal: tdSignal } = calculateTDSequential(candles);
-  const fibonacciLevels = calculateFibonacci(candles);
-  const patternDetection = detectPatterns(candles);
+  const fibonacci = calculateSwingFibonacci(candles);
+  const fibonacciLevels = fibonacci?.levels ?? [];
+  const patternDetection = detectPatterns(candles, volume);
   const macdDivergence = detectDivergence(candles, dif, 30);
   const rsiDivergence = detectDivergence(candles, rsi, 30);
   const kdjDivergence = detectDivergence(candles, k, 30);
@@ -544,6 +736,7 @@ export function analyzePatterns(
     tdSequential,
     tdSignal,
     fibonacciLevels,
+    fibonacci,
     activePatterns: patternDetection.activePatterns,
     isDoubleBottom: patternDetection.isDoubleBottom,
     isDoubleTop: patternDetection.isDoubleTop,

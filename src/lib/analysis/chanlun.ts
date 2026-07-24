@@ -31,6 +31,8 @@ export interface ChanLunResult {
   fenXingList: FenXing[];
   strokes: ChanLunStroke[];
   currentStrokeDirection: "up" | "down";
+  formingFractal?: "top" | "bottom" | "none";
+  centralZone?: { low: number; high: number; pricePosition: "above" | "inside" | "below" };
   chanlunDescription: string;
 }
 
@@ -177,6 +179,8 @@ export function analyzeChanLun(candles: Candle[]): ChanLunResult {
   const strokes = generateStrokes(mergedKLines, fenXingList);
 
   let currentStrokeDirection: "up" | "down" = "up";
+  let formingFractal: ChanLunResult["formingFractal"] = "none";
+  let centralZone: ChanLunResult["centralZone"];
   let desc = "";
 
   if (strokes.length === 0) {
@@ -186,6 +190,8 @@ export function analyzeChanLun(candles: Candle[]): ChanLunResult {
       fenXingList,
       strokes,
       currentStrokeDirection,
+      formingFractal,
+      centralZone,
       chanlunDescription: desc
     };
   }
@@ -201,6 +207,9 @@ export function analyzeChanLun(candles: Candle[]): ChanLunResult {
 
   // Check if we are forming a counter-fenxing since the last stroke
   const candlesSinceStroke = latestMergedIdx - latestStroke.endIndex;
+  if (candlesSinceStroke >= 3) {
+    formingFractal = latestStroke.type === "up" ? "top" : "bottom";
+  }
   
   if (latestStroke.type === "up") {
     if (candlesSinceStroke >= 3) {
@@ -228,6 +237,11 @@ export function analyzeChanLun(candles: Candle[]): ChanLunResult {
     const zsLow = Math.max(Math.min(s1.startPrice, s1.endPrice), Math.min(s2.startPrice, s2.endPrice), Math.min(s3.startPrice, s3.endPrice));
 
     if (zsHigh > zsLow) {
+      centralZone = {
+        low: Number(zsLow.toFixed(2)),
+        high: Number(zsHigh.toFixed(2)),
+        pricePosition: priceSinceStroke > zsHigh ? "above" : priceSinceStroke < zsLow ? "below" : "inside",
+      };
       desc += ` 当前中枢价格区间为 $${zsLow.toFixed(2)} - $${zsHigh.toFixed(2)}。当前价格位于该中枢${priceSinceStroke > zsHigh ? "上方（脱离中枢，强势偏多）" : priceSinceStroke < zsLow ? "下方（中枢压制，弱势偏空）" : "内部（中枢震荡盘整中）"}。`;
     }
   }
@@ -237,6 +251,8 @@ export function analyzeChanLun(candles: Candle[]): ChanLunResult {
     fenXingList,
     strokes,
     currentStrokeDirection,
+    formingFractal,
+    centralZone,
     chanlunDescription: desc
   };
 }

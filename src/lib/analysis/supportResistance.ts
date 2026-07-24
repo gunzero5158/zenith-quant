@@ -1,4 +1,5 @@
 import { Candle } from "./indicators";
+import { TradeLevel } from "./evidence";
 
 export interface VolumeProfileNode {
   price: number;
@@ -24,7 +25,13 @@ export interface SupportResistanceResult {
   dynamicSupportEMA60: number;
   dynamicBOLLUpper: number;
   dynamicBOLLLower: number;
+  typedLevels?: TradeLevel[];
   srDescription: string;
+}
+
+interface PivotRecord {
+  price: number;
+  index: number;
 }
 
 /**
@@ -53,6 +60,39 @@ function findPivots(candles: Candle[], leftRight: number = 5): { highs: number[]
   }
 
   return { highs, lows };
+}
+
+function findPivotRecords(candles: Candle[], leftRight: number = 5): { highs: PivotRecord[]; lows: PivotRecord[] } {
+  const highs: PivotRecord[] = [];
+  const lows: PivotRecord[] = [];
+  for (let index = leftRight; index < candles.length - leftRight; index++) {
+    const window = candles.slice(index - leftRight, index + leftRight + 1);
+    if (window.every((candle, offset) => offset === leftRight || candle.high <= candles[index].high)) {
+      highs.push({ price: candles[index].high, index });
+    }
+    if (window.every((candle, offset) => offset === leftRight || candle.low >= candles[index].low)) {
+      lows.push({ price: candles[index].low, index });
+    }
+  }
+  return { highs, lows };
+}
+
+function clusterPivotRecords(records: PivotRecord[], tolerancePercent = 1.5): Array<PivotRecord & { hits: number }> {
+  const clusters: Array<{ records: PivotRecord[]; average: number }> = [];
+  for (const record of [...records].sort((left, right) => left.price - right.price)) {
+    const cluster = clusters.find((item) => Math.abs(record.price - item.average) / Math.max(item.average, Number.EPSILON) * 100 <= tolerancePercent);
+    if (cluster) {
+      cluster.records.push(record);
+      cluster.average = cluster.records.reduce((sum, item) => sum + item.price, 0) / cluster.records.length;
+    } else {
+      clusters.push({ records: [record], average: record.price });
+    }
+  }
+  return clusters.map((cluster) => ({
+    price: Number(cluster.average.toFixed(2)),
+    index: Math.max(...cluster.records.map((record) => record.index)),
+    hits: cluster.records.length,
+  }));
 }
 
 /**
@@ -220,6 +260,33 @@ export function calculateSupportResistance(
   const dynamicBOLLUpper = isNaN(bollUpperVal) ? currentPrice : Number(bollUpperVal.toFixed(2));
   const dynamicBOLLLower = isNaN(bollLowerVal) ? currentPrice : Number(bollLowerVal.toFixed(2));
 
+  const pivotRecords = findPivotRecords(recentCandles, 5);
+  const clusteredRecords = clusterPivotRecords([...pivotRecords.highs, ...pivotRecords.lows]);
+  const typedLevels: TradeLevel[] = clusteredRecords.map((cluster) => ({
+    price: cluster.price,
+    kind: cluster.price < currentPrice ? "support" : "resistance",
+    source: "horizontal",
+    strength: Math.min(1, 0.35 + cluster.hits * 0.15),
+    hits: cluster.hits,
+    lastSeenIndex: candles.length - recentCandles.length + cluster.index,
+  }));
+  for (const price of [volumePOC, ...volumeSupportNodes.slice(0, 2), ...volumeResistanceNodes.slice(0, 2)]) {
+    typedLevels.push({
+      price,
+      kind: price < currentPrice ? "support" : "resistance",
+      source: "vpvr",
+      strength: price === volumePOC ? 0.85 : 0.65,
+    });
+  }
+  for (const [price, source, kind] of [
+    [dynamicSupportEMA20, "ema", dynamicSupportEMA20 < currentPrice ? "support" : "resistance"],
+    [dynamicSupportEMA60, "ema", dynamicSupportEMA60 < currentPrice ? "support" : "resistance"],
+    [dynamicBOLLUpper, "boll", dynamicBOLLUpper < currentPrice ? "support" : "resistance"],
+    [dynamicBOLLLower, "boll", dynamicBOLLLower < currentPrice ? "support" : "resistance"],
+  ] as const) {
+    typedLevels.push({ price, source, kind, strength: 0.55 });
+  }
+
   // 4. Formulate S/R Description
   let desc = "";
   const nearSupport = horizontalSupports[0];
@@ -258,6 +325,7 @@ export function calculateSupportResistance(
     dynamicSupportEMA60,
     dynamicBOLLUpper,
     dynamicBOLLLower,
+    typedLevels,
     srDescription: desc
   };
 }

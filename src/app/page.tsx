@@ -10,12 +10,16 @@ import AdBanner from "@/components/AdBanner";
 import { LLMConfig } from "@/lib/analysis/llmProxy";
 import { formatMarketPrice, getMarketCurrencySymbol, normalizeManualSymbolInput } from "@/lib/analysis/market";
 import { Candle, IchimokuResult } from "@/lib/analysis/indicators";
-import { ScoreDetail } from "@/lib/analysis/scoring";
+import { EntryAssessment, ScoreDetail } from "@/lib/analysis/scoring";
 import { PatternResult } from "@/lib/analysis/patterns";
 import { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
 import { ChanLunResult } from "@/lib/analysis/chanlun";
 import { SupportResistanceResult } from "@/lib/analysis/supportResistance";
 import { VolumeAnalysisResult } from "@/lib/analysis/volumeForce";
+import { isAnalysisCacheLanguageCompatible, isAShareAnalysisCacheReusable, isAShareSymbol } from "@/lib/analysis/analysisCache";
+import { DataQuality, ScenarioStatus } from "@/lib/analysis/evidence";
+import { buildEntryScorePresentation } from "@/lib/analysis/presentation";
+import { mergeAnalysisQuoteIntoWatchlist, WatchQuote } from "@/lib/analysis/watchlistQuote";
 
 // Keep lightweight-charts out of the initial bundle
 const StockChart = dynamic(() => import("@/components/StockChart"), { ssr: false });
@@ -56,6 +60,8 @@ interface StockAnalysisData {
   price: number;
   changePercent: number;
   score: ScoreDetail;
+  entryAssessment?: EntryAssessment;
+  dataQuality?: DataQuality;
   dailyCandles: Candle[];
   weeklyCandles: Candle[];
   indicators: TechnicalIndicators;
@@ -80,13 +86,8 @@ interface StockAnalysisData {
 
 interface AnalysisCacheEntry {
   timestamp: number;
+  language: EffectiveLanguage;
   data: StockAnalysisData;
-}
-
-interface WatchQuote {
-  price: number;
-  change: number;
-  isMock?: boolean;
 }
 
 interface QuotesResponse {
@@ -103,6 +104,24 @@ interface ApiErrorResponse {
   needTopup?: boolean;
   balanceCents?: number;
   freeUsesRemaining?: number;
+}
+
+async function fetchQuoteMap(symbols: string, signal?: AbortSignal): Promise<Record<string, WatchQuote>> {
+  const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(symbols)}`, {
+    cache: "no-store",
+    signal,
+  });
+  if (!res.ok) {
+    throw new Error(`Quote request failed (${res.status})`);
+  }
+
+  const data = await res.json() as QuotesResponse;
+  const quotes = data.quotes || {};
+  return Object.fromEntries(
+    Object.entries(quotes).filter(([, quote]) => (
+      Number.isFinite(quote?.price) && Number.isFinite(quote?.change)
+    ))
+  );
 }
 
 const APP_LANGUAGES: AppLanguage[] = ["auto", "zh-CN", "zh-TW", "en", "ja"];
@@ -378,6 +397,15 @@ const removeAnalysisCache = (symbol: string) => {
   }
 };
 
+const resolveEffectiveLanguage = (language: AppLanguage): EffectiveLanguage => {
+  if (language !== "auto") return language;
+  const navLang = typeof navigator !== "undefined" ? navigator.language.toLowerCase() : "zh-cn";
+  if (navLang.includes("zh-tw") || navLang.includes("zh-hk") || navLang.includes("zh-mo")) return "zh-TW";
+  if (navLang.includes("zh")) return "zh-CN";
+  if (navLang.includes("ja")) return "ja";
+  return "en";
+};
+
 const isNonTradingHours = (symbol: string): boolean => {
   const now = new Date();
   const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
@@ -548,6 +576,19 @@ export default function Home() {
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [watchlistQuotes, setWatchlistQuotes] = useState<Record<string, WatchQuote>>({});
 
+  const syncAnalysisQuoteToWatchlist = useCallback((data: StockAnalysisData, symbol: string) => {
+    setWatchlistQuotes((previous) => {
+      const updated = mergeAnalysisQuoteIntoWatchlist(previous, {
+        symbol,
+        price: data.price,
+        changePercent: data.changePercent,
+        isMock: data.isMock,
+      });
+      localStorage.setItem("watchlistQuotes", JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
   const [isRedUp, setIsRedUp] = useState(true);
 
   const toggleColorMode = () => {
@@ -568,19 +609,7 @@ export default function Home() {
 
   const getEffectiveLang = (): EffectiveLanguage => {
     if (!mounted) return "zh-CN"; // SSR and first hydration render must be identical to avoid mismatch
-    if (appLanguage !== "auto") return appLanguage;
-    if (typeof navigator === "undefined") return "zh-CN";
-    const navLang = navigator.language.toLowerCase();
-    if (navLang.includes("zh-tw") || navLang.includes("zh-hk") || navLang.includes("zh-mo")) {
-      return "zh-TW";
-    }
-    if (navLang.includes("zh")) {
-      return "zh-CN";
-    }
-    if (navLang.includes("ja")) {
-      return "ja";
-    }
-    return "en";
+    return resolveEffectiveLanguage(appLanguage);
   };
 
   const effectiveLang = getEffectiveLang();
@@ -711,13 +740,9 @@ export default function Home() {
 
     const fetchWatchlistQuotes = async () => {
       try {
-        const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(watchlistKey)}`);
-        if (res.ok) {
-          const data = await res.json() as QuotesResponse;
-          const newQuotes = data.quotes || {};
-          setWatchlistQuotes(newQuotes);
-          localStorage.setItem("watchlistQuotes", JSON.stringify(newQuotes));
-        }
+        const newQuotes = await fetchQuoteMap(watchlistKey);
+        setWatchlistQuotes(newQuotes);
+        localStorage.setItem("watchlistQuotes", JSON.stringify(newQuotes));
       } catch (e) {
         console.error("Fetch watchlist quotes failed:", e);
       }
@@ -730,20 +755,62 @@ export default function Home() {
     const isForce = forceFetch === true || (forceFetch && typeof forceFetch === "object" && "nativeEvent" in forceFetch);
     const requestedSymbol = activeSymbol;
     const config = overrideConfig ?? llmConfig;
+    const requestLang = resolveEffectiveLanguage(appLanguage);
+    currentRequestSymbolRef.current = requestedSymbol;
 
     if (!isForce) {
-      const cachedObj = readAnalysisCache(requestedSymbol);
+      let cachedObj = readAnalysisCache(requestedSymbol);
+      if (cachedObj && !isAnalysisCacheLanguageCompatible(cachedObj.language, requestLang)) {
+        removeAnalysisCache(requestedSymbol);
+        cachedObj = null;
+      }
       if (cachedObj) {
         try {
+          const cachedData = cachedObj.data;
           const cacheDate = new Date(cachedObj.timestamp);
           const now = new Date();
           const isSameDay = cacheDate.toDateString() === now.toDateString();
-          if (isSameDay && isNonTradingHours(requestedSymbol)) {
-            console.log("[CACHE] Using cached analysis for", requestedSymbol);
-            const cachedData = cachedObj.data;
-            if (cachedData.isMock) {
+          const outsideTradingHours = isNonTradingHours(requestedSymbol);
+
+          if (cachedData.isMock) {
+            removeAnalysisCache(requestedSymbol);
+          } else if (outsideTradingHours) {
+            let canReuseCache = isSameDay;
+
+            if (isAShareSymbol(requestedSymbol)) {
+              canReuseCache = false;
+              try {
+                const latestQuotes = await fetchQuoteMap(requestedSymbol);
+                if (currentRequestSymbolRef.current !== requestedSymbol) return;
+
+                const latestQuote = latestQuotes[requestedSymbol.toUpperCase()];
+                if (latestQuote) {
+                  setWatchlistQuotes((previous) => {
+                    const updated = { ...previous, [requestedSymbol]: latestQuote };
+                    localStorage.setItem("watchlistQuotes", JSON.stringify(updated));
+                    return updated;
+                  });
+
+                  canReuseCache = isAShareAnalysisCacheReusable({
+                    symbol: requestedSymbol,
+                    cacheTimestamp: cachedObj.timestamp,
+                    nowTimestamp: Date.now(),
+                    cachedQuote: {
+                      price: cachedData.price,
+                      change: cachedData.changePercent,
+                    },
+                    latestQuote,
+                  });
+                }
+              } catch (e) {
+                console.warn("Validate A-share analysis cache failed:", e);
+              }
+            }
+
+            if (!canReuseCache) {
               removeAnalysisCache(requestedSymbol);
             } else {
+              console.log("[CACHE] Using cached analysis for", requestedSymbol);
               touchAnalysisCache(requestedSymbol);
               const resolvedSymbol = cachedData.symbol || requestedSymbol;
               // A cache hit supersedes any in-flight analysis request
@@ -777,22 +844,29 @@ export default function Home() {
 
     setLoading(true);
 
-    let requestLang: EffectiveLanguage = appLanguage === "auto" ? "zh-CN" : appLanguage;
-    if (appLanguage === "auto") {
-      const navLang = typeof navigator !== "undefined" ? navigator.language.toLowerCase() : "zh-cn";
-      if (navLang.includes("zh-tw") || navLang.includes("zh-hk") || navLang.includes("zh-mo")) {
-        requestLang = "zh-TW";
-      } else if (navLang.includes("zh")) {
-        requestLang = "zh-CN";
-      } else if (navLang.includes("ja")) {
-        requestLang = "ja";
-      } else {
-        requestLang = "en";
-      }
-    }
     const requestT = TRANSLATIONS[requestLang];
 
     try {
+      let quoteSnapshot: { symbol: string; price: number; change: number } | undefined;
+      if (isAShareSymbol(requestedSymbol)) {
+        const latestQuotes = await fetchQuoteMap(requestedSymbol, controller.signal);
+        if (analyzeAbortRef.current !== controller || currentRequestSymbolRef.current !== requestedSymbol) return;
+
+        const latestQuote = latestQuotes[requestedSymbol.toUpperCase()];
+        if (latestQuote && !latestQuote.isMock) {
+          quoteSnapshot = {
+            symbol: requestedSymbol.toUpperCase(),
+            price: latestQuote.price,
+            change: latestQuote.change,
+          };
+          setWatchlistQuotes((previous) => {
+            const updated = { ...previous, [requestedSymbol]: latestQuote };
+            localStorage.setItem("watchlistQuotes", JSON.stringify(updated));
+            return updated;
+          });
+        }
+      }
+
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -801,6 +875,7 @@ export default function Home() {
           llmConfig: config.apiKey ? config : undefined,
           language: requestLang,
           useFallback,
+          quoteSnapshot,
         }),
         signal: controller.signal,
       });
@@ -836,6 +911,7 @@ export default function Home() {
           },
         }));
       }
+      syncAnalysisQuoteToWatchlist(data, resolvedSymbol);
       if (resolvedSymbol !== requestedSymbol) {
         lastRequestedSymbolRef.current = resolvedSymbol;
         setActiveSymbol(resolvedSymbol);
@@ -850,6 +926,7 @@ export default function Home() {
         delete cacheable.billing;
         writeAnalysisCache(resolvedSymbol, {
           timestamp: Date.now(),
+          language: requestLang,
           data: cacheable
         });
       }
@@ -869,12 +946,21 @@ export default function Home() {
         setLoading(false);
       }
     }
-  }, [activeSymbol, appLanguage, llmConfig, useFallback]);
+  }, [activeSymbol, appLanguage, llmConfig, syncAnalysisQuoteToWatchlist, useFallback]);
 
   const fetchActiveStockDataRef = useRef(fetchActiveStockData);
   useEffect(() => {
     fetchActiveStockDataRef.current = fetchActiveStockData;
   }, [fetchActiveStockData]);
+
+  const previousLanguageSelectionRef = useRef<AppLanguage>(appLanguage);
+  useEffect(() => {
+    if (previousLanguageSelectionRef.current === appLanguage) return;
+    previousLanguageSelectionRef.current = appLanguage;
+    if (!activeSymbol) return;
+    removeAnalysisCache(activeSymbol);
+    queueMicrotask(() => fetchActiveStockDataRef.current(true));
+  }, [activeSymbol, appLanguage]);
 
   // Main fetch call for active stock data
   useEffect(() => {
@@ -970,8 +1056,16 @@ export default function Home() {
     );
   };
 
+  const scorePresentation = stockData?.entryAssessment
+    ? buildEntryScorePresentation(stockData.entryAssessment, effectiveLang, stockData.dataQuality)
+    : undefined;
+  const scenarioTone = (status: ScenarioStatus): React.CSSProperties => ({
+    color: status === "triggered" ? "#089981" : status === "too_late" ? "#f23645" : status === "watch" ? "#fbbf24" : "#787b86",
+    borderColor: status === "triggered" ? "rgba(8,153,129,0.45)" : status === "too_late" ? "rgba(242,54,69,0.45)" : status === "watch" ? "rgba(251,191,36,0.45)" : "#363c4e",
+  });
+
   return (
-    <div style={styles.container}>
+    <div className="app-shell" style={styles.container}>
       <style>{`
         @keyframes indicator-pulse {
           0%, 100% { transform: scale(1); opacity: 0.75; }
@@ -997,8 +1091,8 @@ export default function Home() {
         }
       `}</style>
       {/* 1. Header Area */}
-      <header style={styles.header}>
-        <div style={styles.brand}>
+      <header className="app-header" style={styles.header}>
+        <div className="app-brand" style={styles.brand}>
           <svg
             width="20"
             height="20"
@@ -1022,9 +1116,9 @@ export default function Home() {
               </linearGradient>
             </defs>
           </svg>
-          <span style={styles.logoText}>
+          <span className="app-logo-text" style={styles.logoText}>
             Antigravity{" "}
-            <span style={{ color: "#2962ff" }}>
+            <span className="app-logo-accent" style={{ color: "#2962ff" }}>
               {effectiveLang === "zh-CN" && "天顶分析"}
               {effectiveLang === "zh-TW" && "天頂分析"}
               {effectiveLang === "en" && "ZenithAnalysis"}
@@ -1034,7 +1128,7 @@ export default function Home() {
         </div>
 
         {/* Search & Autocomplete */}
-        <div ref={searchRef} style={styles.searchContainer}>
+        <div ref={searchRef} className="app-search" style={styles.searchContainer}>
           <Search size={16} style={styles.searchIcon} />
           <input
             type="text"
@@ -1078,9 +1172,9 @@ export default function Home() {
         </div>
 
         {/* Toolbar Settings */}
-        <div style={styles.headerRight}>
+        <div className="app-header-actions" style={styles.headerRight}>
           <AccountWidget />
-          <div style={styles.langSelectContainer}>
+          <div className="app-language" style={styles.langSelectContainer}>
             <span style={{ fontSize: "14px" }}>🌐</span>
             <select
               value={appLanguage}
@@ -1100,11 +1194,11 @@ export default function Home() {
             </select>
           </div>
 
-          <button onClick={() => setIsSettingsOpen(true)} style={styles.settingsBtn}>
+          <button className="app-settings" aria-label={t.llmSettings} onClick={() => setIsSettingsOpen(true)} style={styles.settingsBtn}>
             <Settings size={18} style={{ marginRight: "6px" }} />
-            {t.llmSettings}
+            <span className="app-settings-label">{t.llmSettings}</span>
           </button>
-          <button onClick={() => fetchActiveStockData(true)} style={styles.refreshBtn}>
+          <button className="app-refresh" aria-label="Refresh" onClick={() => fetchActiveStockData(true)} style={styles.refreshBtn}>
             <RefreshCw size={18} />
           </button>
         </div>
@@ -1114,7 +1208,7 @@ export default function Home() {
 
       {/* 2. Mock Data Warning Banner */}
       {stockData?.isMock && showMockWarning && (
-        <div style={styles.mockWarningBanner}>
+        <div className="mock-warning" style={styles.mockWarningBanner}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <span style={{ fontSize: "16px" }}>⚠️</span>
             <span>
@@ -1134,11 +1228,11 @@ export default function Home() {
       )}
 
       {/* 3. Main Dashboard Layout */}
-      <div style={styles.body}>
+      <div className="app-body" style={styles.body}>
         {/* Left Watchlist Sidebar */}
-        <aside style={styles.sidebar}>
-          <div style={styles.sidebarHeader}>{t.watchlist}</div>
-          <div style={styles.watchlistContainer}>
+        <aside className="app-sidebar" style={styles.sidebar}>
+          <div className="app-sidebar-header" style={styles.sidebarHeader}>{t.watchlist}</div>
+          <div className="app-watchlist" style={styles.watchlistContainer}>
             {watchlist.map((sym) => {
               const quote = watchlistQuotes[sym];
               const isUp = quote ? quote.change >= 0 : true;
@@ -1146,6 +1240,7 @@ export default function Home() {
                 <div
                   key={sym}
                   onClick={() => setActiveSymbol(sym)}
+                  className="app-watch-item"
                   style={{
                     ...styles.watchItem,
                     backgroundColor: activeSymbol === sym ? "#2a2e39" : "transparent",
@@ -1192,12 +1287,12 @@ export default function Home() {
         </aside>
 
         {/* Center/Right Main Content Area */}
-        <main style={styles.main}>
+        <main className="app-main" style={styles.main}>
           {loading ? (
             <LoadingOverlay key={activeSymbol} symbol={activeSymbol} effectiveLang={effectiveLang} />
           ) : stockData ? (
-            <div style={styles.dashboardGrid}>
-              <div style={styles.topRow}>
+            <div className="dashboard-grid" style={styles.dashboardGrid}>
+              <div className="dashboard-top" style={styles.topRow}>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" }}>
                     <h1 style={styles.tickerName}>{renderStockName()}</h1>
@@ -1220,6 +1315,9 @@ export default function Home() {
                     {stockData.dataSource === "fmp" && (
                       <span style={styles.providerBadge}>🌐 FMP</span>
                     )}
+                    {scorePresentation?.dataStatus && (
+                      <span style={styles.dataStatus}>{scorePresentation.dataStatus}</span>
+                    )}
                     {stockData.dataSource === "mock" && (
                       <span style={styles.mockBadge}>⚠️ 模拟演示</span>
                     )}
@@ -1238,39 +1336,57 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div style={styles.statsContainer}>
-                  <div style={styles.statItem}>
-                    <span style={styles.statLabel}>{t.scoreLabel}</span>
+                <div className="stats-grid" style={styles.statsContainer}>
+                  <div className="stat-item stat-item-score" style={styles.statItem}>
+                    <span style={styles.statLabel}>{scorePresentation?.finalLabel || t.scoreLabel}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                       <div style={styles.statValue}>
-                        <span style={{ fontSize: "20px", color: "#2962ff" }}>{stockData.score.totalScore.toFixed(1)}</span>
+                        <span style={{ fontSize: "20px", color: "#2962ff" }}>{scorePresentation?.finalText || stockData.score.totalScore.toFixed(1)}</span>
                         <span style={{ fontSize: "11px", color: "#787b86" }}>/ 5.0</span>
                       </div>
-                      <div>{renderStarRating(stockData.score.totalScore)}</div>
+                      <div>{renderStarRating(stockData.entryAssessment?.finalScore ?? stockData.score.totalScore)}</div>
                     </div>
+                    {scorePresentation && stockData.entryAssessment && (
+                      <>
+                        <div style={styles.scoreBreakdownRow}>
+                          <span>{scorePresentation.ruleLabel} {scorePresentation.ruleText}</span>
+                          <span style={{ color: stockData.entryAssessment.aiAdjustment < 0 ? "#f23645" : stockData.entryAssessment.aiAdjustment > 0 ? "#089981" : "#787b86" }}>
+                            {scorePresentation.adjustmentLabel} {scorePresentation.adjustmentText}
+                          </span>
+                        </div>
+                        <div style={styles.scenarioRow}>
+                          <span style={{ ...styles.scenarioBadge, ...scenarioTone(stockData.entryAssessment.leftStatus) }}>
+                            {scorePresentation.leftLabel} {scorePresentation.leftText}
+                          </span>
+                          <span style={{ ...styles.scenarioBadge, ...scenarioTone(stockData.entryAssessment.rightStatus) }}>
+                            {scorePresentation.rightLabel} {scorePresentation.rightText}
+                          </span>
+                        </div>
+                      </>
+                    )}
                   </div>
 
-                  <div style={styles.statDivider} />
+                  <div className="stat-divider" style={styles.statDivider} />
 
-                  <div style={styles.statItem}>
+                  <div className="stat-item" style={styles.statItem}>
                     <span style={styles.statLabel}>{t.supportLabel}</span>
                     <span style={{ ...styles.statValue, color: "#089981" }}>
                       {stockData.sr.horizontalSupports[0] ? `${stockData.currencySymbol || getMarketCurrencySymbol(stockData.symbol || activeSymbol)}${stockData.sr.horizontalSupports[0].toFixed(2)}` : t.noSupport}
                     </span>
                   </div>
 
-                  <div style={styles.statDivider} />
+                  <div className="stat-divider" style={styles.statDivider} />
 
-                  <div style={styles.statItem}>
+                  <div className="stat-item" style={styles.statItem}>
                     <span style={styles.statLabel}>{t.resistanceLabel}</span>
                     <span style={{ ...styles.statValue, color: "#f23645" }}>
                       {stockData.sr.horizontalResistances[0] ? `${stockData.currencySymbol || getMarketCurrencySymbol(stockData.symbol || activeSymbol)}${stockData.sr.horizontalResistances[0].toFixed(2)}` : t.noResistance}
                     </span>
                   </div>
 
-                  <div style={styles.statDivider} />
+                  <div className="stat-divider" style={styles.statDivider} />
 
-                  <div style={styles.statItem}>
+                  <div className="stat-item" style={styles.statItem}>
                     <span style={styles.statLabel}>{t.pocLabel}</span>
                     <span style={{ ...styles.statValue, color: "#fbbf24" }}>
                       {stockData.currencySymbol || getMarketCurrencySymbol(stockData.symbol || activeSymbol)}{stockData.sr.volumePOC.toFixed(2)}
@@ -1279,17 +1395,17 @@ export default function Home() {
                 </div>
               </div>
 
-              <div style={styles.workspaceGrid}>
-                <div style={styles.leftColumn}>
-                  <div style={styles.summaryCard}>
+              <div className="workspace-grid" style={styles.workspaceGrid}>
+                <div className="workspace-primary" style={styles.leftColumn}>
+                  <div className="summary-card" style={styles.summaryCard}>
                     <div style={styles.cardHeader}>{t.overviewHeader}</div>
                     <div style={styles.cardBodyAutoScroll}>
                       <MarkdownBlock text={stockData.reportOverview} effectiveLang={effectiveLang} />
                     </div>
                   </div>
                   
-                  <div style={styles.chartArea}>
-                    <div style={styles.chartSelector}>
+                  <div className="chart-area" style={styles.chartArea}>
+                    <div className="chart-selector" style={styles.chartSelector}>
                       <button
                         onClick={() => setChartPeriod("daily")}
                         style={{
@@ -1359,15 +1475,15 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div style={styles.rightColumn}>
-                  <div style={styles.recommendationCard}>
+                <div className="workspace-secondary" style={styles.rightColumn}>
+                  <div className="recommendation-card" style={styles.recommendationCard}>
                     <div style={styles.cardHeader}>{t.strategyHeader}</div>
                     <div style={styles.cardBodyAutoScroll}>
                       <MarkdownBlock text={stockData.reportRecommendation} effectiveLang={effectiveLang} />
                     </div>
                   </div>
 
-                  <div style={styles.reportArea}>
+                  <div className="report-area" style={styles.reportArea}>
                     <div style={styles.reportHeader}>
                       <span>{t.technicalHeader}</span>
                       {stockData.isLLMUsed ? (
@@ -1384,7 +1500,7 @@ export default function Home() {
               </div>
             </div>
           ) : (
-            <div style={{
+            <div className="welcome-container" style={{
               ...styles.welcomeContainer,
               background: "radial-gradient(circle at center, #182030 0%, #131722 100%)",
               padding: "40px 20px",
@@ -1419,7 +1535,7 @@ export default function Home() {
                 }
               `}</style>
               
-              <div style={styles.welcomeHero}>
+              <div className="welcome-hero" style={styles.welcomeHero}>
                 <div style={{
                   position: "relative",
                   width: "80px",
@@ -1482,7 +1598,7 @@ export default function Home() {
               </div>
 
               {/* Bento-style Features Grid */}
-              <div style={styles.welcomeFeatures}>
+              <div className="welcome-features" style={styles.welcomeFeatures}>
                 <div className="feature-card" style={styles.featureCard}>
                   <div style={styles.featureIcon}>🔬</div>
                   <h3 style={styles.featureTitle}>
@@ -1593,7 +1709,7 @@ export default function Home() {
               </div>
 
               {/* Quick Tickers Experiencing */}
-              <div style={styles.welcomeQuickStart}>
+              <div className="welcome-quick-start" style={styles.welcomeQuickStart}>
                 <h4 style={styles.quickStartTitle}>
                   {effectiveLang === "zh-CN" && "🚀 一键快捷体验特色股票"}
                   {effectiveLang === "zh-TW" && "🚀 一鍵快捷體驗特色股票"}
@@ -1900,6 +2016,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "center",
     gap: "20px",
+    flexWrap: "wrap",
   },
   statsContainer: {
     display: "flex",
@@ -1909,6 +2026,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "8px",
     padding: "12px 24px",
     gap: "24px",
+    flexWrap: "wrap",
+    justifyContent: "center",
     boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
   },
   statItem: {
@@ -1934,6 +2053,38 @@ const styles: Record<string, React.CSSProperties> = {
     width: "1px",
     height: "36px",
     backgroundColor: "#2a2e39",
+  },
+  scoreBreakdownRow: {
+    display: "flex",
+    gap: "10px",
+    marginTop: "6px",
+    color: "#787b86",
+    fontSize: "11px",
+    lineHeight: 1.35,
+    flexWrap: "wrap",
+    justifyContent: "center",
+  },
+  scenarioRow: {
+    display: "flex",
+    gap: "6px",
+    marginTop: "6px",
+    flexWrap: "wrap",
+    justifyContent: "center",
+  },
+  scenarioBadge: {
+    border: "1px solid #363c4e",
+    borderRadius: "4px",
+    padding: "2px 5px",
+    fontSize: "10.5px",
+    lineHeight: 1.2,
+    whiteSpace: "nowrap",
+  },
+  dataStatus: {
+    color: "#787b86",
+    fontSize: "10.5px",
+    lineHeight: 1.3,
+    maxWidth: "260px",
+    overflowWrap: "anywhere",
   },
   leftColumn: {
     display: "flex",

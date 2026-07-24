@@ -4,6 +4,7 @@ import { PatternResult } from "./patterns";
 import { WaveAnalysisResult } from "./waveTheory";
 import { SupportResistanceResult } from "./supportResistance";
 import { ChanLunResult } from "./chanlun";
+import { EvidenceSnapshot, ScenarioStatus } from "./evidence";
 
 export interface ScoreDetail {
   baseTrendScore: number;
@@ -13,6 +14,25 @@ export interface ScoreDetail {
   weeklyResonanceScore: number;
   totalScore: number;
   scoreReasons: string[];
+}
+
+export interface EntryAssessment {
+  ruleScore: number;
+  aiAdjustment: number;
+  finalScore: number;
+  hardCap: number;
+  dimensions: {
+    priceLocation: number;
+    payoffQuality: number;
+    setupMaturity: number;
+    timeframeContext: number;
+    confirmationQuality: number;
+  };
+  leftStatus: ScenarioStatus;
+  rightStatus: ScenarioStatus;
+  activeSetup: "left" | "right" | "none";
+  riskPlan: { stop?: number; target?: number; rewardRisk?: number; stopDistancePct?: number };
+  reasons: string[];
 }
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -531,5 +551,231 @@ export function calculateStockScore(
     weeklyResonanceScore,
     totalScore,
     scoreReasons,
+  };
+}
+
+function roundScore(value: number): number {
+  return Number(clamp(value, 0, 5).toFixed(1));
+}
+
+function dailyItems(snapshot: EvidenceSnapshot) {
+  return snapshot.items.filter((item) => item.timeframe === "daily" && item.state !== "insufficient");
+}
+
+function atrValue(snapshot: EvidenceSnapshot): number | undefined {
+  const value = dailyItems(snapshot)
+    .find((item) => item.family === "atr" && typeof item.values?.value === "number")
+    ?.values?.value;
+  return typeof value === "number" && value > 0 ? value : undefined;
+}
+
+function buildRiskPlan(snapshot: EvidenceSnapshot): EntryAssessment["riskPlan"] {
+  const price = snapshot.price;
+  const atr = atrValue(snapshot) ?? price * 0.02;
+  const explicitStop = snapshot.levels
+    .filter((level) => level.kind === "stop" && level.price < price)
+    .sort((left, right) => right.price - left.price)[0];
+  const support = snapshot.levels
+    .filter((level) => level.kind === "support" && level.price < price && level.strength >= 0.45)
+    .sort((left, right) => right.price - left.price)[0];
+  const stop = explicitStop?.price ?? (support ? support.price - atr * 0.5 : undefined);
+
+  const targets = snapshot.levels
+    .filter((level) => (level.kind === "target" || level.kind === "resistance") && level.price > price)
+    .sort((left, right) => left.price - right.price);
+  const meaningfulTarget = targets.find((level) => level.price - price >= atr * 0.5);
+  const target = meaningfulTarget?.price;
+  const risk = stop !== undefined ? price - stop : undefined;
+  const rewardRisk = risk && risk > 0 && target !== undefined ? (target - price) / risk : undefined;
+  return {
+    stop: stop !== undefined ? Number(stop.toFixed(2)) : undefined,
+    target: target !== undefined ? Number(target.toFixed(2)) : undefined,
+    rewardRisk: rewardRisk !== undefined ? Number(rewardRisk.toFixed(2)) : undefined,
+    stopDistancePct: risk !== undefined ? Number(((risk / price) * 100).toFixed(2)) : undefined,
+  };
+}
+
+function priceLocationScore(snapshot: EvidenceSnapshot, atr: number, reasons: string[]): number {
+  const support = snapshot.levels
+    .filter((level) => level.kind === "support" && level.price < snapshot.price && level.strength >= 0.45)
+    .sort((left, right) => right.price - left.price)[0];
+  if (!support) {
+    reasons.push("No reliable support is close enough to define entry location.");
+    return 0.1;
+  }
+  const distanceInAtr = (snapshot.price - support.price) / Math.max(atr, Number.EPSILON);
+  if (distanceInAtr <= 1.25) {
+    reasons.push(`Price is ${distanceInAtr.toFixed(1)} ATR above typed ${support.source} support.`);
+    return 1;
+  }
+  if (distanceInAtr <= 2.5) return 0.65;
+  if (distanceInAtr <= 4) return 0.35;
+  reasons.push("Price is far from the nearest reliable support.");
+  return 0.1;
+}
+
+function payoffScore(riskPlan: EntryAssessment["riskPlan"], reasons: string[]): number {
+  const ratio = riskPlan.rewardRisk;
+  if (ratio === undefined) {
+    reasons.push("A complete stop/target payoff plan is unavailable.");
+    return 0;
+  }
+  reasons.push(`Planned reward/risk is ${ratio.toFixed(2)}:1.`);
+  return ratio >= 3 ? 1.25 : ratio >= 2 ? 1.05 : ratio >= 1.5 ? 0.8 : ratio >= 1 ? 0.4 : 0.1;
+}
+
+function setupScore(snapshot: EvidenceSnapshot, items: ReturnType<typeof dailyItems>, reasons: string[]): number {
+  const phaseBase: Record<EvidenceSnapshot["dailyPhase"], number> = {
+    base: 0.7,
+    pullback: 0.75,
+    breakout: 0.65,
+    range: 0.25,
+    extended: 0,
+    breakdown: 0,
+  };
+  let score = phaseBase[snapshot.dailyPhase];
+  const hasFreshCross = items.some((item) =>
+    ["macd", "kdj", "rsi", "ichimoku"].includes(item.family) &&
+    (item.state.includes("cross") || item.state.startsWith("up_")) &&
+    (item.barsSince ?? 0) <= 2 && item.direction === "bullish"
+  );
+  const hasBullishStructure = items.some((item) =>
+    (item.family === "classicalPattern" && ["confirmed", "near_trigger"].includes(item.state) && item.direction === "bullish") ||
+    (item.family === "candlestick" && item.direction === "bullish" && item.state !== "extended") ||
+    item.id === "daily.momentum.bottom_divergence"
+  );
+  if (hasFreshCross) score += 0.25;
+  if (hasBullishStructure) score += 0.25;
+  const bearishStructure = items.some((item) => item.family === "classicalPattern" && item.direction === "bearish" && item.state === "confirmed");
+  if (bearishStructure) {
+    score -= 0.4;
+    reasons.push("A confirmed bearish structure reduces setup maturity.");
+  }
+  if (snapshot.dailyPhase === "extended") reasons.push("The move is extended; strength is not treated as entry quality.");
+  if (snapshot.dailyPhase === "breakdown") reasons.push("The daily structure is still breaking down.");
+  return clamp(score, 0, 1.25);
+}
+
+function timeframeScore(snapshot: EvidenceSnapshot, reasons: string[]): number {
+  if (!snapshot.dataQuality.weeklySamples || snapshot.dataQuality.missingFamilies.includes("ema")) {
+    reasons.push("Weekly context is unavailable and receives no bonus.");
+    return 0;
+  }
+  if (snapshot.weeklyRegime === "bullish") return 0.75;
+  if (snapshot.weeklyRegime === "neutral") return 0.35;
+  reasons.push("Weekly regime is bearish and suppresses new-entry confidence.");
+  return 0;
+}
+
+function confirmationScore(items: ReturnType<typeof dailyItems>, reasons: string[]): number {
+  let score = 0.1;
+  const volumeBullish = items.some((item) => item.family === "volume" && item.direction === "bullish");
+  const lowVolumePullback = items.some((item) => item.family === "volume" && item.values?.isLowVolumePullback === true);
+  const volumeBearish = items.some((item) => item.family === "volume" && item.direction === "bearish");
+  if (volumeBullish) score += 0.25;
+  if (lowVolumePullback) score += 0.2;
+
+  const freshMomentumFamilies = new Set(
+    items
+      .filter((item) => ["macd", "kdj", "rsi", "ichimoku"].includes(item.family) && item.direction === "bullish" && (item.state.includes("cross") || item.state.startsWith("up_")))
+      .map((item) => item.family)
+  );
+  score += Math.min(0.3, freshMomentumFamilies.size * 0.15);
+  if (items.some((item) => item.id === "daily.momentum.bottom_divergence")) score += 0.05;
+  if (items.some((item) => item.family === "classicalPattern" && item.direction === "bullish" && item.state === "confirmed")) score += 0.25;
+  if (items.some((item) => item.family === "candlestick" && item.direction === "bullish" && item.state === "triggered")) score += 0.15;
+  if (volumeBearish) {
+    score -= 0.35;
+    reasons.push("Bearish volume expansion directly weakens confirmation quality.");
+  }
+  if (items.some((item) => item.family === "classicalPattern" && item.direction === "bearish" && item.state === "confirmed")) score -= 0.35;
+  return clamp(score, 0, 0.75);
+}
+
+function scenarioStatuses(
+  snapshot: EvidenceSnapshot,
+  items: ReturnType<typeof dailyItems>,
+  locationScore: number
+): Pick<EntryAssessment, "leftStatus" | "rightStatus" | "activeSetup"> {
+  if (snapshot.dailyPhase === "extended") {
+    return { leftStatus: "too_late", rightStatus: "too_late", activeSetup: "none" };
+  }
+  const shortConfirmation = items.some((item) =>
+    item.direction === "bullish" && (
+      item.state.includes("cross") || item.state.startsWith("up_") ||
+      item.family === "candlestick" || item.id === "daily.momentum.bottom_divergence"
+    )
+  ) || items.some((item) => item.family === "volume" && item.values?.isLowVolumePullback === true);
+  const reversalWatch = items.some((item) =>
+    (item.family === "rsi" && item.state === "oversold") ||
+    (item.family === "kdj" && item.state === "low") ||
+    item.id === "daily.momentum.bottom_divergence"
+  );
+  const leftTriggered = ["base", "pullback"].includes(snapshot.dailyPhase) && locationScore >= 0.6 && shortConfirmation && snapshot.weeklyRegime !== "bearish";
+  const leftStatus: ScenarioStatus = leftTriggered ? "triggered" : reversalWatch || ["base", "pullback", "breakdown"].includes(snapshot.dailyPhase) ? "watch" : "not_formed";
+
+  const bullishVolume = items.some((item) => item.family === "volume" && item.direction === "bullish");
+  const heldRetest = items.some((item) => item.family === "volume" && item.values?.isLowVolumePullback === true);
+  const rightTriggered = snapshot.dailyPhase === "breakout" && (bullishVolume || heldRetest);
+  const nearBreakout = items.some((item) => item.family === "classicalPattern" && item.direction === "bullish" && item.state === "near_trigger");
+  const rightStatus: ScenarioStatus = rightTriggered ? "triggered" : nearBreakout || snapshot.dailyPhase === "breakout" ? "watch" : "not_formed";
+  return { leftStatus, rightStatus, activeSetup: leftTriggered ? "left" : rightTriggered ? "right" : "none" };
+}
+
+export function calculateEntryAssessment(snapshot: EvidenceSnapshot): EntryAssessment {
+  const reasons: string[] = [];
+  const items = dailyItems(snapshot).filter((item) => item.state !== "holder_only");
+  const atr = atrValue(snapshot) ?? snapshot.price * 0.02;
+  const riskPlan = buildRiskPlan(snapshot);
+  const dimensions: EntryAssessment["dimensions"] = {
+    priceLocation: priceLocationScore(snapshot, atr, reasons),
+    payoffQuality: payoffScore(riskPlan, reasons),
+    setupMaturity: setupScore(snapshot, items, reasons),
+    timeframeContext: timeframeScore(snapshot, reasons),
+    confirmationQuality: confirmationScore(items, reasons),
+  };
+
+  let hardCap = Math.min(5, snapshot.dataQuality.scoreCap);
+  if (riskPlan.stop === undefined) {
+    hardCap = Math.min(hardCap, 2.5);
+    reasons.push("No executable stop: score capped at 2.5.");
+  }
+  if (riskPlan.rewardRisk !== undefined && riskPlan.rewardRisk < 1) {
+    hardCap = Math.min(hardCap, 2.4);
+    reasons.push("Reward/risk below 1.0: score capped at 2.4.");
+  } else if (riskPlan.rewardRisk !== undefined && riskPlan.rewardRisk < 1.5) {
+    hardCap = Math.min(hardCap, 3.2);
+    reasons.push("Reward/risk below 1.5: score capped at 3.2.");
+  }
+  if (snapshot.dailyPhase === "extended") {
+    hardCap = Math.min(hardCap, 2.8);
+    reasons.push("Extended or climax phase: score capped at 2.8.");
+  }
+  if (snapshot.dailyPhase === "breakdown") hardCap = Math.min(hardCap, 2.9);
+
+  const rawScore = Object.values(dimensions).reduce((sum, value) => sum + value, 0);
+  const ruleScore = roundScore(Math.min(rawScore, hardCap));
+  const statuses = scenarioStatuses(snapshot, items, dimensions.priceLocation);
+  return {
+    ruleScore,
+    aiAdjustment: 0,
+    finalScore: ruleScore,
+    hardCap: Number(hardCap.toFixed(1)),
+    dimensions,
+    ...statuses,
+    riskPlan,
+    reasons,
+  };
+}
+
+export function toLegacyScoreDetail(assessment: EntryAssessment): ScoreDetail {
+  return {
+    baseTrendScore: assessment.dimensions.priceLocation + assessment.dimensions.payoffQuality,
+    momentumScore: assessment.dimensions.setupMaturity,
+    volumeScore: assessment.dimensions.confirmationQuality,
+    patternsScore: 0,
+    weeklyResonanceScore: assessment.dimensions.timeframeContext,
+    totalScore: assessment.finalScore,
+    scoreReasons: assessment.reasons,
   };
 }

@@ -3,6 +3,8 @@ import {
   calculateTDSequential,
   detectDivergence,
   calculateFibonacci,
+  calculateSwingFibonacci,
+  CLASSIC_PATTERN_IDS,
   detectPatterns
 } from '../patterns';
 import { calculateSupportResistance } from '../supportResistance';
@@ -24,6 +26,17 @@ function makeCandles(closes: number[], options?: { highs?: number[]; lows?: numb
 }
 
 describe('patterns and supportResistance', () => {
+  it('keeps the approved classic pattern catalog exhaustive', () => {
+    expect(CLASSIC_PATTERN_IDS).toEqual([
+      "doubleBottom", "doubleTop", "tripleBottom", "tripleTop",
+      "inverseHeadAndShoulders", "headAndShoulders",
+      "roundingBottom", "roundingTop", "cupAndHandle",
+      "bullFlag", "bearFlag", "rectangle",
+      "symmetricTriangle", "ascendingTriangle", "descendingTriangle", "pennant",
+      "risingWedge", "fallingWedge",
+    ]);
+  });
+
   describe('TD Sequential', () => {
     it('should return all zeros and None signal if candles count < 5', () => {
       const candles = makeCandles([10, 11, 12, 13]);
@@ -55,6 +68,12 @@ describe('patterns and supportResistance', () => {
       const candles = makeCandles(closes);
       const res = calculateTDSequential(candles);
       expect(res.counts[8]).toBe(0);
+    });
+
+    it('keeps the latest setup-nine freshness while counting exhaustion bars', () => {
+      const closes = [20, 20, 20, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9];
+      const result = calculateTDSequential(makeCandles(closes));
+      expect(result).toMatchObject({ latestCount: -11, latestSetup: 'buy', barsSinceSetup9: 2 });
     });
   });
 
@@ -100,6 +119,18 @@ describe('patterns and supportResistance', () => {
       expect(fibs.find(f => f.label === '0.0%')?.price).toBeCloseTo(20.5, 1);
       expect(fibs.find(f => f.label === '100.0%')?.price).toBeCloseTo(9.5, 1);
     });
+
+    it('anchors swing Fibonacci to the latest confirmed opposite pivots', () => {
+      const closes = Array.from({ length: 115 }, (_, index) => 100 + index * 0.05);
+      const highs = closes.map((close) => close + 0.5);
+      const lows = closes.map((close) => close - 0.5);
+      highs[12] = 180;
+      lows[70] = 90;
+      highs[102] = 125;
+      const result = calculateSwingFibonacci(makeCandles(closes, { highs, lows }), Array(115).fill(5));
+      expect(result).toMatchObject({ anchorStartIndex: 70, anchorEndIndex: 102, direction: 'up' });
+      expect(result?.levels).toHaveLength(7);
+    });
   });
 
   describe('detectPatterns', () => {
@@ -120,14 +151,19 @@ describe('patterns and supportResistance', () => {
       closes[8] = 122;
       closes[16] = 94;
       closes[24] = 121;
-      closes[35] = 93;
+      closes[35] = 90;
       const highs = closes.map((c, idx) => idx === 8 || idx === 24 ? c + 2 : c + 0.5);
       const lows = closes.map((c, idx) => idx === 16 ? c - 2 : c - 0.5);
       const candles = makeCandles(closes, { highs, lows });
 
-      const res = detectPatterns(candles);
+      const res = detectPatterns(candles, { relativeVolume: 1.7, cmf: -0.2 });
       expect(res.isDoubleTop).toBe(true);
       expect(res.activePatterns.some((p) => p.key === 'doubleTop')).toBe(true);
+      expect(res.activePatterns.find((p) => p.key === 'doubleTop')).toMatchObject({
+        status: 'confirmed',
+        triggerPrice: expect.any(Number),
+        invalidationPrice: expect.any(Number),
+      });
     });
 
     it('should detect a rectangle consolidation when price remains inside the box', () => {
@@ -174,6 +210,8 @@ describe('patterns and supportResistance', () => {
       expect(res.volumeProfile.nodes.length).toBeGreaterThan(0);
       expect(res.horizontalSupports).toBeDefined();
       expect(res.horizontalResistances).toBeDefined();
+      expect(res.typedLevels?.some((level) => level.source === 'horizontal')).toBe(true);
+      expect(res.typedLevels?.every((level) => level.strength >= 0 && level.strength <= 1)).toBe(true);
     });
   });
 });

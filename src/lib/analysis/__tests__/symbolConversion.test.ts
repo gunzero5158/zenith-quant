@@ -6,7 +6,7 @@ import {
   getEastMoneySecidCandidates,
   isShanghaiAShareCode,
 } from "../symbolConversion";
-import { buildWeeklyCandles } from "../weeklyCandles";
+import { buildWeeklyCandles, mergeCurrentWeekFromDaily } from "../weeklyCandles";
 import { Candle } from "../indicators";
 
 describe("isShanghaiAShareCode / aShareCodeToSuffixedSymbol", () => {
@@ -90,5 +90,42 @@ describe("buildWeeklyCandles", () => {
 
     const weekly = buildWeeklyCandles(daily);
     expect(weekly.map((c) => c.date)).toEqual(["2026-06-29", "2026-07-06"]);
+  });
+
+  it("accepts Date objects returned by the Yahoo SDK", () => {
+    const daily: Candle[] = [
+      { date: new Date("2026-07-20T00:00:00.000Z"), open: 10, high: 12, low: 9, close: 11, volume: 100 },
+      { date: new Date("2026-07-21T00:00:00.000Z"), open: 11, high: 13, low: 10, close: 12, volume: 150 },
+    ];
+
+    expect(buildWeeklyCandles(daily)).toEqual([{
+      date: "2026-07-20",
+      open: 10,
+      high: 13,
+      low: 9,
+      close: 12,
+      volume: 250,
+    }]);
+  });
+
+  it("replaces the provider current week with the week rebuilt from realtime daily bars", () => {
+    const provider: Candle[] = [
+      { date: "2026-07-13", open: 100, high: 110, low: 95, close: 105, volume: 5000 },
+      { date: "2026-07-20", open: 105, high: 108, low: 101, close: 102, volume: 2000 },
+    ];
+    const daily: Candle[] = [
+      { date: "2026-07-20", open: 105, high: 109, low: 103, close: 108, volume: 1000 },
+      { date: "2026-07-21", open: 108, high: 112, low: 107, close: 111, volume: 1500 },
+      { date: "2026-07-22", open: 111, high: 115, low: 110, close: 114, volume: 1800 },
+    ];
+
+    expect(mergeCurrentWeekFromDaily(provider, daily).at(-1)).toEqual({
+      date: "2026-07-20",
+      open: 105,
+      high: 115,
+      low: 103,
+      close: 114,
+      volume: 4300,
+    });
   });
 });

@@ -108,6 +108,42 @@ describe('llmProxy', () => {
     expect(result).toBe('OpenAI simulated response');
   });
 
+  it('adds the OpenAI-compatible /v1 path when a custom base URL is only an origin', async () => {
+    const globalFetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: 'Custom provider response' } }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', globalFetchMock);
+
+    await expect(generateLLMReport('prompt', {
+      provider: 'custom',
+      apiKey: 'test-key',
+      baseUrl: 'https://relay.example',
+      modelName: 'gpt-4o-mini',
+    })).resolves.toBe('Custom provider response');
+
+    expect(globalFetchMock.mock.calls[0][0]).toBe('https://relay.example/v1/chat/completions');
+  });
+
+  it('reports a clear configuration error when an upstream returns HTML with status 200', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      '<!DOCTYPE html><html><body>Relay landing page</body></html>',
+      {
+        status: 200,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      },
+    )));
+
+    await expect(generateLLMReport('prompt', {
+      provider: 'custom',
+      apiKey: 'test-key',
+      baseUrl: 'https://relay.example/v1',
+      modelName: 'gpt-4o-mini',
+    })).rejects.toThrow(/returned HTML instead of JSON.*Base URL/i);
+  });
+
   describe('baseUrl validation (SSRF hardening)', () => {
     const customConfig = (baseUrl: string) => ({
       provider: 'custom',

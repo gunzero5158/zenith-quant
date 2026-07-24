@@ -71,7 +71,26 @@ export interface VolumeAnalysisResult {
   isVolumeExpanding: boolean; // Is volume increasing over recent 5 days compared to before
   hasVolumeBreakout: boolean;  // Did today/recent close experience high-volume breakout?
   hasPriceVolumeDivergence: boolean; // Is price going up but volume/OBV declining?
+  relativeVolume?: number;
+  volumeDirection?: "bullish" | "bearish" | "neutral";
+  cmfTrend?: "rising" | "falling" | "flat";
+  obvTrend?: "rising" | "falling" | "flat";
+  isLowVolumePullback?: boolean;
   volumeDescription: string;
+}
+
+function normalizedTrend(values: number[], lookback = 5): "rising" | "falling" | "flat" {
+  const points = values.filter(Number.isFinite).slice(-lookback);
+  if (points.length < 2) return "flat";
+  const scale = Math.max(Math.abs(points[0]), 1);
+  const normalized = points.map((value, x) => ({ x, y: value / scale }));
+  const meanX = normalized.reduce((sum, point) => sum + point.x, 0) / normalized.length;
+  const meanY = normalized.reduce((sum, point) => sum + point.y, 0) / normalized.length;
+  const denominator = normalized.reduce((sum, point) => sum + (point.x - meanX) ** 2, 0);
+  const slope = denominator === 0
+    ? 0
+    : normalized.reduce((sum, point) => sum + (point.x - meanX) * (point.y - meanY), 0) / denominator;
+  return slope > 0.01 ? "rising" : slope < -0.01 ? "falling" : "flat";
 }
 
 /**
@@ -105,6 +124,11 @@ export function analyzePriceVolume(candles: Candle[]): VolumeAnalysisResult {
       isVolumeExpanding: false,
       hasVolumeBreakout: false,
       hasPriceVolumeDivergence: false,
+      relativeVolume: 0,
+      volumeDirection: "neutral",
+      cmfTrend: normalizedTrend(cmf),
+      obvTrend: normalizedTrend(obv),
+      isLowVolumePullback: false,
       volumeDescription: "数据样本不足，无法评估量价分析。",
     };
   }
@@ -112,6 +136,9 @@ export function analyzePriceVolume(candles: Candle[]): VolumeAnalysisResult {
   const latestIndex = length - 1;
   const todayVol = candles[latestIndex].volume;
   const volSMA = volume20SMA[latestIndex];
+  const priorVolumes = candles.slice(Math.max(0, latestIndex - 20), latestIndex).map((candle) => candle.volume);
+  const priorAverageVolume = priorVolumes.reduce((sum, volume) => sum + volume, 0) / Math.max(priorVolumes.length, 1);
+  const relativeVolume = priorAverageVolume > 0 ? Number((todayVol / priorAverageVolume).toFixed(2)) : 0;
 
   // 1. Has volume breakout today?
   // Volume is 1.5x of SMA AND price changed significantly (e.g. >1.5%)
@@ -134,6 +161,14 @@ export function analyzePriceVolume(candles: Candle[]): VolumeAnalysisResult {
   const priceTrendUp = candles[latestIndex].close > candles[latestIndex - 10].close;
   const obvTrendDown = obv[latestIndex] < obv[latestIndex - 10];
   const hasPriceVolumeDivergence = priceTrendUp && obvTrendDown;
+  const volumeDirection: VolumeAnalysisResult["volumeDirection"] = relativeVolume >= 1.3 && priceChangePercent > 1
+    ? "bullish"
+    : relativeVolume >= 1.3 && priceChangePercent < -1
+      ? "bearish"
+      : "neutral";
+  const priorFiveStart = Math.max(0, latestIndex - 5);
+  const priorTrendUp = candles[latestIndex - 1].close > candles[priorFiveStart].close;
+  const isLowVolumePullback = relativeVolume <= 0.8 && priceChangePercent < 0 && priorTrendUp;
 
   // 4. Formulate volume description
   let desc = "";
@@ -170,6 +205,11 @@ export function analyzePriceVolume(candles: Candle[]): VolumeAnalysisResult {
     isVolumeExpanding,
     hasVolumeBreakout,
     hasPriceVolumeDivergence,
+    relativeVolume,
+    volumeDirection,
+    cmfTrend: normalizedTrend(cmf),
+    obvTrend: normalizedTrend(obv),
+    isLowVolumePullback,
     volumeDescription: desc,
   };
 }

@@ -7,6 +7,7 @@ export interface LLMConfig {
 
 const OFFICIAL_PROVIDER_TIMEOUT_MS = 180_000;
 const MAX_UPSTREAM_ERROR_CHARS = 240;
+const ANALYSIS_SYSTEM_BOUNDARY = "You are reviewing an immutable technical-analysis evidence snapshot. Interpret the supplied facts and challenge the rule score only when cited evidence supports it. Do not recalculate indicators, invent market data, or introduce outside facts. Any score adjustment must stay within +/-0.5 and cite provided evidence IDs.";
 
 // Hostnames/IP ranges that must never be reachable through a user-supplied baseUrl.
 // This blocks SSRF against cloud metadata endpoints and internal networks.
@@ -67,6 +68,33 @@ function sanitizeModelName(modelName: string | undefined, fallback: string): str
   return name;
 }
 
+function resolveOpenAICompatibleEndpoint(baseUrl: string | undefined): string {
+  const base = resolveBaseUrl(baseUrl, "https://api.openai.com/v1");
+  const parsed = new URL(base);
+  const pathname = parsed.pathname.replace(/\/+$/, "");
+
+  if (!pathname) {
+    parsed.pathname = "/v1";
+  }
+
+  const normalized = parsed.toString().replace(/\/+$/, "");
+  return /\/chat\/completions$/i.test(parsed.pathname)
+    ? normalized
+    : `${normalized}/chat/completions`;
+}
+
+async function parseUpstreamJson<T>(provider: string, res: Response): Promise<T> {
+  try {
+    return await res.json() as T;
+  } catch {
+    const contentType = res.headers?.get?.("content-type") || "";
+    if (/text\/html/i.test(contentType)) {
+      throw new Error(`${provider} API returned HTML instead of JSON. Check that the Base URL points to an OpenAI-compatible API (usually ending in /v1).`);
+    }
+    throw new Error(`${provider} API returned invalid JSON${contentType ? ` (${contentType})` : ""}.`);
+  }
+}
+
 /** Builds an error without echoing unbounded upstream response bodies back to the client. */
 async function upstreamError(provider: string, res: Response): Promise<Error> {
   let detail = "";
@@ -115,6 +143,9 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
     const url = `${base}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
     const payload = {
+      systemInstruction: {
+        parts: [{ text: ANALYSIS_SYSTEM_BOUNDARY }],
+      },
       contents: [
         {
           parts: [
@@ -136,7 +167,7 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
       throw await upstreamError("Gemini", res);
     }
 
-    const data = await res.json();
+    const data = await parseUpstreamJson<{ candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }>("Gemini", res);
     return data?.candidates?.[0]?.content?.parts?.[0]?.text || "Gemini返回数据为空。";
   }
 
@@ -148,7 +179,7 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
     const payload = {
       model: sanitizeModelName(modelName, "claude-sonnet-5"),
       max_tokens: 4096,
-      system: "You are a professional Wall Street quantitative analyst specializing in TradingView stock ideas. Write extremely insightful technical analysis reports with clear headings and bullet points in the language requested by the user.",
+      system: ANALYSIS_SYSTEM_BOUNDARY,
       messages: [
         {
           role: "user",
@@ -171,20 +202,19 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
       throw await upstreamError("Anthropic", res);
     }
 
-    const data = await res.json();
+    const data = await parseUpstreamJson<{ content?: Array<{ text?: string }> }>("Anthropic", res);
     return data?.content?.[0]?.text || "Anthropic返回数据为空。";
   }
 
   // --- 3. OpenAI / DeepSeek / Custom OpenAI-compatible ---
-  const openaiBase = resolveBaseUrl(baseUrl, "https://api.openai.com/v1");
-  const openaiUrl = `${openaiBase}/chat/completions`;
+  const openaiUrl = resolveOpenAICompatibleEndpoint(baseUrl);
 
   const payload = {
     model: sanitizeModelName(modelName, "gpt-4o-mini"),
     messages: [
       {
         role: "system",
-        content: "You are a professional Wall Street quantitative analyst specializing in TradingView stock ideas. Write extremely insightful technical analysis reports with clear headings and bullet points in the language requested by the user."
+        content: ANALYSIS_SYSTEM_BOUNDARY
       },
       {
         role: "user",
@@ -211,6 +241,6 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
     throw await upstreamError(provider.toUpperCase(), res);
   }
 
-  const data = await res.json();
+  const data = await parseUpstreamJson<{ choices?: Array<{ message?: { content?: string } }> }>(provider.toUpperCase(), res);
   return data?.choices?.[0]?.message?.content || `${provider}返回数据为空。`;
 }

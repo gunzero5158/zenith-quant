@@ -1,11 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   convertSymbolToEastMoneyAShareSecid,
+  fetchAShareRealtimeQuote,
   mergeRealtimeQuoteIntoDailyCandles,
   parseEastMoneyRealtimeQuote,
 } from "@/lib/analysis/ashareRealtime";
+import { fetchEastMoneyJson } from "@/lib/analysis/eastmoneyHttp";
+
+vi.mock("@/lib/analysis/eastmoneyHttp", () => ({
+  fetchEastMoneyJson: vi.fn(),
+}));
 
 describe("A-share realtime quote helpers", () => {
+  afterEach(() => {
+    vi.mocked(fetchEastMoneyJson).mockReset();
+    vi.unstubAllGlobals();
+  });
+
   it("converts only A-share symbols to EastMoney secids", () => {
     expect(convertSymbolToEastMoneyAShareSecid("600519")).toBe("1.600519");
     expect(convertSymbolToEastMoneyAShareSecid("688048.SS")).toBe("1.688048");
@@ -141,5 +152,85 @@ describe("A-share realtime quote helpers", () => {
 
     expect(merged).toHaveLength(1);
     expect(merged[0].close).toBe(10.5);
+  });
+
+  it("falls back to the same Tonghuashun snapshot used by the watchlist", async () => {
+    vi.mocked(fetchEastMoneyJson).mockRejectedValueOnce(new Error("EastMoney unavailable"));
+    const wrap = (callback: string, payload: unknown) => `${callback}(${JSON.stringify(payload)});`;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () => Promise.resolve(wrap("today", {
+          hs_688048: {
+            "1": "20260724",
+            "7": "294.20",
+            "8": "298.10",
+            "9": "292.80",
+            "11": "295.02",
+            "13": 3800000,
+            name: "Everbright",
+          },
+        })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () => Promise.resolve(wrap("last", {
+          name: "Everbright",
+          data: [
+            "20260723,292.00,294.00,290.10,293.04,3200000,0,0,,,0",
+          ].join(";"),
+        })),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchAShareRealtimeQuote("688048.SS")).resolves.toEqual({
+      source: "tonghuashun",
+      name: "Everbright",
+      price: 295.02,
+      open: 294.2,
+      high: 298.1,
+      low: 292.8,
+      previousClose: 293.04,
+      volume: 3800000,
+      date: "2026-07-24",
+      changePercent: ((295.02 - 293.04) / 293.04) * 100,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reuses one short-lived A-share snapshot across watchlist and analysis requests", async () => {
+    vi.mocked(fetchEastMoneyJson).mockRejectedValue(new Error("EastMoney unavailable"));
+    const wrap = (callback: string, payload: unknown) => `${callback}(${JSON.stringify(payload)});`;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () => Promise.resolve(wrap("today", {
+          hs_600519: {
+            "1": "20260724",
+            "7": "1450.00",
+            "8": "1472.00",
+            "9": "1442.00",
+            "11": "1468.00",
+            "13": 2100000,
+            name: "MOUTAI",
+          },
+        })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () => Promise.resolve(wrap("last", {
+          name: "MOUTAI",
+          data: "20260723,1440.00,1455.00,1435.00,1448.00,1900000,0,0,,,0",
+        })),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const watchlistQuote = await fetchAShareRealtimeQuote("600519.SS");
+    const analysisQuote = await fetchAShareRealtimeQuote("600519.SS");
+
+    expect(analysisQuote).toEqual(watchlistQuote);
+    expect(analysisQuote?.price).toBe(1468);
+    expect(fetchEastMoneyJson).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
