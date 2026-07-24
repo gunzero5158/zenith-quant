@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useSyncExternalStore, useCallback } from "react";
+import React, { useState, useEffect, useRef, useSyncExternalStore, useCallback, useReducer } from "react";
 import dynamic from "next/dynamic";
 import { Search, Settings, Star, TrendingUp, TrendingDown, RefreshCw, Trash2, Zap } from "lucide-react";
 import LoadingOverlay from "@/components/LoadingOverlay";
@@ -19,6 +19,8 @@ import { isAnalysisCacheLanguageCompatible, isAShareAnalysisCacheReusable, isASh
 import { DataQuality, ScenarioStatus } from "@/lib/analysis/evidence";
 import { buildEntryScorePresentation } from "@/lib/analysis/presentation";
 import { mergeAnalysisQuoteIntoWatchlist, WatchQuote } from "@/lib/analysis/watchlistQuote";
+import { reduceAnalysisDisplay } from "@/lib/analysis/analysisDisplayState";
+import type { AnalysisDisplayEvent, AnalysisDisplayState } from "@/lib/analysis/analysisDisplayState";
 
 // Keep lightweight-charts out of the initial bundle
 const StockChart = dynamic(() => import("@/components/StockChart"), { ssr: false });
@@ -554,7 +556,14 @@ export default function Home() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   
   const [loading, setLoading] = useState(false);
-  const [stockData, setStockData] = useState<StockAnalysisData | null>(null);
+  const [analysisDisplay, dispatchAnalysisDisplay] = useReducer(
+    (state: AnalysisDisplayState<StockAnalysisData>, event: AnalysisDisplayEvent<StockAnalysisData>) => (
+      reduceAnalysisDisplay(state, event)
+    ),
+    { data: null, error: null }
+  );
+  const stockData = analysisDisplay.data;
+  const analysisError = analysisDisplay.error;
   const [chartPeriod, setChartPeriod] = useState<"daily" | "weekly">("daily");
   const [showMockWarning, setShowMockWarning] = useState(true);
 
@@ -804,7 +813,7 @@ export default function Home() {
               analyzeAbortRef.current = null;
               currentRequestSymbolRef.current = resolvedSymbol;
               setLoading(false);
-              setStockData(cachedData);
+              dispatchAnalysisDisplay({ type: "request_succeeded", data: cachedData });
               if (resolvedSymbol !== requestedSymbol) {
                 lastRequestedSymbolRef.current = resolvedSymbol;
                 setActiveSymbol(resolvedSymbol);
@@ -828,6 +837,7 @@ export default function Home() {
     analyzeAbortRef.current = controller;
     currentRequestSymbolRef.current = requestedSymbol;
 
+    dispatchAnalysisDisplay({ type: "request_started" });
     setLoading(true);
 
     const requestT = TRANSLATIONS[requestLang];
@@ -868,7 +878,9 @@ export default function Home() {
       if (!res.ok) {
         const err = await res.json() as ApiErrorResponse;
         if (analyzeAbortRef.current !== controller) return;
-        alert(`${requestT.queryFailed}: ${err.error || "Unknown Error"}`);
+        const message = `${requestT.queryFailed}: ${err.error || "Unknown Error"}`;
+        dispatchAnalysisDisplay({ type: "request_failed", error: message });
+        alert(message);
         return;
       }
 
@@ -878,7 +890,7 @@ export default function Home() {
         return;
       }
       const resolvedSymbol = data.symbol || requestedSymbol;
-      setStockData(data);
+      dispatchAnalysisDisplay({ type: "request_succeeded", data });
       syncAnalysisQuoteToWatchlist(data, resolvedSymbol);
       if (resolvedSymbol !== requestedSymbol) {
         lastRequestedSymbolRef.current = resolvedSymbol;
@@ -903,7 +915,9 @@ export default function Home() {
       if (controller.signal.aborted) return;
       const e = { message: getErrorMessage(caught) };
       console.error(e);
-      alert(`${requestT.queryError}: ${e.message || e}`);
+      const message = `${requestT.queryError}: ${e.message || e}`;
+      dispatchAnalysisDisplay({ type: "request_failed", error: message });
+      alert(message);
     } finally {
       if (analyzeAbortRef.current === controller) {
         setLoading(false);
@@ -1246,6 +1260,16 @@ export default function Home() {
         <main className="app-main" style={styles.main}>
           {loading ? (
             <LoadingOverlay key={activeSymbol} symbol={activeSymbol} effectiveLang={effectiveLang} />
+          ) : analysisError ? (
+            <div style={styles.analysisErrorState} role="alert">
+              <div style={styles.analysisErrorIcon}>!</div>
+              <h2 style={styles.analysisErrorTitle}>{t.queryFailed}</h2>
+              <p style={styles.analysisErrorMessage}>{analysisError}</p>
+              <button type="button" onClick={() => fetchActiveStockData(true)} style={styles.analysisRetryButton}>
+                <RefreshCw size={16} />
+                {effectiveLang === "en" ? "Retry analysis" : effectiveLang === "ja" ? "分析を再試行" : "重试分析"}
+              </button>
+            </div>
           ) : stockData ? (
             <div className="dashboard-grid" style={styles.dashboardGrid}>
               <div className="dashboard-top" style={styles.topRow}>
@@ -2097,6 +2121,54 @@ const styles: Record<string, React.CSSProperties> = {
     overflowY: "auto",
     position: "relative",
     minHeight: 0,
+  },
+  analysisErrorState: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "32px",
+    textAlign: "center",
+    backgroundColor: "#131722",
+  },
+  analysisErrorIcon: {
+    width: "42px",
+    height: "42px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "1px solid #f23645",
+    borderRadius: "50%",
+    color: "#f23645",
+    fontSize: "24px",
+    fontWeight: 700,
+  },
+  analysisErrorTitle: {
+    margin: "14px 0 8px",
+    color: "#ffffff",
+    fontSize: "18px",
+  },
+  analysisErrorMessage: {
+    maxWidth: "620px",
+    margin: "0 0 18px",
+    color: "#b2b5be",
+    fontSize: "14px",
+    lineHeight: 1.6,
+    overflowWrap: "anywhere",
+  },
+  analysisRetryButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "7px",
+    border: "none",
+    borderRadius: "4px",
+    padding: "8px 14px",
+    backgroundColor: "#2962ff",
+    color: "#ffffff",
+    fontSize: "13px",
+    fontWeight: 600,
+    cursor: "pointer",
   },
   welcomeContainer: {
     display: "flex",
