@@ -8,6 +8,35 @@ const localReport = {
 };
 
 describe("AI report composition", () => {
+  it("removes machine evidence IDs from every user-visible AI field", () => {
+    const report = composeAiReport({
+      overview: "日线仍偏弱（`daily.ema.bearish`），反弹需要确认。",
+      technicalAnalysis: [
+        "### 趋势与多周期结构",
+        "- **日线趋势：** EMA 呈空头排列（`daily.ema.bearish`），价格低于所有均线。",
+        "- **周线结构：** 周线 BOLL 位于下半轨（`weekly.boll.lower_half`，%B 28.09%）。",
+        "- **MACD：** 0 日前触发死叉 `daily.macd.death_cross`。",
+      ].join("\n"),
+      strategyCommentary: "只有 daily.rsi.up_50 成立后才考虑右侧确认。",
+    }, localReport, "zh-CN");
+
+    expect(report.overview).toBe("日线仍偏弱，反弹需要确认。");
+    expect(report.technicalAnalysis).toContain("EMA 呈空头排列，价格低于所有均线");
+    expect(report.technicalAnalysis).toContain("周线 BOLL 位于下半轨（%B 28.09%）");
+    expect(report.recommendation).toContain("只有 成立后才考虑右侧确认");
+    expect(`${report.overview}\n${report.technicalAnalysis}\n${report.recommendation}`).not.toMatch(
+      /(?:daily|weekly)\.[a-z0-9_.-]+/i
+    );
+  });
+
+  it("removes an invented evidence ID even when a known ID is its prefix", () => {
+    const report = composeAiReport({
+      overview: "风险仍在（`daily.ema.bearish.copy`）。",
+    }, localReport, "zh-CN", ["daily.ema.bearish"]);
+
+    expect(report.overview).toBe("风险仍在。");
+  });
+
   it("shows synthesized AI prose without raw local evidence or duplicate score blocks", () => {
     const report = composeAiReport({
       overview: "短期趋势偏弱，反弹仍需确认。",

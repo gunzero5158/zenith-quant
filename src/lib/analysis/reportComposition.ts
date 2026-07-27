@@ -1,4 +1,5 @@
 import { StructuredReport } from "./fallbackReport";
+import { sanitizeUserVisibleAnalysisText } from "./publicAnalysisText";
 
 export interface AiReportFields {
   overview?: unknown;
@@ -13,23 +14,26 @@ const AI_HEADINGS: Record<string, string> = {
   ja: "AI補足判断",
 };
 
-function nonEmptyText(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+function nonEmptyText(value: unknown, evidenceIds: Iterable<string>): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const sanitized = sanitizeUserVisibleAnalysisText(value, evidenceIds);
+  return sanitized || undefined;
 }
 
 export function composeAiReport(
   ai: AiReportFields,
   localReport: StructuredReport,
-  language: string
+  language: string,
+  evidenceIds: Iterable<string> = []
 ): StructuredReport {
-  const strategyCommentary = nonEmptyText(ai.strategyCommentary);
+  const strategyCommentary = nonEmptyText(ai.strategyCommentary, evidenceIds);
   const recommendation = strategyCommentary
     ? `${localReport.recommendation}\n\n### ${AI_HEADINGS[language] ?? AI_HEADINGS["zh-CN"]}\n${strategyCommentary}`
     : localReport.recommendation;
 
   return {
-    overview: nonEmptyText(ai.overview) ?? localReport.overview,
+    overview: nonEmptyText(ai.overview, evidenceIds) ?? localReport.overview,
     recommendation,
-    technicalAnalysis: nonEmptyText(ai.technicalAnalysis) ?? localReport.technicalAnalysis,
+    technicalAnalysis: nonEmptyText(ai.technicalAnalysis, evidenceIds) ?? localReport.technicalAnalysis,
   };
 }

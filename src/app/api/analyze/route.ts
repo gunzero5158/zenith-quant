@@ -896,9 +896,10 @@ export async function POST(request: Request) {
         const parsed = JSON.parse(cleanedText) as AiReportFields & {
           scoreReview: unknown;
         };
+        const evidenceIds = techData.snapshot.items.map((item) => item.id);
         aiScoreReview = validateAiScoreReview(
           parsed.scoreReview,
-          techData.snapshot.items.map((item) => item.id),
+          evidenceIds,
           techData.entryAssessment.ruleScore,
           techData.entryAssessment.hardCap
         );
@@ -907,7 +908,7 @@ export async function POST(request: Request) {
           aiAdjustment: aiScoreReview.appliedAdjustment,
           finalScore: aiScoreReview.finalScore,
         };
-        const composedReport = composeAiReport(parsed, localReport, effectiveLang);
+        const composedReport = composeAiReport(parsed, localReport, effectiveLang, evidenceIds);
         reportOverview = composedReport.overview;
         reportRecommendation = composedReport.recommendation;
         reportTechnical = composedReport.technicalAnalysis;

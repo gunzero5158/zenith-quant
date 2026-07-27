@@ -1,10 +1,21 @@
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 
+export const ANALYSIS_CACHE_VERSION = 1;
+
 export function isAnalysisCacheLanguageCompatible(
   cachedLanguage: string | undefined,
   requestedLanguage: string
 ): boolean {
   return typeof cachedLanguage === "string" && cachedLanguage === requestedLanguage;
+}
+
+export function isAnalysisCacheCompatible(
+  cachedVersion: number | undefined,
+  cachedLanguage: string | undefined,
+  requestedLanguage: string
+): boolean {
+  return cachedVersion === ANALYSIS_CACHE_VERSION
+    && isAnalysisCacheLanguageCompatible(cachedLanguage, requestedLanguage);
 }
 
 export interface AnalysisQuoteSnapshot {

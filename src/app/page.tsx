@@ -14,7 +14,7 @@ import { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
 import { ChanLunResult } from "@/lib/analysis/chanlun";
 import { SupportResistanceResult } from "@/lib/analysis/supportResistance";
 import { VolumeAnalysisResult } from "@/lib/analysis/volumeForce";
-import { isAnalysisCacheLanguageCompatible, isAShareAnalysisCacheReusable, isAShareSymbol } from "@/lib/analysis/analysisCache";
+import { ANALYSIS_CACHE_VERSION, isAnalysisCacheCompatible, isAShareAnalysisCacheReusable, isAShareSymbol } from "@/lib/analysis/analysisCache";
 import { DataQuality, ScenarioStatus } from "@/lib/analysis/evidence";
 import { buildEntryScorePresentation } from "@/lib/analysis/presentation";
 import { mergeAnalysisQuoteIntoWatchlist, WatchQuote } from "@/lib/analysis/watchlistQuote";
@@ -78,6 +78,7 @@ interface StockAnalysisData {
 }
 
 interface AnalysisCacheEntry {
+  version: number;
   timestamp: number;
   language: EffectiveLanguage;
   data: StockAnalysisData;
@@ -751,7 +752,7 @@ export default function Home() {
 
     if (!isForce) {
       let cachedObj = readAnalysisCache(requestedSymbol);
-      if (cachedObj && !isAnalysisCacheLanguageCompatible(cachedObj.language, requestLang)) {
+      if (cachedObj && !isAnalysisCacheCompatible(cachedObj.version, cachedObj.language, requestLang)) {
         removeAnalysisCache(requestedSymbol);
         cachedObj = null;
       }
@@ -894,6 +895,7 @@ export default function Home() {
 
       if (!data.isMock) {
         writeAnalysisCache(resolvedSymbol, {
+          version: ANALYSIS_CACHE_VERSION,
           timestamp: Date.now(),
           language: requestLang,
           data

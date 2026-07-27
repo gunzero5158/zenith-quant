@@ -1,3 +1,5 @@
+import { sanitizeUserVisibleAnalysisText } from "./publicAnalysisText";
+
 export type AiScoreAlignment = "agree" | "more_cautious" | "more_constructive";
 
 export interface AiScoreReason {
@@ -46,7 +48,15 @@ function parseReasons(value: unknown, allowedIds: Set<string>, warnings: string[
       warnings.push("AI score reason cites unknown or empty evidence IDs");
       continue;
     }
-    reasons.push({ evidenceIds, text: candidate.text.trim() });
+    const text = sanitizeUserVisibleAnalysisText(candidate.text, allowedIds);
+    if (!text) {
+      warnings.push("AI score reason must include a user-visible explanation");
+      continue;
+    }
+    reasons.push({
+      evidenceIds,
+      text,
+    });
   }
   return reasons;
 }

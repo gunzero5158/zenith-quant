@@ -104,6 +104,8 @@ describe('llmProxy', () => {
 
     const body = JSON.parse(calledInit.body);
     expect(body.model).toBe('gpt-4o');
+    expect(body.messages[0].content).toContain('Evidence IDs are machine-only');
+    expect(body.messages[0].content).toContain('scoreReview.reasons[].evidenceIds');
     expect(body.messages[1].content).toBe('hello openai');
     expect(result).toBe('OpenAI simulated response');
   });

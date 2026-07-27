@@ -15,6 +15,32 @@ function review(adjustment: number, ids = ["weekly.macd.death_cross"]) {
 }
 
 describe("bounded AI score review", () => {
+  it("keeps evidence IDs in machine fields but removes them from reason text", () => {
+    const result = validateAiScoreReview({
+      ...review(-0.2),
+      reasons: [{
+        evidenceIds: ["weekly.macd.death_cross"],
+        text: "周线动能偏弱（`weekly.macd.death_cross`）。",
+      }],
+    }, evidenceIds, 4.1, 5);
+
+    expect(result.review?.reasons[0].evidenceIds).toEqual(["weekly.macd.death_cross"]);
+    expect(result.review?.reasons[0].text).toBe("周线动能偏弱。");
+  });
+
+  it("rejects an adjustment when its reason contains only a machine evidence ID", () => {
+    const result = validateAiScoreReview({
+      ...review(-0.2),
+      reasons: [{
+        evidenceIds: ["weekly.macd.death_cross"],
+        text: "`weekly.macd.death_cross`",
+      }],
+    }, evidenceIds, 4.1, 5);
+
+    expect(result.review?.reasons).toEqual([]);
+    expect(result.appliedAdjustment).toBe(0);
+  });
+
   it("accepts a reasoned adjustment that references existing evidence", () => {
     const result = validateAiScoreReview(review(-0.3), evidenceIds, 4.1, 5);
     expect(result.appliedAdjustment).toBe(-0.3);

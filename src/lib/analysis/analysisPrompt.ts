@@ -51,6 +51,8 @@ Write every user-visible string in that language, including headings, explanatio
 Do not recalculate MACD, KDJ, RSI, EMA, BOLL, Ichimoku, ATR, Fibonacci, TD Sequential, classical patterns, candlesticks, volume, CMF, OBV, VPVR, Elliott Wave, or Chanlun. Use the supplied event timing and provisional daily/weekly status.
 The 0-5 rule score measures current new-entry attractiveness, not trend strength. Holder, left entry, right add, and exit/stop are separate strategies.
 You may adjust the rule score by at most +/-0.5. A nonzero adjustment must cite existing evidence IDs and cannot exceed hardCap.
+Evidence IDs may appear only in scoreReview.reasons[].evidenceIds. They are machine-readable references, not analyst language.
+Never include evidence IDs in overview, technicalAnalysis, strategyCommentary, score-review reason text, conflicts, or change conditions. Refer to indicators and facts in plain language instead.
 
 Writing requirements:
 - Synthesize the evidence into an analyst view. Do not translate or enumerate the raw evidence list.
