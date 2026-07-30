@@ -14,7 +14,14 @@ import { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
 import { ChanLunResult } from "@/lib/analysis/chanlun";
 import { SupportResistanceResult } from "@/lib/analysis/supportResistance";
 import { VolumeAnalysisResult } from "@/lib/analysis/volumeForce";
-import { ANALYSIS_CACHE_VERSION, isAnalysisCacheCompatible, isAShareAnalysisCacheReusable, isAShareSymbol } from "@/lib/analysis/analysisCache";
+import {
+  ANALYSIS_CACHE_VERSION,
+  isAnalysisCacheCompatible,
+  isAnalysisCacheReusableByTime,
+  isAShareAnalysisCacheReusable,
+  isAShareSymbol,
+  isMarketTrading,
+} from "@/lib/analysis/analysisCache";
 import { DataQuality, ScenarioStatus } from "@/lib/analysis/evidence";
 import { buildEntryScorePresentation } from "@/lib/analysis/presentation";
 import { mergeAnalysisQuoteIntoWatchlist, WatchQuote } from "@/lib/analysis/watchlistQuote";
@@ -131,6 +138,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     searchPlaceholder: "输入代码或拼音搜索... (e.g. AAPL, 700, 600519)",
     llmSettings: "大模型配置",
     watchlist: "分析历史",
+    lastAnalyzed: "上次 {time}",
     loading: "正在实时获取并分析 {symbol} 多周期数据，请稍候...",
     scoreLabel: "买点魅力分",
     supportLabel: "支撑位 (近期极值)",
@@ -175,6 +183,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     searchPlaceholder: "輸入代碼或拼音搜尋... (e.g. AAPL, 700, 600519)",
     llmSettings: "大模型配置",
     watchlist: "分析歷史",
+    lastAnalyzed: "上次 {time}",
     loading: "正在實時獲取並分析 {symbol} 多週期數據，請稍候...",
     scoreLabel: "買點魅力分",
     supportLabel: "支撐位 (近期極值)",
@@ -219,6 +228,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     searchPlaceholder: "Enter ticker to search... (e.g., AAPL, 0700.HK)",
     llmSettings: "LLM Config",
     watchlist: "Analysis History",
+    lastAnalyzed: "Last {time}",
     loading: "Fetching and analyzing multi-period data for {symbol}, please wait...",
     scoreLabel: "Entry Appeal Score",
     supportLabel: "Support (Recent Pivot)",
@@ -263,6 +273,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     searchPlaceholder: "コードを入力... (e.g. AAPL, 700)",
     llmSettings: "AIモデル設定",
     watchlist: "分析履歴",
+    lastAnalyzed: "前回 {time}",
     loading: "{symbol} の複数周期データを取得・分析中、しばらくお待ちください...",
     scoreLabel: "買い場魅力度",
     supportLabel: "サポートライン (支持線)",
@@ -326,6 +337,7 @@ const setCookie = (name: string, value: string, days = 365) => {
 // ----------------------------------------------------
 const ANALYSIS_CACHE_LIMIT = 6;
 const ANALYSIS_CACHE_INDEX_KEY = "zenith_analysis_index";
+const ANALYSIS_TIMESTAMPS_KEY = "zenith_analysis_timestamps";
 const analysisCacheKey = (symbol: string) => `zenith_analysis_${symbol}`;
 
 const readAnalysisCacheIndex = (): string[] => {
@@ -387,6 +399,30 @@ const removeAnalysisCache = (symbol: string) => {
   }
 };
 
+const readAnalysisTimestamps = (): Record<string, number> => {
+  try {
+    const raw = localStorage.getItem(ANALYSIS_TIMESTAMPS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, number] => (
+        typeof entry[1] === "number" && Number.isFinite(entry[1])
+      ))
+    );
+  } catch (e) {
+    console.error("Read analysis timestamps failed:", e);
+    return {};
+  }
+};
+
+const writeAnalysisTimestamps = (timestamps: Record<string, number>) => {
+  try {
+    localStorage.setItem(ANALYSIS_TIMESTAMPS_KEY, JSON.stringify(timestamps));
+  } catch (e) {
+    console.error("Write analysis timestamps failed:", e);
+  }
+};
+
 const resolveEffectiveLanguage = (language: AppLanguage): EffectiveLanguage => {
   if (language !== "auto") return language;
   const navLang = typeof navigator !== "undefined" ? navigator.language.toLowerCase() : "zh-cn";
@@ -396,45 +432,22 @@ const resolveEffectiveLanguage = (language: AppLanguage): EffectiveLanguage => {
   return "en";
 };
 
-const isNonTradingHours = (symbol: string): boolean => {
-  const now = new Date();
-  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-  const bjTime = new Date(utc + (3600000 * 8)); // UTC+8
-  
-  const day = bjTime.getDay();
-  const hour = bjTime.getHours();
-  const min = bjTime.getMinutes();
-  
-  if (day === 0 || day === 6) return true; // Weekend
-  
-  const isA = /^(SH|SZ|BJ)\d{6}$/i.test(symbol) || /^\d{6}(?:\.(?:SS|SH|SZ))?$/i.test(symbol);
-  const isHK = /^(HK\d{4}|\d{4}\.HK)$/i.test(symbol);
-  const isJP = /^\d{3}[0-9A-Z]\.T$/i.test(symbol) || /^\d{3}[A-Z]$/i.test(symbol);
-  
-  if (isA) {
-    if (hour < 9 || hour >= 15) return true;
-    if (hour === 9 && min < 30) return true;
-    if (hour === 11 && min >= 30) return true;
-    if (hour === 12) return true;
-    return false;
-  } else if (isHK) {
-    if (hour < 9 || hour >= 16) return true;
-    if (hour === 9 && min < 30) return true;
-    if (hour === 12) return true;
-    return false;
-  } else if (isJP) {
-    // Japanese stock trading hours: JST 09:00-11:30 and 12:30-15:00
-    // Translated to Beijing Time (UTC+8): 08:00-10:30 and 11:30-14:00
-    if (hour < 8 || hour >= 14) return true;
-    if (hour === 10 && min >= 30) return true;
-    if (hour === 11 && min < 30) return true;
-    return false;
-  } else {
-    // US: 05:00 - 21:00 Beijing time is roughly non-trading
-    if (hour >= 5 && hour < 21) return true;
-    return false;
-  }
+const ANALYSIS_TIMESTAMP_LOCALES: Record<EffectiveLanguage, string> = {
+  "zh-CN": "zh-CN",
+  "zh-TW": "zh-TW",
+  en: "en-US",
+  ja: "ja-JP",
 };
+
+const formatAnalysisTimestamp = (timestamp: number, language: EffectiveLanguage): string => (
+  new Intl.DateTimeFormat(ANALYSIS_TIMESTAMP_LOCALES[language], {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date(timestamp))
+);
 
 const parseBoldText = (text: string) => {
   const parts = text.split(/\*\*(.*?)\*\*/g);
@@ -565,6 +578,12 @@ export default function Home() {
 
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [watchlistQuotes, setWatchlistQuotes] = useState<Record<string, WatchQuote>>({});
+  const [analysisTimestamps, setAnalysisTimestamps] = useState<Record<string, number>>({});
+
+  const recordAnalysisTimestamp = useCallback((symbol: string, timestamp: number) => {
+    setAnalysisTimestamps((previous) => ({ ...previous, [symbol]: timestamp }));
+    writeAnalysisTimestamps({ ...readAnalysisTimestamps(), [symbol]: timestamp });
+  }, []);
 
   const syncAnalysisQuoteToWatchlist = useCallback((data: StockAnalysisData, symbol: string) => {
     setWatchlistQuotes((previous) => {
@@ -730,6 +749,32 @@ export default function Home() {
   useEffect(() => {
     if (!watchlistKey) return;
 
+    let cancelled = false;
+    const symbols = watchlistKey.split(",");
+    queueMicrotask(() => {
+      if (cancelled) return;
+      const timestamps = readAnalysisTimestamps();
+      let changed = false;
+      for (const symbol of symbols) {
+        if (timestamps[symbol]) continue;
+        const cached = readAnalysisCache(symbol);
+        if (cached?.timestamp && Number.isFinite(cached.timestamp)) {
+          timestamps[symbol] = cached.timestamp;
+          changed = true;
+        }
+      }
+      setAnalysisTimestamps(timestamps);
+      if (changed) writeAnalysisTimestamps(timestamps);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [watchlistKey]);
+
+  useEffect(() => {
+    if (!watchlistKey) return;
+
     const fetchWatchlistQuotes = async () => {
       try {
         const newQuotes = await fetchQuoteMap(watchlistKey);
@@ -759,17 +804,19 @@ export default function Home() {
       if (cachedObj) {
         try {
           const cachedData = cachedObj.data;
-          const cacheDate = new Date(cachedObj.timestamp);
-          const now = new Date();
-          const isSameDay = cacheDate.toDateString() === now.toDateString();
-          const outsideTradingHours = isNonTradingHours(requestedSymbol);
+          const nowTimestamp = Date.now();
+          const marketTrading = isMarketTrading(requestedSymbol, nowTimestamp);
 
           if (cachedData.isMock) {
             removeAnalysisCache(requestedSymbol);
-          } else if (outsideTradingHours) {
-            let canReuseCache = isSameDay;
+          } else {
+            let canReuseCache = isAnalysisCacheReusableByTime(
+              requestedSymbol,
+              cachedObj.timestamp,
+              nowTimestamp
+            );
 
-            if (isAShareSymbol(requestedSymbol)) {
+            if (canReuseCache && !marketTrading && isAShareSymbol(requestedSymbol)) {
               canReuseCache = false;
               try {
                 const latestQuotes = await fetchQuoteMap(requestedSymbol);
@@ -811,6 +858,7 @@ export default function Home() {
               currentRequestSymbolRef.current = resolvedSymbol;
               setLoading(false);
               setStockData(cachedData);
+              recordAnalysisTimestamp(resolvedSymbol, cachedObj.timestamp);
               if (resolvedSymbol !== requestedSymbol) {
                 lastRequestedSymbolRef.current = resolvedSymbol;
                 setActiveSymbol(resolvedSymbol);
@@ -893,10 +941,13 @@ export default function Home() {
       }
       setShowMockWarning(true);
 
+      const analyzedAt = Date.now();
+      recordAnalysisTimestamp(resolvedSymbol, analyzedAt);
+
       if (!data.isMock) {
         writeAnalysisCache(resolvedSymbol, {
           version: ANALYSIS_CACHE_VERSION,
-          timestamp: Date.now(),
+          timestamp: analyzedAt,
           language: requestLang,
           data
         });
@@ -917,7 +968,7 @@ export default function Home() {
         setLoading(false);
       }
     }
-  }, [activeSymbol, appLanguage, llmConfig, syncAnalysisQuoteToWatchlist, useFallback]);
+  }, [activeSymbol, appLanguage, llmConfig, recordAnalysisTimestamp, syncAnalysisQuoteToWatchlist, useFallback]);
 
   const fetchActiveStockDataRef = useRef(fetchActiveStockData);
   useEffect(() => {
@@ -982,9 +1033,21 @@ export default function Home() {
     setShowSuggestions(false);
   };
 
+  const handleHistorySelect = (symbol: string) => {
+    if (symbol === activeSymbol) {
+      void fetchActiveStockDataRef.current();
+      return;
+    }
+    setActiveSymbol(symbol);
+  };
+
   const handleRemoveWatchlist = (sym: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Avoid selecting the item
     setWatchlist((prev) => prev.filter((item) => item !== sym));
+    const timestamps = readAnalysisTimestamps();
+    delete timestamps[sym];
+    writeAnalysisTimestamps(timestamps);
+    setAnalysisTimestamps(timestamps);
   };
 
   const handleSaveSettings = (newConfig: LLMConfig) => {
@@ -1204,10 +1267,23 @@ export default function Home() {
             {watchlist.map((sym) => {
               const quote = watchlistQuotes[sym];
               const isUp = quote ? quote.change >= 0 : true;
+              const analysisTimestamp = analysisTimestamps[sym];
+              const formattedAnalysisTime = analysisTimestamp
+                ? formatAnalysisTimestamp(analysisTimestamp, effectiveLang)
+                : "";
               return (
                 <div
                   key={sym}
-                  onClick={() => setActiveSymbol(sym)}
+                  onClick={() => handleHistorySelect(sym)}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      handleHistorySelect(sym);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
                   className="app-watch-item"
                   style={{
                     ...styles.watchItem,
@@ -1216,6 +1292,14 @@ export default function Home() {
                 >
                   <div style={styles.watchItemLeft}>
                     <span style={styles.watchSymbol}>{sym}</span>
+                    {analysisTimestamp && (
+                      <span
+                        style={styles.watchTimestamp}
+                        title={new Date(analysisTimestamp).toLocaleString(ANALYSIS_TIMESTAMP_LOCALES[effectiveLang])}
+                      >
+                        {t.lastAnalyzed.replace("{time}", formattedAnalysisTime)}
+                      </span>
+                    )}
                   </div>
                   {quote ? (
                     <div style={styles.watchItemRight}>
@@ -2071,6 +2155,8 @@ const styles: Record<string, React.CSSProperties> = {
   watchItemLeft: {
     display: "flex",
     flexDirection: "column",
+    minWidth: 0,
+    flex: 1,
   },
   watchSymbol: {
     fontWeight: "bold",
@@ -2083,6 +2169,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "flex-end",
     position: "relative",
     paddingRight: "20px",
+    flexShrink: 0,
   },
   watchPrice: {
     fontSize: "13px",
@@ -2137,6 +2224,15 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: "20px",
     flexWrap: "wrap",
+  },
+  watchTimestamp: {
+    color: "#787b86",
+    fontSize: "12px",
+    lineHeight: 1.35,
+    marginTop: "3px",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
   statsContainer: {
     display: "flex",
