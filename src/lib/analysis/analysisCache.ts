@@ -1,9 +1,119 @@
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 export const ANALYSIS_REPORT_CACHE_VERSION = 2;
+export const ANALYSIS_CACHE_VERSION = ANALYSIS_REPORT_CACHE_VERSION;
+export const ACTIVE_MARKET_ANALYSIS_MAX_AGE_MS = 10 * 60 * 1000;
 
 export function isAnalysisCacheVersionCompatible(cachedVersion: number | undefined): boolean {
   return cachedVersion === ANALYSIS_REPORT_CACHE_VERSION;
+}
+
+interface MarketSessionDefinition {
+  timeZone: string;
+  sessions: ReadonlyArray<readonly [startMinute: number, endMinute: number]>;
+}
+
+interface MarketDateParts {
+  dateKey: string;
+  weekday: string;
+  minuteOfDay: number;
+}
+
+const MARKET_SESSIONS = {
+  cn: {
+    timeZone: "Asia/Shanghai",
+    sessions: [[9 * 60 + 30, 11 * 60 + 30], [13 * 60, 15 * 60]],
+  },
+  hk: {
+    timeZone: "Asia/Hong_Kong",
+    sessions: [[9 * 60 + 30, 12 * 60], [13 * 60, 16 * 60 + 10]],
+  },
+  jp: {
+    timeZone: "Asia/Tokyo",
+    sessions: [[9 * 60, 11 * 60 + 30], [12 * 60 + 30, 15 * 60 + 30]],
+  },
+  us: {
+    timeZone: "America/New_York",
+    sessions: [[9 * 60 + 30, 16 * 60]],
+  },
+} as const satisfies Record<string, MarketSessionDefinition>;
+
+const marketDateFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function getMarketSession(symbol: string): MarketSessionDefinition {
+  const clean = symbol.trim().toUpperCase();
+  if (isAShareSymbol(clean)) return MARKET_SESSIONS.cn;
+  if (/^(?:HK\d{4,5}|\d{4,5}\.HK)$/.test(clean)) return MARKET_SESSIONS.hk;
+  if (/^(?:\d{3}[0-9A-Z]\.T|\d{3}[A-Z])$/.test(clean)) return MARKET_SESSIONS.jp;
+  return MARKET_SESSIONS.us;
+}
+
+function getMarketDateParts(symbol: string, timestamp: number): MarketDateParts | null {
+  if (!Number.isFinite(timestamp)) return null;
+
+  const { timeZone } = getMarketSession(symbol);
+  let formatter = marketDateFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+    marketDateFormatters.set(timeZone, formatter);
+  }
+
+  const parts = Object.fromEntries(
+    formatter.formatToParts(new Date(timestamp)).map((part) => [part.type, part.value])
+  );
+  const hour = Number(parts.hour);
+  const minute = Number(parts.minute);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+
+  return {
+    dateKey: `${parts.year}-${parts.month}-${parts.day}`,
+    weekday: parts.weekday,
+    minuteOfDay: hour * 60 + minute,
+  };
+}
+
+export function isMarketTrading(symbol: string, timestamp = Date.now()): boolean {
+  const market = getMarketSession(symbol);
+  const parts = getMarketDateParts(symbol, timestamp);
+  if (!parts || parts.weekday === "Sat" || parts.weekday === "Sun") return false;
+
+  return market.sessions.some(([startMinute, endMinute]) => (
+    parts.minuteOfDay >= startMinute && parts.minuteOfDay < endMinute
+  ));
+}
+
+export function isSameMarketDate(
+  symbol: string,
+  leftTimestamp: number,
+  rightTimestamp: number
+): boolean {
+  const left = getMarketDateParts(symbol, leftTimestamp);
+  const right = getMarketDateParts(symbol, rightTimestamp);
+  return Boolean(left && right && left.dateKey === right.dateKey);
+}
+
+export function isAnalysisCacheReusableByTime(
+  symbol: string,
+  cacheTimestamp: number,
+  nowTimestamp = Date.now()
+): boolean {
+  if (!Number.isFinite(cacheTimestamp) || !Number.isFinite(nowTimestamp)) return false;
+  if (cacheTimestamp > nowTimestamp) return false;
+
+  if (isMarketTrading(symbol, nowTimestamp)) {
+    return nowTimestamp - cacheTimestamp <= ACTIVE_MARKET_ANALYSIS_MAX_AGE_MS;
+  }
+
+  return isSameMarketDate(symbol, cacheTimestamp, nowTimestamp);
 }
 
 export function isAnalysisCacheLanguageCompatible(
@@ -11,6 +121,15 @@ export function isAnalysisCacheLanguageCompatible(
   requestedLanguage: string
 ): boolean {
   return typeof cachedLanguage === "string" && cachedLanguage === requestedLanguage;
+}
+
+export function isAnalysisCacheCompatible(
+  cachedVersion: number | undefined,
+  cachedLanguage: string | undefined,
+  requestedLanguage: string
+): boolean {
+  return isAnalysisCacheVersionCompatible(cachedVersion)
+    && isAnalysisCacheLanguageCompatible(cachedLanguage, requestedLanguage);
 }
 
 export interface AnalysisQuoteSnapshot {

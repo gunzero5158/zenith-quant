@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  ACTIVE_MARKET_ANALYSIS_MAX_AGE_MS,
   ANALYSIS_REPORT_CACHE_VERSION,
+  isAnalysisCacheCompatible,
   isAnalysisCacheLanguageCompatible,
+  isAnalysisCacheReusableByTime,
   isAnalysisCacheVersionCompatible,
   isAShareAnalysisCacheReusable,
   isAShareSymbol,
+  isMarketTrading,
+  isSameMarketDate,
   type AShareAnalysisCacheCandidate,
 } from "../analysisCache";
 
@@ -21,6 +26,12 @@ describe("analysis report cache schema", () => {
     expect(isAnalysisCacheVersionCompatible(undefined)).toBe(false);
     expect(isAnalysisCacheVersionCompatible(1)).toBe(false);
     expect(isAnalysisCacheVersionCompatible(ANALYSIS_REPORT_CACHE_VERSION)).toBe(true);
+  });
+
+  it("checks schema and language together", () => {
+    expect(isAnalysisCacheCompatible(ANALYSIS_REPORT_CACHE_VERSION, "en", "en")).toBe(true);
+    expect(isAnalysisCacheCompatible(ANALYSIS_REPORT_CACHE_VERSION, "en", "ja")).toBe(false);
+    expect(isAnalysisCacheCompatible(1, "en", "en")).toBe(false);
   });
 });
 
@@ -125,5 +136,56 @@ describe("A-share analysis cache policy", () => {
     expect(isAShareAnalysisCacheReusable(candidate({
       latestQuote: { price: Number.NaN, change: -2.05 },
     }))).toBe(false);
+  });
+});
+
+describe("market-aware analysis cache policy", () => {
+  it.each([
+    ["600519.SS", "2026-07-30T01:30:00.000Z", true],
+    ["600519.SS", "2026-07-30T03:30:00.000Z", false],
+    ["0700.HK", "2026-07-30T05:00:00.000Z", true],
+    ["9984.T", "2026-07-30T06:29:00.000Z", true],
+    ["9984.T", "2026-07-30T06:30:00.000Z", false],
+    ["AAPL", "2026-07-30T13:30:00.000Z", true],
+    ["AAPL", "2026-01-15T14:30:00.000Z", true],
+  ])("detects the regular trading session for %s at %s", (symbol, iso, expected) => {
+    expect(isMarketTrading(symbol, Date.parse(iso))).toBe(expected);
+  });
+
+  it("treats Hong Kong's closing auction as active through 16:10 local time", () => {
+    expect(isMarketTrading("0700.HK", Date.parse("2026-07-30T08:09:00.000Z"))).toBe(true);
+    expect(isMarketTrading("0700.HK", Date.parse("2026-07-30T08:10:00.000Z"))).toBe(false);
+  });
+
+  it("closes all supported markets on weekends", () => {
+    expect(isMarketTrading("600519.SS", Date.parse("2026-08-01T02:00:00.000Z"))).toBe(false);
+    expect(isMarketTrading("0700.HK", Date.parse("2026-08-01T02:00:00.000Z"))).toBe(false);
+    expect(isMarketTrading("9984.T", Date.parse("2026-08-01T02:00:00.000Z"))).toBe(false);
+    expect(isMarketTrading("AAPL", Date.parse("2026-08-01T15:00:00.000Z"))).toBe(false);
+  });
+
+  it("reuses an active-session analysis through exactly ten minutes", () => {
+    const now = Date.parse("2026-07-30T14:00:00.000Z");
+    expect(isAnalysisCacheReusableByTime("AAPL", now - ACTIVE_MARKET_ANALYSIS_MAX_AGE_MS, now)).toBe(true);
+    expect(isAnalysisCacheReusableByTime("AAPL", now - ACTIVE_MARKET_ANALYSIS_MAX_AGE_MS - 1, now)).toBe(false);
+  });
+
+  it("rejects future timestamps and reuses same-market-day reports while closed", () => {
+    const beforeUsOpen = Date.parse("2026-07-30T12:00:00.000Z");
+    expect(isAnalysisCacheReusableByTime("AAPL", beforeUsOpen + 1, beforeUsOpen)).toBe(false);
+    expect(isAnalysisCacheReusableByTime("AAPL", Date.parse("2026-07-30T05:00:00.000Z"), beforeUsOpen)).toBe(true);
+  });
+
+  it("compares dates in the exchange timezone instead of the browser timezone", () => {
+    expect(isSameMarketDate(
+      "AAPL",
+      Date.parse("2026-07-30T03:59:00.000Z"),
+      Date.parse("2026-07-30T04:01:00.000Z")
+    )).toBe(false);
+    expect(isSameMarketDate(
+      "0700.HK",
+      Date.parse("2026-07-29T23:59:00.000Z"),
+      Date.parse("2026-07-30T00:01:00.000Z")
+    )).toBe(true);
   });
 });
