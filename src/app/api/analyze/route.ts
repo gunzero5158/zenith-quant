@@ -33,6 +33,7 @@ import { StrategyAdvice } from "@/lib/analysis/strategyAdvice";
 import { validateAiScoreReview, ValidatedAiScoreReview } from "@/lib/analysis/aiScoreReview";
 import { buildEvidenceAnalystPrompt } from "@/lib/analysis/analysisPrompt";
 import { AiReportFields, composeAiReport } from "@/lib/analysis/reportComposition";
+import { parseLLMJsonResponse } from "@/lib/analysis/llmJson";
 import {
   applyAnalysisQuoteSnapshot,
   getShanghaiDateKey,
@@ -881,21 +882,9 @@ export async function POST(request: Request) {
         });
         const reportText = await generateLLMReport(prompt, llmConfig);
         
-        // Clean markdown blocks if LLM accidentally outputted them
-        let cleanedText = reportText.trim();
-        if (cleanedText.startsWith("```json")) {
-          cleanedText = cleanedText.substring(7);
-        } else if (cleanedText.startsWith("```")) {
-          cleanedText = cleanedText.substring(3);
-        }
-        if (cleanedText.endsWith("```")) {
-          cleanedText = cleanedText.substring(0, cleanedText.length - 3);
-        }
-        cleanedText = cleanedText.trim();
-
-        const parsed = JSON.parse(cleanedText) as AiReportFields & {
+        const parsed = parseLLMJsonResponse<AiReportFields & {
           scoreReview: unknown;
-        };
+        }>(reportText);
         const evidenceIds = techData.snapshot.items.map((item) => item.id);
         aiScoreReview = validateAiScoreReview(
           parsed.scoreReview,
