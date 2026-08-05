@@ -31,6 +31,7 @@ import { toLegacyAiScoreDetail, validateAiAnalysisResult } from "@/lib/analysis/
 import type { AiAnalysisResult } from "@/lib/analysis/aiAnalysisResult";
 import { buildEvidenceAnalystPrompt } from "@/lib/analysis/analysisPrompt";
 import { composeAiReport } from "@/lib/analysis/reportComposition";
+import { parseLLMJsonResponse } from "@/lib/analysis/llmJson";
 import {
   applyAnalysisQuoteSnapshot,
   getShanghaiDateKey,
@@ -859,13 +860,8 @@ export async function POST(request: Request) {
         currencySymbol,
       });
       const reportText = await generateLLMReport(prompt, llmConfig);
-      let cleanedText = reportText.trim();
-      if (cleanedText.startsWith("```json")) cleanedText = cleanedText.substring(7);
-      else if (cleanedText.startsWith("```")) cleanedText = cleanedText.substring(3);
-      if (cleanedText.endsWith("```")) cleanedText = cleanedText.substring(0, cleanedText.length - 3);
-
       aiResult = validateAiAnalysisResult(
-        JSON.parse(cleanedText.trim()),
+        parseLLMJsonResponse(reportText),
         new Set(techData.snapshot.items.map((item) => item.id))
       );
     } catch (err: unknown) {
