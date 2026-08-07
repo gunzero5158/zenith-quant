@@ -188,7 +188,7 @@ export function runAnalysisEngine(input: AnalysisEngineInput): AnalysisEngineRes
   });
   const entryAssessment = calculateEntryAssessment(snapshot);
   const legacyScore = toLegacyScoreDetail(entryAssessment);
-  const strategyAdvice = buildStrategyAdvice(snapshot, entryAssessment);
+  const strategyAdvice = buildStrategyAdvice(snapshot, entryAssessment, input.language);
   const localReport = generateLocalReport({ snapshot, entryAssessment, strategyAdvice }, input.language ?? "zh-CN");
   return {
     dailyCandles,

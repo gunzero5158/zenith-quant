@@ -1094,8 +1094,8 @@ export default function Home() {
     ? buildEntryScorePresentation(stockData.entryAssessment, effectiveLang, stockData.dataQuality)
     : undefined;
   const scenarioTone = (status: ScenarioStatus): React.CSSProperties => ({
-    color: status === "triggered" ? "#089981" : status === "too_late" ? "#f23645" : status === "watch" ? "#fbbf24" : "#787b86",
-    borderColor: status === "triggered" ? "rgba(8,153,129,0.45)" : status === "too_late" ? "rgba(242,54,69,0.45)" : status === "watch" ? "rgba(251,191,36,0.45)" : "#363c4e",
+    color: status === "triggered" ? "#089981" : status === "provisional" ? "#2962ff" : status === "too_late" ? "#f23645" : status === "watch" ? "#fbbf24" : "#787b86",
+    borderColor: status === "triggered" ? "rgba(8,153,129,0.45)" : status === "provisional" ? "rgba(41,98,255,0.45)" : status === "too_late" ? "rgba(242,54,69,0.45)" : status === "watch" ? "rgba(251,191,36,0.45)" : "#363c4e",
   });
 
   return (

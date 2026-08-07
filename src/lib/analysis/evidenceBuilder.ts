@@ -160,7 +160,13 @@ function addTechnicalFrame(items: EvidenceItem[], frame: TechnicalFrameEvidence 
   if (volume) {
     const volumeDirection = volume.volumeDirection ?? "neutral";
     items.push(item("volume", timeframe, `${timeframe}.volume.${volumeDirection}`, volumeDirection, volumeDirection, `Relative volume is ${volume.relativeVolume ?? 0}; low-volume pullback=${Boolean(volume.isLowVolumePullback)}.`, provisional, {
-      values: { relativeVolume: volume.relativeVolume ?? 0, isLowVolumePullback: Boolean(volume.isLowVolumePullback) },
+      values: {
+        relativeVolume: volume.relativeVolume ?? 0,
+        isLowVolumePullback: Boolean(volume.isLowVolumePullback),
+        hasVolumeBreakout: volume.hasVolumeBreakout,
+        hasPriceVolumeDivergence: volume.hasPriceVolumeDivergence,
+        isVolumeExpanding: volume.isVolumeExpanding,
+      },
     }));
     const cmfValue = [...volume.cmf].reverse().find(Number.isFinite);
     const cmfDirection: EvidenceDirection = (cmfValue ?? 0) > 0.1 ? "bullish" : (cmfValue ?? 0) < -0.1 ? "bearish" : "neutral";
@@ -210,11 +216,26 @@ function addPatternEvidence(items: EvidenceItem[], input: EvidenceBuilderInput):
       },
     }));
   }
-  if (patterns.latestSetup && patterns.latestSetup !== "none" && patterns.barsSinceSetup9 !== undefined) {
+  const rawCount = patterns.latestCount ?? 0;
+  const currentStage = Math.min(Math.abs(rawCount), 9);
+  const currentSetup = rawCount < 0 ? "buy" : rawCount > 0 ? "sell" : "none";
+  if (currentSetup !== "none" && currentStage >= 6) {
+    const direction: EvidenceDirection = currentSetup === "buy" ? "bullish" : "bearish";
+    const completed = currentStage >= 9;
+    items.push(item("tdSequential", "daily", `daily.td.${currentSetup}_setup_${completed ? "completed" : "building"}`, direction, completed ? "completed" : "building", `TD ${currentSetup} Setup is at stage ${currentStage}${completed ? " and is complete" : " of 9"}.`, provisional, {
+      barsSince: 0,
+      values: { setup: currentSetup, stage: currentStage, rawCount, completed },
+    }));
+  }
+  const duplicatesCurrentCompletion = currentStage >= 9 &&
+    currentSetup === patterns.latestSetup &&
+    patterns.barsSinceSetup9 === 0;
+  if (!duplicatesCurrentCompletion && patterns.latestSetup && patterns.latestSetup !== "none" && patterns.barsSinceSetup9 !== undefined) {
     const direction: EvidenceDirection = patterns.latestSetup === "buy" ? "bullish" : "bearish";
-    items.push(item("tdSequential", "daily", `daily.td.${patterns.latestSetup}_setup_9`, direction, `${patterns.latestSetup}_setup_9`, `TD ${patterns.latestSetup} Setup 9 occurred ${patterns.barsSinceSetup9} bars ago.`, provisional, {
+    const completedEventProvisional = patterns.barsSinceSetup9 === 0 ? provisional : false;
+    items.push(item("tdSequential", "daily", `daily.td.${patterns.latestSetup}_setup_completed`, direction, "completed", `TD ${patterns.latestSetup} Setup 9 occurred ${patterns.barsSinceSetup9} bars ago.`, completedEventProvisional, {
       barsSince: patterns.barsSinceSetup9,
-      values: { latestCount: patterns.latestCount ?? 0 },
+      values: { setup: patterns.latestSetup, stage: 9, rawCount, completed: true },
     }));
   }
 }
@@ -261,13 +282,15 @@ function collectLevels(input: EvidenceBuilderInput): TradeLevel[] {
     });
   }
   for (const pattern of input.patterns?.activePatterns ?? []) {
+    const status = pattern.status ?? "forming";
+    if (status === "failed") continue;
     if (Number.isFinite(pattern.triggerPrice)) {
       levels.push({ price: pattern.triggerPrice!, kind: pattern.bias === "bullish" ? "resistance" : "support", source: "pattern", strength: pattern.confidence });
     }
-    if (Number.isFinite(pattern.targetPrice)) {
+    if (["near_trigger", "confirmed"].includes(status) && Number.isFinite(pattern.targetPrice)) {
       levels.push({ price: pattern.targetPrice!, kind: "target", source: "pattern", strength: pattern.confidence });
     }
-    if (Number.isFinite(pattern.invalidationPrice)) {
+    if (["near_trigger", "confirmed"].includes(status) && Number.isFinite(pattern.invalidationPrice)) {
       levels.push({ price: pattern.invalidationPrice!, kind: "stop", source: "pattern", strength: pattern.confidence });
     }
   }
@@ -287,16 +310,46 @@ function weeklyRegime(items: EvidenceItem[]): EvidenceSnapshot["weeklyRegime"] {
   return score >= 2 ? "bullish" : score <= -2 ? "bearish" : "neutral";
 }
 
-function dailyPhase(input: EvidenceBuilderInput, items: EvidenceItem[]): EvidenceSnapshot["dailyPhase"] {
+function dailyPhase(input: EvidenceBuilderInput, items: EvidenceItem[], levels: TradeLevel[]): EvidenceSnapshot["dailyPhase"] {
   const ema = input.daily?.ema;
   const boll = input.daily?.boll;
-  const bullishBreakout = items.some((candidate) => candidate.timeframe === "daily" && candidate.direction === "bullish" && candidate.state === "confirmed") && input.daily?.volume?.volumeDirection === "bullish";
+  const atr = input.daily?.atr?.value;
+  const confirmedBullishPattern = items.some((candidate) => (
+    candidate.timeframe === "daily" &&
+    candidate.family === "classicalPattern" &&
+    candidate.direction === "bullish" &&
+    candidate.state === "confirmed"
+  ));
+  const nearBrokenHorizontal = typeof atr === "number" && atr > 0 && levels.some((level) => (
+    level.source === "horizontal" &&
+    level.strength >= 0.65 &&
+    level.price < input.price &&
+    input.price - level.price <= atr * 1.5
+  ));
+  const bullishVolumeBreakout = input.daily?.volume?.hasVolumeBreakout === true &&
+    input.daily.volume.volumeDirection === "bullish";
+  const bullishBreakout = confirmedBullishPattern || (bullishVolumeBreakout && nearBrokenHorizontal);
   const bearishBreakdown = ema?.pricePosition === "below_all" && (ema.order === "bearish" || input.daily?.macd?.relation === "bearish");
+  const rsiOverbought = (input.daily?.rsi?.value ?? 0) >= 70;
+  const sellTdStage = items
+    .filter((candidate) => candidate.family === "tdSequential" && candidate.values?.setup === "sell")
+    .reduce((stage, candidate) => Math.max(stage, typeof candidate.values?.stage === "number" ? candidate.values.stage : 0), 0);
+  const compositeExtension = boll?.position === "above_upper" &&
+    rsiOverbought &&
+    (input.daily?.volume?.volumeDirection === "bullish" || sellTdStage >= 7);
+  const explicitExtension = (input.candlesticks ?? []).some((signal) => signal.state === "extended");
+  const supportedReversal = items.some((candidate) => (
+    candidate.id === "daily.momentum.bottom_divergence" ||
+    (candidate.family === "candlestick" &&
+      candidate.direction === "bullish" &&
+      candidate.state === "triggered" &&
+      candidate.values?.location === "support")
+  ));
   if (bearishBreakdown) return "breakdown";
-  if (boll?.position === "above_upper" || (input.candlesticks ?? []).some((signal) => signal.state === "extended")) return "extended";
+  if (compositeExtension || explicitExtension) return "extended";
   if (bullishBreakout) return "breakout";
   if (ema?.order === "bullish" && input.daily?.volume?.isLowVolumePullback) return "pullback";
-  if (items.some((candidate) => candidate.id === "daily.momentum.bottom_divergence" || (candidate.family === "candlestick" && candidate.direction === "bullish"))) return "base";
+  if (supportedReversal) return "base";
   return "range";
 }
 
@@ -327,14 +380,15 @@ export function buildEvidenceSnapshot(input: EvidenceBuilderInput): EvidenceSnap
   addPatternEvidence(items, input);
   addOtherEvidence(items, input);
   ensureFamilyCoverage(items, input);
+  const levels = collectLevels(input);
   return {
     version: "2.0",
     symbol: input.symbol,
     price: input.price,
     dataQuality: input.dataQuality,
     items,
-    levels: collectLevels(input),
+    levels,
     weeklyRegime: weeklyRegime(items),
-    dailyPhase: dailyPhase(input, items),
+    dailyPhase: dailyPhase(input, items, levels),
   };
 }

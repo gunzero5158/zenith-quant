@@ -29,7 +29,7 @@ import {
 import { buildWeeklyCandles as buildWeeklyCandlesFromDaily } from "@/lib/analysis/weeklyCandles";
 import { runAnalysisEngine } from "@/lib/analysis/analysisEngine";
 import { EvidenceSnapshot } from "@/lib/analysis/evidence";
-import { StrategyAdvice } from "@/lib/analysis/strategyAdvice";
+import { buildStrategyAdvice, StrategyAdvice } from "@/lib/analysis/strategyAdvice";
 import { validateAiScoreReview, ValidatedAiScoreReview } from "@/lib/analysis/aiScoreReview";
 import { buildEvidenceAnalystPrompt } from "@/lib/analysis/analysisPrompt";
 import { AiReportFields, composeAiReport } from "@/lib/analysis/reportComposition";
@@ -843,10 +843,15 @@ export async function POST(request: Request) {
     }
 
     // Localized prose is request-specific even when the technical snapshot came from cache.
+    const localizedStrategyAdvice = buildStrategyAdvice(
+      techData.snapshot,
+      techData.entryAssessment,
+      effectiveLang
+    );
     const localReport = generateLocalReport({
       snapshot: techData.snapshot,
       entryAssessment: techData.entryAssessment,
-      strategyAdvice: techData.strategyAdvice,
+      strategyAdvice: localizedStrategyAdvice,
     }, effectiveLang);
 
     // 4. Generate Report (Either LLM or Fallback)
@@ -874,7 +879,7 @@ export async function POST(request: Request) {
         const prompt = buildEvidenceAnalystPrompt({
           snapshot: techData.snapshot,
           entryAssessment: techData.entryAssessment,
-          strategyAdvice: techData.strategyAdvice,
+          strategyAdvice: localizedStrategyAdvice,
           dailyCandles: techData.dailyCandles,
           weeklyCandles: techData.weeklyCandles,
           language: effectiveLang,
@@ -951,7 +956,7 @@ export async function POST(request: Request) {
       changePercent: techData.changePercent,
       score: responseScore,
       entryAssessment: finalAssessment,
-      strategyAdvice: techData.strategyAdvice,
+      strategyAdvice: localizedStrategyAdvice,
       dataQuality: techData.snapshot.dataQuality,
       aiScoreReview,
       dailyCandles: techData.dailyCandles,

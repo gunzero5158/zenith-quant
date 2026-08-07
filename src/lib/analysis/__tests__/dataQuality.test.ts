@@ -47,4 +47,38 @@ describe("analysis data quality", () => {
     expect(quality.missingFamilies).toContain("ema");
     expect(quality.missingFamilies).toContain("macd");
   });
+
+  it("uses the Hong Kong close rather than UTC to finalize the daily bar", () => {
+    const quality = buildDataQuality({
+      symbol: "0700.HK",
+      asOf: "2026-07-23T08:20:00.000Z",
+      dailySamples: 250,
+      weeklySamples: 150,
+      latestDailyDate: "2026-07-23",
+      latestWeeklyDate: "2026-07-20",
+    });
+    expect(quality.dailyBarComplete).toBe(true);
+    expect(quality.weeklyBarComplete).toBe(false);
+  });
+
+  it("keeps the US daily bar provisional during New York trading and finalizes it after close", () => {
+    const during = buildDataQuality({
+      symbol: "MSFT",
+      asOf: "2026-07-23T18:00:00.000Z",
+      dailySamples: 250,
+      weeklySamples: 150,
+      latestDailyDate: "2026-07-23",
+      latestWeeklyDate: "2026-07-20",
+    });
+    const after = buildDataQuality({
+      symbol: "MSFT",
+      asOf: "2026-07-23T20:30:00.000Z",
+      dailySamples: 250,
+      weeklySamples: 150,
+      latestDailyDate: "2026-07-23",
+      latestWeeklyDate: "2026-07-20",
+    });
+    expect(during.dailyBarComplete).toBe(false);
+    expect(after.dailyBarComplete).toBe(true);
+  });
 });

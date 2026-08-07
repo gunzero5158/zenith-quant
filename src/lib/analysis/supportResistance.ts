@@ -278,13 +278,20 @@ export function calculateSupportResistance(
       strength: price === volumePOC ? 0.85 : 0.65,
     });
   }
-  for (const [price, source, kind] of [
-    [dynamicSupportEMA20, "ema", dynamicSupportEMA20 < currentPrice ? "support" : "resistance"],
-    [dynamicSupportEMA60, "ema", dynamicSupportEMA60 < currentPrice ? "support" : "resistance"],
-    [dynamicBOLLUpper, "boll", dynamicBOLLUpper < currentPrice ? "support" : "resistance"],
-    [dynamicBOLLLower, "boll", dynamicBOLLLower < currentPrice ? "support" : "resistance"],
+  for (const [rawPrice, source] of [
+    [ema20Val, "ema"],
+    [ema60Val, "ema"],
+    [bollUpperVal, "boll"],
+    [bollLowerVal, "boll"],
   ] as const) {
-    typedLevels.push({ price, source, kind, strength: 0.55 });
+    if (!Number.isFinite(rawPrice) || rawPrice <= 0) continue;
+    const price = Number(rawPrice.toFixed(2));
+    typedLevels.push({
+      price,
+      source,
+      kind: price < currentPrice ? "support" : "resistance",
+      strength: 0.55,
+    });
   }
 
   // 4. Formulate S/R Description

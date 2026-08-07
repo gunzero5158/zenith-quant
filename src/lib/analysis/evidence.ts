@@ -24,7 +24,7 @@ export type Timeframe = "daily" | "weekly";
 export type EvidenceDirection = "bullish" | "bearish" | "neutral";
 export type EvidenceRole = "score" | "explainOnly";
 export type EvidenceConsumer = "left" | "right" | "holder" | "exit" | "report";
-export type ScenarioStatus = "not_formed" | "watch" | "triggered" | "too_late";
+export type ScenarioStatus = "not_formed" | "watch" | "provisional" | "triggered" | "too_late";
 
 export interface SignalDefinition {
   family: SignalFamily;
@@ -122,7 +122,7 @@ export const SIGNAL_CATALOG: SignalDefinition[] = [
   score("fibonacci", "斐波那契", ["left", "right", "holder", "exit", "report"], 20, 0),
   score("classicalPattern", "经典形态", ["left", "right", "holder", "exit", "report"], 12, 0),
   score("candlestick", "K线组合", ["left", "right", "holder", "exit", "report"], 3, 0),
-  score("tdSequential", "神奇九转", ["left", "holder", "exit", "report"], 13, 0),
+  score("tdSequential", "神奇九转", ["left", "right", "holder", "exit", "report"], 13, 0),
   {
     family: "elliottWave",
     reportSection: "艾略特波浪",

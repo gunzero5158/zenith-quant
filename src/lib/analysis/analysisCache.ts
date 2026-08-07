@@ -1,6 +1,6 @@
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 
-export const ANALYSIS_CACHE_VERSION = 1;
+export const ANALYSIS_CACHE_VERSION = 3;
 export const ACTIVE_MARKET_ANALYSIS_MAX_AGE_MS = 10 * 60 * 1000;
 
 interface MarketSessionDefinition {
@@ -8,7 +8,7 @@ interface MarketSessionDefinition {
   sessions: ReadonlyArray<readonly [startMinute: number, endMinute: number]>;
 }
 
-interface MarketDateParts {
+export interface MarketDateParts {
   dateKey: string;
   weekday: string;
   minuteOfDay: number;
@@ -43,7 +43,7 @@ function getMarketSession(symbol: string): MarketSessionDefinition {
   return MARKET_SESSIONS.us;
 }
 
-function getMarketDateParts(symbol: string, timestamp: number): MarketDateParts | null {
+export function getMarketDateParts(symbol: string, timestamp: number): MarketDateParts | null {
   if (!Number.isFinite(timestamp)) return null;
 
   const { timeZone } = getMarketSession(symbol);
@@ -74,6 +74,11 @@ function getMarketDateParts(symbol: string, timestamp: number): MarketDateParts 
     weekday: parts.weekday,
     minuteOfDay: hour * 60 + minute,
   };
+}
+
+export function getMarketCloseMinute(symbol: string): number {
+  const sessions = getMarketSession(symbol).sessions;
+  return sessions.reduce((latest, [, endMinute]) => Math.max(latest, endMinute), 0);
 }
 
 export function isMarketTrading(symbol: string, timestamp = Date.now()): boolean {

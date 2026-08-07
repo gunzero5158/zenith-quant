@@ -17,22 +17,22 @@ interface PresentationLabels {
 const LABELS: Record<SupportedLanguage, PresentationLabels> = {
   "zh-CN": {
     rule: "规则基础分", adjustment: "AI调整", final: "最终综合分", left: "左侧", right: "右侧",
-    statuses: { not_formed: "未形成", watch: "观察", triggered: "触发", too_late: "过晚" },
+    statuses: { not_formed: "未形成", watch: "观察", provisional: "盘中暂定", triggered: "确认", too_late: "过晚" },
     dailyProvisional: "日线暂定", weeklyProvisional: "周线暂定",
   },
   "zh-TW": {
     rule: "規則基礎分", adjustment: "AI調整", final: "最終綜合分", left: "左側", right: "右側",
-    statuses: { not_formed: "未形成", watch: "觀察", triggered: "觸發", too_late: "過晚" },
+    statuses: { not_formed: "未形成", watch: "觀察", provisional: "盤中暫定", triggered: "確認", too_late: "過晚" },
     dailyProvisional: "日線暫定", weeklyProvisional: "週線暫定",
   },
   en: {
     rule: "Rule score", adjustment: "AI adjustment", final: "Final score", left: "Left", right: "Right",
-    statuses: { not_formed: "Not formed", watch: "Watch", triggered: "Triggered", too_late: "Too late" },
+    statuses: { not_formed: "Not formed", watch: "Watch", provisional: "Intraday provisional", triggered: "Confirmed", too_late: "Too late" },
     dailyProvisional: "Daily provisional", weeklyProvisional: "Weekly provisional",
   },
   ja: {
     rule: "ルールスコア", adjustment: "AI調整", final: "最終スコア", left: "左側", right: "右側",
-    statuses: { not_formed: "未形成", watch: "監視", triggered: "発動", too_late: "手遅れ" },
+    statuses: { not_formed: "未形成", watch: "監視", provisional: "日中暫定", triggered: "確認", too_late: "手遅れ" },
     dailyProvisional: "日足暫定", weeklyProvisional: "週足暫定",
   },
 };

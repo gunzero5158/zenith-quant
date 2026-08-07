@@ -9,6 +9,7 @@ function assessment(overrides: Partial<EntryAssessment> = {}): EntryAssessment {
     finalScore: 3.4,
     hardCap: 5,
     dimensions: { priceLocation: 0.8, payoffQuality: 0.9, setupMaturity: 0.8, timeframeContext: 0.6, confirmationQuality: 0.5 },
+    pathScores: { left: 3.6, right: 2.8 },
     leftStatus: "triggered",
     rightStatus: "watch",
     activeSetup: "left",
@@ -24,7 +25,7 @@ describe("entry score presentation", () => {
       ruleLabel: "规则基础分",
       adjustmentText: "-0.2",
       finalLabel: "最终综合分",
-      leftText: "触发",
+      leftText: "确认",
       rightText: "观察",
     });
   });
@@ -43,5 +44,9 @@ describe("entry score presentation", () => {
     expect(view.adjustmentText).toBe("+0.3");
     expect(view.dataStatus).toContain("Daily provisional");
     expect(view.dataStatus).toContain("Weekly provisional");
+  });
+
+  it("labels an intraday trigger as provisional instead of confirmed", () => {
+    expect(buildEntryScorePresentation(assessment({ leftStatus: "provisional" }), "zh-CN").leftText).toBe("盘中暂定");
   });
 });

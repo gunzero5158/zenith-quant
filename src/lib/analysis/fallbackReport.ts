@@ -62,16 +62,18 @@ function localizedState(item: EvidenceItem, lang: string): string {
     confirmed: "已确认",
     failed: "已失效",
     forming: "形成中",
+    building: "进行中",
+    completed: "完成9",
   };
   const state = states[item.state] ?? (item.state.startsWith("up_") ? `上穿${item.state.slice(3)}` : item.state.startsWith("down_") ? `下穿${item.state.slice(5)}` : item.state);
   return `${FAMILY_LABELS[item.family]}${state}`;
 }
 
 function reportLabels(lang: string) {
-  if (lang === "en") return { overview: "Market view", recommendation: "Strategy", technical: "Technical evidence" };
-  if (lang === "ja") return { overview: "相場判断", recommendation: "戦略", technical: "テクニカル根拠" };
-  if (lang === "zh-TW" || lang === "zh-HK") return { overview: "行情判斷", recommendation: "交易策略", technical: "技術證據" };
-  return { overview: "行情判断", recommendation: "交易策略", technical: "技术证据" };
+  if (lang === "en") return { overview: "Market view", recommendation: "Strategy", technical: "Technical evidence", holder: "Existing position", left: "New entry / left side", right: "Add / right side", exit: "Exit / stop" };
+  if (lang === "ja") return { overview: "相場判断", recommendation: "戦略", technical: "テクニカル根拠", holder: "保有", left: "新規・左側", right: "追加・右側", exit: "撤退・ストップ" };
+  if (lang === "zh-TW" || lang === "zh-HK") return { overview: "行情判斷", recommendation: "交易策略", technical: "技術證據", holder: "持倉", left: "開倉／左側", right: "加倉／右側", exit: "退出／止損" };
+  return { overview: "行情判断", recommendation: "交易策略", technical: "技术证据", holder: "持仓", left: "开仓/左侧", right: "加仓/右侧", exit: "退出/止损" };
 }
 
 function localizedMarketContext(snapshot: EvidenceSnapshot, lang: string): string {
@@ -107,10 +109,10 @@ export function generateLocalReport(input: LocalReportInput, lang: string = "zh-
   const overview = `### ${labels.overview}\n${localizedPriceText(snapshot, lang)}${localizedMarketContext(snapshot, lang)}`;
   const recommendation = [
     `### ${labels.recommendation}`,
-    `- 持仓：${strategyAdvice.holder.text}`,
-    `- 开仓/左侧：${strategyAdvice.leftEntry.text}`,
-    `- 加仓/右侧：${strategyAdvice.rightAdd.text}`,
-    `- 退出/止损：${strategyAdvice.exitStop.text}`,
+    `- ${labels.holder}: ${strategyAdvice.holder.text}`,
+    `- ${labels.left}: ${strategyAdvice.leftEntry.text}`,
+    `- ${labels.right}: ${strategyAdvice.rightAdd.text}`,
+    `- ${labels.exit}: ${strategyAdvice.exitStop.text}`,
   ].join("\n");
 
   const sections: string[] = [`### ${labels.technical}`];

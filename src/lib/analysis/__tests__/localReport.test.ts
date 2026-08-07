@@ -49,4 +49,18 @@ describe("evidence-based local report", () => {
     expect(generateLocalReport(reportFixture(), "en").overview).toContain("Current price 100.00");
     expect(generateLocalReport(reportFixture(), "ja").overview).toContain("現在値 100.00");
   });
+
+  it("localizes strategy labels and text for English and Japanese", () => {
+    const fixture = reportFixture();
+    const englishAdvice = buildStrategyAdvice(fixture.snapshot, fixture.entryAssessment, "en");
+    const japaneseAdvice = buildStrategyAdvice(fixture.snapshot, fixture.entryAssessment, "ja");
+    const english = generateLocalReport({ ...fixture, strategyAdvice: englishAdvice }, "en").recommendation;
+    const japanese = generateLocalReport({ ...fixture, strategyAdvice: japaneseAdvice }, "ja").recommendation;
+    expect(english).toContain("Existing position:");
+    expect(english).toContain("New entry / left side:");
+    expect(english).not.toContain("持仓");
+    expect(japanese).toContain("保有:");
+    expect(japanese).toContain("新規・左側:");
+    expect(japanese).not.toContain("持仓");
+  });
 });

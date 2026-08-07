@@ -26,6 +26,7 @@ function assessment(overrides: Partial<EntryAssessment> = {}): EntryAssessment {
     finalScore: 2.8,
     hardCap: 2.8,
     dimensions: { priceLocation: 0.5, payoffQuality: 0.5, setupMaturity: 0.5, timeframeContext: 0.5, confirmationQuality: 0.3 },
+    pathScores: { left: 2.4, right: 2.4 },
     leftStatus: "too_late",
     rightStatus: "too_late",
     activeSetup: "none",
@@ -48,5 +49,22 @@ describe("independent strategy advice", () => {
     expect(advice.exitStop.structuralStop).toBe(94.2);
     expect(advice.exitStop.atrStop).toBe(93.6);
     expect(advice.exitStop.trigger).toBe("close");
+  });
+
+  it("waits for the close when an entry is only provisional", () => {
+    const advice = buildStrategyAdvice(snapshot("pullback"), assessment({ leftStatus: "provisional", rightStatus: "provisional" }));
+    expect(advice.leftEntry.action).toBe("wait");
+    expect(advice.rightAdd.action).toBe("wait_breakout");
+  });
+
+  it("localizes all strategy text without changing the actions", () => {
+    const result = assessment({ leftStatus: "not_formed", rightStatus: "watch" });
+    const english = buildStrategyAdvice(snapshot("pullback"), result, "en");
+    const japanese = buildStrategyAdvice(snapshot("pullback"), result, "ja");
+    expect(english.holder.action).toBe(japanese.holder.action);
+    expect(english.leftEntry.text).toContain("left-side entry");
+    expect(english.exitStop.text).toContain("Structural stop");
+    expect(japanese.leftEntry.text).toContain("左側エントリー");
+    expect(japanese.exitStop.text).toContain("構造ストップ");
   });
 });
