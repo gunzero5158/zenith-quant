@@ -317,6 +317,18 @@ button {
   .apimax-footer {
     display: none !important;
   }
+
+  .app-disclaimer {
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+    padding: 6px 10px !important;
+    font-size: 10px !important;
+    line-height: 1.35 !important;
+  }
+
+  .app-disclaimer svg {
+    margin-top: 1px;
+  }
 }
 
 @media (max-width: 420px) {

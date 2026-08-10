@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useSyncExternalStore, useCallback, useReducer } from "react";
 import dynamic from "next/dynamic";
-import { Search, Settings, Star, TrendingUp, TrendingDown, RefreshCw, Trash2, Zap } from "lucide-react";
+import { Info, Search, Settings, Star, TrendingUp, TrendingDown, RefreshCw, Trash2, Zap } from "lucide-react";
 import LoadingOverlay from "@/components/LoadingOverlay";
 import SettingsModal from "@/components/SettingsModal";
 import { LLMConfig } from "@/lib/analysis/llmProxy";
@@ -137,8 +137,9 @@ const getServerMountedSnapshot = () => false;
 
 const TRANSLATIONS: Record<string, Record<string, string>> = {
   "zh-CN": {
-    title: "Antigravity 天顶分析系统",
-    logo: "Antigravity 天顶分析",
+    title: "天台分析",
+    logo: "天台分析",
+    disclaimer: "本工具仅基于公开行情、常规技术指标及 AI 提供分析参考，不构成投资建议或买卖指导。市场有风险，投资决策请独立判断并自行承担风险。",
     searchPlaceholder: "输入代码或拼音搜索... (e.g. AAPL, 700, 600519)",
     llmSettings: "大模型配置",
     watchlist: "分析历史",
@@ -151,7 +152,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     overviewHeader: "🔮 智能分析综述",
     strategyHeader: "💡 交易策略建议",
     technicalHeader: "🔬 各类技术指标与形态分析",
-    welcomeTitle: "欢迎使用 Antigravity 天顶分析系统",
+    welcomeTitle: "欢迎使用天台分析",
     welcomeSubtitle: "在上方搜索框输入全球任意有效的美股、港股、A股或日股代码，或在左侧自选股中点击，即可加载实时技术研报与 K 线图。",
     chartDaily: "日 K 线",
     chartWeekly: "周 K 线",
@@ -182,8 +183,9 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     fallbackDesc: "若大模型因额度不足/网络异常等原因生成失败，允许自动降级并启用内置技术指标算法计算评分与报表。"
   },
   "zh-TW": {
-    title: "Antigravity 天頂分析系統",
-    logo: "Antigravity 天頂分析",
+    title: "天台分析",
+    logo: "天台分析",
+    disclaimer: "本工具僅基於公開行情、常規技術指標及 AI 提供分析參考，不構成投資建議或買賣指導。市場有風險，投資決策請獨立判斷並自行承擔風險。",
     searchPlaceholder: "輸入代碼或拼音搜尋... (e.g. AAPL, 700, 600519)",
     llmSettings: "大模型配置",
     watchlist: "分析歷史",
@@ -196,7 +198,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     overviewHeader: "🔮 智能分析綜述",
     strategyHeader: "💡 交易策略建議",
     technicalHeader: "🔬 各類技術指標與形態分析",
-    welcomeTitle: "歡迎使用 Antigravity 天頂分析系統",
+    welcomeTitle: "歡迎使用天台分析",
     welcomeSubtitle: "在上方搜尋框輸入全球任意有效的美股、港股、A股或日股代碼，或在左側自選股中點擊，即可加載實時技術研報與 K 線圖。",
     chartDaily: "日 K 線",
     chartWeekly: "周 K 線",
@@ -227,8 +229,9 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     fallbackDesc: "若大模型因額度不足/網絡異常等原因生成失敗，允許自動降級並啟用內置技術指標算法計算評分與報表。"
   },
   "en": {
-    title: "Antigravity ZenithAnalysis Analyzer",
-    logo: "Antigravity ZenithAnalysis",
+    title: "Rooftop Quant",
+    logo: "Rooftop Quant",
+    disclaimer: "AI analysis based on public market data and standard technical indicators. Not investment advice or trading guidance. Markets involve risk; decide independently and at your own risk.",
     searchPlaceholder: "Enter ticker to search... (e.g., AAPL, 0700.HK)",
     llmSettings: "LLM Config",
     watchlist: "Analysis History",
@@ -241,7 +244,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     overviewHeader: "🔮 AI Analysis Overview",
     strategyHeader: "💡 Trading Strategy & Advice",
     technicalHeader: "🔬 Technical Indicators & Patterns",
-    welcomeTitle: "Welcome to Antigravity ZenithAnalysis",
+    welcomeTitle: "Welcome to Rooftop Quant",
     welcomeSubtitle: "Enter any US, HK, CN, or JP stock ticker in the search bar above, or click on a stock in your watchlist to load real-time technical analysis and charts.",
     chartDaily: "Daily Chart",
     chartWeekly: "Weekly Chart",
@@ -272,8 +275,9 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     fallbackDesc: "If LLM generation fails due to network/quota limits, allow automatic fallback to built-in technical indicators scoring & report."
   },
   "ja": {
-    title: "Antigravity 天頂分析システム (ZenithAnalysis)",
-    logo: "Antigravity 天頂分析",
+    title: "屋上クオンツ",
+    logo: "屋上クオンツ",
+    disclaimer: "公開市場データ、一般的なテクニカル指標、AI による参考分析です。投資助言・売買指示ではありません。投資判断はご自身の責任で行ってください。",
     searchPlaceholder: "コードを入力... (e.g. AAPL, 700)",
     llmSettings: "AIモデル設定",
     watchlist: "分析履歴",
@@ -286,7 +290,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     overviewHeader: "🔮 AI相場概況サマリー",
     strategyHeader: "💡 推奨取引戦略・アドバイス",
     technicalHeader: "🔬 テクニカル指標・パターン分析詳細",
-    welcomeTitle: "Antigravity 天頂分析システムへようこそ",
+    welcomeTitle: "屋上クオンツへようこそ",
     welcomeSubtitle: "上部の検索ボックスに米国株、香港株、中国株、日本株の有効なコードを入力するか、左側のお気に入り銘柄をクリックすると、リアルタイムのレポート与チャートが表示されます。",
     chartDaily: "日足チャート",
     chartWeekly: "週足チャート",
@@ -1158,15 +1162,7 @@ export default function Home() {
               </linearGradient>
             </defs>
           </svg>
-          <span className="app-logo-text" style={styles.logoText}>
-            Antigravity{" "}
-            <span className="app-logo-accent" style={{ color: "#2962ff" }}>
-              {effectiveLang === "zh-CN" && "天顶分析"}
-              {effectiveLang === "zh-TW" && "天頂分析"}
-              {effectiveLang === "en" && "ZenithAnalysis"}
-              {effectiveLang === "ja" && "天頂分析"}
-            </span>
-          </span>
+          <span className="app-logo-text" style={styles.logoText}>{t.logo}</span>
         </div>
 
         {/* Search & Autocomplete */}
@@ -1875,6 +1871,11 @@ export default function Home() {
 
       </div>
 
+      <aside className="app-disclaimer" style={styles.disclaimer} role="note">
+        <Info size={13} aria-hidden="true" style={{ flexShrink: 0 }} />
+        <span>{t.disclaimer}</span>
+      </aside>
+
       {/* 4. APIMax.io Bottom Banner Ad - tri-language - Always Constant */}
       <div className="apimax-footer" style={{
         background: "linear-gradient(90deg, rgba(10, 14, 26, 0.95) 0%, rgba(20, 36, 78, 0.95) 40%, rgba(32, 20, 78, 0.95) 70%, rgba(10, 14, 26, 0.95) 100%)",
@@ -2011,7 +2012,20 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#ffffff",
     fontWeight: "bold",
     fontSize: "16px",
-    letterSpacing: "0.5px",
+    letterSpacing: 0,
+  },
+  disclaimer: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    gap: "7px",
+    padding: "6px 16px",
+    borderTop: "1px solid #2a2e39",
+    backgroundColor: "#11151f",
+    color: "#8b93a7",
+    fontSize: "11px",
+    lineHeight: 1.45,
   },
   searchContainer: {
     position: "relative",
