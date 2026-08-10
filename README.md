@@ -1,10 +1,19 @@
-# Zenith-Analysis
+# Rooftop Quant
 
 [English](./README.md) | [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md)
 
-Zenith-Analysis is a self-hosted stock technical-analysis workspace for US, Hong Kong, mainland China A-share, and Japanese markets. It combines multi-timeframe market data, deterministic technical evidence, an entry-attractiveness score, interactive charts, and optional LLM-generated reports in one responsive dashboard.
+Rooftop Quant (天台分析 / 屋上クオンツ) is a self-hosted stock technical-analysis workspace for US, Hong Kong, mainland China A-share, and Japanese markets. It combines multi-timeframe market data, deterministic technical evidence, an entry-attractiveness score, interactive charts, and optional LLM-generated reports in one responsive dashboard.
 
-The project is designed for research and education. It does not provide investment advice or guarantee the accuracy or availability of third-party market data.
+AI analysis is based on public market data and standard technical indicators. It is not investment advice or trading guidance. Markets involve risk; decide independently and at your own risk.
+
+## Recent Updates (August 2026)
+
+- Rebranded the product as **Rooftop Quant**, with localized names **天台分析** and **屋上クオンツ**, and added a multilingual investment-risk notice to the application.
+- Reworked entry assessment into separate left-side reversal and right-side confirmation paths. Their numeric path scores remain internal; the interface shows one final score and clear scenario states instead.
+- Made TD Sequential stages 6-9 progressively affect setup maturity, so an unfinished sequence can contribute evidence without being treated as a completed signal.
+- Added market-session-aware analysis freshness. Analysis history keeps the last analysis time and refreshes results older than 10 minutes when the relevant market is trading.
+- Hardened AI report output by repairing malformed JSON control characters, keeping machine evidence IDs out of visible prose, and preserving localized strategy text.
+- Improved A-share quote synchronization so displayed quotes, indicator snapshots, and scoring use a consistent current candle where supported.
 
 ## What It Does
 
@@ -13,6 +22,7 @@ The project is designed for research and education. It does not provide investme
 - Displays synchronized price and indicator panes with daily/weekly switching and regional red-up or green-up color modes.
 - Produces a 0-5 entry-attractiveness score from explicit rule-based evidence and data-quality constraints.
 - Lets a configured LLM review the evidence and adjust the rule score by at most `+/-0.5`.
+- Shows left-side and right-side scenario states as **Not formed**, **Watch**, **Intraday provisional**, **Confirmed**, or **Too late**, while keeping their numeric path scores internal.
 - Generates separate overview, strategy, and technical-detail report sections.
 - Falls back to a built-in local report when LLM generation fails and fallback is enabled.
 - Clearly marks offline demo data when live providers cannot return a usable result.
@@ -46,7 +56,9 @@ Realtime quotes are merged into analysis snapshots where supported so the displa
 
 ## AI Reports and Scoring
 
-The analysis engine first builds an immutable evidence snapshot and calculates a deterministic entry-attractiveness score. The score incorporates trend, momentum, support/resistance, volatility, volume, VPVR, Fibonacci, pattern context, and data quality.
+The analysis engine first builds an immutable evidence snapshot and calculates left-side reversal and right-side confirmation paths independently. It selects the strongest eligible path for the deterministic 0-5 entry-attractiveness score. The score incorporates trend, momentum, support/resistance, volatility, volume, VPVR, Fibonacci, pattern context, payoff quality, and data quality.
+
+The two paths use explicit scenario states: **Not formed**, **Watch**, **Intraday provisional**, **Confirmed**, and **Too late**. Their numeric scores are internal implementation details rather than additional headline ratings. TD Sequential starts contributing capped exhaustion evidence from stage 6, with progressively higher weight through stage 9; an unfinished sequence is evidence, not confirmation by itself.
 
 When an LLM is configured, the model receives the structured evidence rather than being asked to invent or recalculate indicators. It may challenge the rule score only within `+/-0.5` and is instructed to cite the supplied evidence. The final report is split into:
 
