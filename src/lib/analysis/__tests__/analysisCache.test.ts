@@ -8,6 +8,7 @@ import {
   isAShareAnalysisCacheReusable,
   isAShareSymbol,
   isMarketTrading,
+  isMarketDataCacheReusable,
   isSameMarketDate,
   type AShareAnalysisCacheCandidate,
 } from "../analysisCache";
@@ -179,5 +180,39 @@ describe("market-aware analysis cache policy", () => {
       Date.parse("2026-07-29T23:59:00.000Z"),
       Date.parse("2026-07-30T00:01:00.000Z")
     )).toBe(true);
+  });
+});
+
+describe("market-data cache policy", () => {
+  it("reuses active-session data for ten minutes but not data from before the session", () => {
+    const now = Date.parse("2026-07-30T14:00:00.000Z");
+    expect(isMarketDataCacheReusable("AAPL", now - ACTIVE_MARKET_ANALYSIS_MAX_AGE_MS, now)).toBe(true);
+    expect(isMarketDataCacheReusable("AAPL", now - ACTIVE_MARKET_ANALYSIS_MAX_AGE_MS - 1, now)).toBe(false);
+    expect(isMarketDataCacheReusable(
+      "AAPL",
+      Date.parse("2026-07-30T13:29:00.000Z"),
+      Date.parse("2026-07-30T13:31:00.000Z")
+    )).toBe(false);
+  });
+
+  it("reuses a lunch-break snapshot only when it includes the completed morning session", () => {
+    const lunch = Date.parse("2026-07-30T04:00:00.000Z");
+    expect(isMarketDataCacheReusable("600519.SS", Date.parse("2026-07-30T03:30:00.000Z"), lunch)).toBe(true);
+    expect(isMarketDataCacheReusable("600519.SS", Date.parse("2026-07-30T03:29:00.000Z"), lunch)).toBe(false);
+  });
+
+  it("keeps a completed close through the weekend and next pre-open", () => {
+    const fridayClose = Date.parse("2026-07-31T20:01:00.000Z");
+    expect(isMarketDataCacheReusable("AAPL", fridayClose, Date.parse("2026-08-02T12:00:00.000Z"))).toBe(true);
+    expect(isMarketDataCacheReusable("AAPL", fridayClose, Date.parse("2026-08-03T13:00:00.000Z"))).toBe(true);
+    expect(isMarketDataCacheReusable("AAPL", fridayClose, Date.parse("2026-08-03T13:30:00.000Z"))).toBe(false);
+  });
+
+  it("rejects a pre-close snapshot after the market closes", () => {
+    expect(isMarketDataCacheReusable(
+      "AAPL",
+      Date.parse("2026-07-30T19:59:00.000Z"),
+      Date.parse("2026-07-30T20:01:00.000Z")
+    )).toBe(false);
   });
 });

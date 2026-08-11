@@ -2,6 +2,7 @@ const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 export const ANALYSIS_CACHE_VERSION = 3;
 export const ACTIVE_MARKET_ANALYSIS_MAX_AGE_MS = 10 * 60 * 1000;
+export const MARKET_DATA_CACHE_MAX_RETENTION_MS = 4 * 24 * 60 * 60 * 1000;
 
 interface MarketSessionDefinition {
   timeZone: string;
@@ -114,6 +115,51 @@ export function isAnalysisCacheReusableByTime(
   }
 
   return isSameMarketDate(symbol, cacheTimestamp, nowTimestamp);
+}
+
+export function isMarketDataCacheReusable(
+  symbol: string,
+  cacheTimestamp: number,
+  nowTimestamp = Date.now()
+): boolean {
+  if (!Number.isFinite(cacheTimestamp) || !Number.isFinite(nowTimestamp)) return false;
+  if (cacheTimestamp > nowTimestamp) return false;
+
+  const age = nowTimestamp - cacheTimestamp;
+  if (age > MARKET_DATA_CACHE_MAX_RETENTION_MS) return false;
+
+  const market = getMarketSession(symbol);
+  const cached = getMarketDateParts(symbol, cacheTimestamp);
+  const now = getMarketDateParts(symbol, nowTimestamp);
+  if (!cached || !now) return false;
+
+  const sameDate = cached.dateKey === now.dateKey;
+  const activeSession = market.sessions.find(([startMinute, endMinute]) => (
+    now.minuteOfDay >= startMinute && now.minuteOfDay < endMinute
+  ));
+  if (activeSession && now.weekday !== "Sat" && now.weekday !== "Sun") {
+    return sameDate
+      && cached.minuteOfDay >= activeSession[0]
+      && age <= ACTIVE_MARKET_ANALYSIS_MAX_AGE_MS;
+  }
+
+  const marketClose = getMarketCloseMinute(symbol);
+  const cachedOnWeekend = cached.weekday === "Sat" || cached.weekday === "Sun";
+  const cacheRepresentsClosedMarket = cachedOnWeekend || cached.minuteOfDay >= marketClose;
+  const nowOnWeekend = now.weekday === "Sat" || now.weekday === "Sun";
+  if (nowOnWeekend) return cacheRepresentsClosedMarket;
+
+  const completedSessionEnds = market.sessions
+    .map(([, endMinute]) => endMinute)
+    .filter((endMinute) => endMinute <= now.minuteOfDay);
+  if (completedSessionEnds.length > 0) {
+    if (!sameDate) return false;
+    const latestSessionEnd = Math.max(...completedSessionEnds);
+    return cached.minuteOfDay >= latestSessionEnd;
+  }
+
+  // Before the first session, the previous close remains valid until trading starts.
+  return sameDate || cacheRepresentsClosedMarket;
 }
 
 export function isAnalysisCacheLanguageCompatible(
