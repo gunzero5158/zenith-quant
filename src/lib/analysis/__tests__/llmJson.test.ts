@@ -7,6 +7,17 @@ describe("LLM JSON response parsing", () => {
     expect(parseLLMJsonResponse<{ overview: string }>('```json\n{"overview":"ok"}\n```')).toEqual({ overview: "ok" });
   });
 
+  it("parses JSON when markdown fences are incomplete or surrounded by prose", () => {
+    expect(parseLLMJsonResponse<{ overview: string }>('```json {"overview":"ok"}')).toEqual({ overview: "ok" });
+    expect(parseLLMJsonResponse<{ overview: string }>('Result:\n```json\n{"overview":"ok"}\n```\nDone.')).toEqual({ overview: "ok" });
+  });
+
+  it("ignores braces inside JSON strings while extracting the object", () => {
+    expect(parseLLMJsonResponse<{ overview: string }>('Answer: {"overview":"range {100, 120}"} trailing text')).toEqual({
+      overview: "range {100, 120}",
+    });
+  });
+
   it("repairs raw line breaks and tabs inside JSON string values", () => {
     const response = `{
       "overview": "First line
@@ -32,5 +43,9 @@ Second line",
 
   it("does not hide unrelated JSON structure errors", () => {
     expect(() => parseLLMJsonResponse('{"overview":"ok",}')).toThrow(SyntaxError);
+  });
+
+  it("rejects a top-level JSON array", () => {
+    expect(() => parseLLMJsonResponse('[{"overview":"ok"}]')).toThrow("LLM response must contain a JSON object");
   });
 });

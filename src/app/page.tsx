@@ -1426,7 +1426,6 @@ export default function Home() {
                             {scorePresentation.rightLabel} {scorePresentation.rightText}
                           </span>
                         </div>
-                        <div style={styles.confidenceReason}>{scorePresentation.confidenceReason}</div>
                       </>
                     )}
                   </div>
@@ -1465,7 +1464,12 @@ export default function Home() {
                   <div className="summary-card" style={styles.summaryCard}>
                     <div style={styles.cardHeader}>{t.overviewHeader}</div>
                     <div style={styles.cardBodyAutoScroll}>
-                      <MarkdownBlock text={stockData.reportOverview} effectiveLang={effectiveLang} />
+                      <MarkdownBlock
+                        text={scorePresentation?.confidenceReason
+                          ? `${stockData.reportOverview}\n\n${scorePresentation.confidenceReason}`
+                          : stockData.reportOverview}
+                        effectiveLang={effectiveLang}
+                      />
                     </div>
                   </div>
                   
@@ -2371,15 +2375,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "10.5px",
     lineHeight: 1.2,
     whiteSpace: "nowrap",
-  },
-  confidenceReason: {
-    maxWidth: "320px",
-    marginTop: "7px",
-    color: "#8b93a7",
-    fontSize: "10.5px",
-    lineHeight: 1.4,
-    textAlign: "center",
-    overflowWrap: "anywhere",
   },
   dataStatus: {
     color: "#787b86",

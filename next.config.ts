@@ -23,6 +23,7 @@ const sharedDependencyRoot = path.resolve(realNodeModulesPath) !== path.resolve(
   : undefined;
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ["127.0.0.1"],
   ...(sharedDependencyRoot ? { turbopack: { root: sharedDependencyRoot } } : {}),
 };
 

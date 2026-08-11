@@ -887,28 +887,42 @@ export async function POST(request: Request) {
       return NextResponse.json({ error }, { status: 503 });
     }
 
-    let aiResult: AiAnalysisResult;
+    const prompt = buildEvidenceAnalystPrompt({
+      snapshot: techData.snapshot,
+      dailyCandles: techData.dailyCandles,
+      weeklyCandles: techData.weeklyCandles,
+      language: effectiveLang,
+      currencySymbol,
+    });
+
+    let reportText: string;
     try {
-      const prompt = buildEvidenceAnalystPrompt({
-        snapshot: techData.snapshot,
-        dailyCandles: techData.dailyCandles,
-        weeklyCandles: techData.weeklyCandles,
-        language: effectiveLang,
-        currencySymbol,
-      });
-      const reportText = await generateLLMReport(prompt, llmConfig);
-      aiResult = validateAiAnalysisResult(
-        parseLLMJsonResponse(reportText),
-        techData.snapshot
-      );
+      reportText = await generateLLMReport(prompt, llmConfig);
     } catch (err: unknown) {
-      console.error("AI analysis generation or validation failed:", err);
+      console.error("AI analysis request failed:", err);
       const detail = summarizeLLMError(err);
       const error = effectiveLang === "en"
         ? `AI analysis failed: ${detail}. Check the API key and model configuration.`
         : effectiveLang === "ja"
           ? `AI 分析に失敗しました: ${detail}。API キーとモデル設定を確認してください。`
           : `AI 分析失败：${detail}。请检查 API Key 与模型配置。`;
+      return NextResponse.json({ error }, { status: 502 });
+    }
+
+    let aiResult: AiAnalysisResult;
+    try {
+      aiResult = validateAiAnalysisResult(
+        parseLLMJsonResponse(reportText),
+        techData.snapshot
+      );
+    } catch (err: unknown) {
+      console.error("AI response parsing or validation failed:", err);
+      const detail = summarizeLLMError(err);
+      const error = effectiveLang === "en"
+        ? `The AI returned an invalid response format: ${detail}. Please retry; this usually is not an API key issue.`
+        : effectiveLang === "ja"
+          ? `AI の応答形式が正しくありません: ${detail}。再試行してください。通常、API キーの問題ではありません。`
+          : `AI 返回内容格式异常：${detail}。请重试，这通常不是 API Key 配置问题。`;
       return NextResponse.json({ error }, { status: 502 });
     }
 
