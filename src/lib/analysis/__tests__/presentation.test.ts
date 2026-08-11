@@ -5,8 +5,10 @@ import { buildEntryScorePresentation } from "../presentation";
 function assessment(overrides: Partial<AiEntryAssessment> = {}): AiEntryAssessment {
   return {
     source: "ai",
+    outlook: "bullish",
     finalScore: 3.7,
     confidence: 0.82,
+    confidenceReason: "Daily and weekly evidence agree.",
     leftStatus: "triggered",
     rightStatus: "watch",
     activeSetup: "left",
@@ -17,12 +19,13 @@ function assessment(overrides: Partial<AiEntryAssessment> = {}): AiEntryAssessme
 }
 
 describe("AI entry score presentation", () => {
-  it("labels AI score, confidence, and scenarios", () => {
+  it("labels AI score, confidence, outlook, and scenarios", () => {
     expect(buildEntryScorePresentation(assessment(), "zh-CN")).toMatchObject({
       scoreLabel: "AI 评分",
       scoreText: "3.7",
       confidenceLabel: "置信度",
       confidenceText: "82%",
+      outlookText: "看多",
       leftText: "触发",
       rightText: "观察",
     });
@@ -41,6 +44,7 @@ describe("AI entry score presentation", () => {
     });
     expect(view.scoreLabel).toBe("AI score");
     expect(view.confidenceText).toBe("82%");
+    expect(view.confidenceReason).toBe("Daily and weekly evidence agree.");
     expect(view.dataStatus).toContain("Daily provisional");
     expect(view.dataStatus).toContain("Weekly provisional");
   });

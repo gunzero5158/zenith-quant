@@ -254,6 +254,9 @@ export function analyzeEma(input: EmaInput): EmaSignal {
 
 export interface BollSignal extends SignalBase {
   position: "above_upper" | "upper_half" | "lower_half" | "below_lower" | "unknown";
+  middle?: number;
+  upper?: number;
+  lower?: number;
   percentB?: number;
   bandwidth?: number;
   bandwidthTrend: Direction | "unknown";
@@ -286,6 +289,9 @@ export function analyzeBoll(input: BollInput): BollSignal {
     available: true,
     provisional: input.provisional,
     position: input.price > upper! ? "above_upper" : input.price >= middle! ? "upper_half" : input.price >= lower! ? "lower_half" : "below_lower",
+    middle,
+    upper,
+    lower,
     percentB: Number((((input.price - lower!) / (upper! - lower!)) * 100).toFixed(2)),
     bandwidth: Number(bandwidth.toFixed(2)),
     bandwidthTrend: direction(bandwidth, previousBandwidth, 0.25),
@@ -319,6 +325,10 @@ export interface IchimokuSignal extends SignalBase {
   cross: Cross;
   barsSinceCross?: number;
   cloudBias: "bullish" | "bearish" | "neutral" | "unknown";
+  tenkan?: number;
+  kijun?: number;
+  spanA?: number;
+  spanB?: number;
   cloudTop?: number;
   cloudBottom?: number;
 }
@@ -357,6 +367,10 @@ export function analyzeIchimoku(input: IchimokuInput): IchimokuSignal {
     lineRelation: tenkan! > kijun! ? "bullish" : tenkan! < kijun! ? "bearish" : "neutral",
     ...latestCross(input.tenkan, input.kijun, input.index),
     cloudBias: spanA! > spanB! ? "bullish" : spanA! < spanB! ? "bearish" : "neutral",
+    tenkan,
+    kijun,
+    spanA,
+    spanB,
     cloudTop,
     cloudBottom,
   };

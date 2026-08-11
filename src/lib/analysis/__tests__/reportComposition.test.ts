@@ -8,19 +8,21 @@ const aiResult: AiAnalysisResult = {
   strategyCommentary: "The assessment changes if price loses support.",
   scoreAssessment: {
     source: "ai",
+    outlook: "neutral",
     finalScore: 3.6,
     confidence: 0.74,
+    confidenceReason: "Signals are constructive but not fully aligned.",
     leftStatus: "watch",
     rightStatus: "not_formed",
-    activeSetup: "left",
+    activeSetup: "none",
     riskPlan: {},
     reasons: [{ evidenceIds: ["daily.macd.rising"], text: "Momentum is improving." }],
   },
   strategyAdvice: {
-    holder: { action: "hold_protect", text: "Hold with protection." },
-    leftEntry: { action: "wait", text: "Wait for a reversal trigger." },
-    rightAdd: { action: "wait_breakout", text: "Wait for a breakout." },
-    exitStop: { trigger: "close", text: "Exit on a close below support." },
+    holder: { action: "hold_protect", evidenceIds: ["daily.macd.rising"], text: "Hold with protection." },
+    leftEntry: { action: "wait", evidenceIds: ["daily.macd.rising"], text: "Wait for a reversal trigger." },
+    rightAdd: { action: "wait_breakout", evidenceIds: ["daily.macd.rising"], text: "Wait for a breakout." },
+    exitStop: { trigger: "close", evidenceIds: ["daily.macd.rising"], text: "Exit on a close below support." },
   },
 };
 

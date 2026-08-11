@@ -64,11 +64,15 @@ describe("pure analysis engine", () => {
     expect(prompt).toContain(result.snapshot.items[0].id);
     expect(prompt).not.toContain('"hardCap"');
     expect(prompt).not.toContain('"scoreCap"');
+    expect(prompt).not.toContain('"weeklyRegime"');
+    expect(prompt).not.toContain('"dailyPhase"');
     expect(prompt).not.toContain('"ruleAssessment"');
     expect(prompt).not.toContain('"strategy"');
     expect(prompt).toContain('"scoreAssessment"');
     expect(prompt).toContain('"finalScore"');
     expect(prompt).toContain('"confidence"');
+    expect(prompt).toContain('"confidenceReason"');
+    expect(prompt).toContain('"outlook"');
     expect(prompt).toContain('"strategyAdvice"');
     expect(prompt).toContain('"evidenceIds"');
     expect(prompt).toContain("Evidence IDs are machine-readable metadata only");
@@ -80,6 +84,11 @@ describe("pure analysis engine", () => {
     expect(prompt).toContain("current fact or value");
     expect(prompt).toContain("plain-language meaning");
     expect(prompt).toContain("5-20 trading-day decision");
+    expect(prompt).toContain("sole decision-maker");
+    expect(prompt).toContain("exact price from immutableFacts.snapshot.levels");
+    expect(prompt).toContain("Do not return rewardRisk or stopDistancePct");
+    expect(prompt).toContain('"ema5"');
+    expect(prompt).toContain('"dif"');
 
     const languageNames = {
       "zh-CN": "Simplified Chinese",

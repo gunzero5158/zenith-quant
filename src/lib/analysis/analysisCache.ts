@@ -1,6 +1,6 @@
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 
-export const ANALYSIS_REPORT_CACHE_VERSION = 2;
+export const ANALYSIS_REPORT_CACHE_VERSION = 3;
 export const ANALYSIS_CACHE_VERSION = ANALYSIS_REPORT_CACHE_VERSION;
 export const ACTIVE_MARKET_ANALYSIS_MAX_AGE_MS = 10 * 60 * 1000;
 export const MARKET_DATA_CACHE_MAX_RETENTION_MS = 4 * 24 * 60 * 60 * 1000;
@@ -80,6 +80,13 @@ function getMarketDateParts(symbol: string, timestamp: number): MarketDateParts 
     weekday: parts.weekday,
     minuteOfDay: hour * 60 + minute,
   };
+}
+
+function getMarketCloseMinute(symbol: string): number {
+  return getMarketSession(symbol).sessions.reduce(
+    (latest, [, endMinute]) => Math.max(latest, endMinute),
+    0
+  );
 }
 
 export function isMarketTrading(symbol: string, timestamp = Date.now()): boolean {

@@ -49,6 +49,8 @@ describe('llmProxy', () => {
 
     const body = JSON.parse(calledInit.body);
     expect(body.contents[0].parts[0].text).toBe('hello gemini');
+    expect(body.systemInstruction.parts[0].text).toContain('sole independent decision-maker');
+    expect(body.systemInstruction.parts[0].text).not.toMatch(/rule score|\+\/-0\.5/i);
     expect(result).toBe('Gemini simulated response');
   });
 
@@ -105,6 +107,8 @@ describe('llmProxy', () => {
     const body = JSON.parse(calledInit.body);
     expect(body.model).toBe('gpt-4o');
     expect(body.messages[1].content).toBe('hello openai');
+    expect(body.messages[0].content).toContain('sole independent decision-maker');
+    expect(body.messages[0].content).not.toMatch(/rule score|\+\/-0\.5/i);
     expect(result).toBe('OpenAI simulated response');
   });
 

@@ -1416,6 +1416,7 @@ export default function Home() {
                       <>
                         <div style={styles.scoreBreakdownRow}>
                           <span>{scorePresentation.confidenceLabel} {scorePresentation.confidenceText}</span>
+                          <span>{scorePresentation.outlookLabel} {scorePresentation.outlookText}</span>
                         </div>
                         <div style={styles.scenarioRow}>
                           <span style={{ ...styles.scenarioBadge, ...scenarioTone(stockData.entryAssessment.leftStatus) }}>
@@ -1425,6 +1426,7 @@ export default function Home() {
                             {scorePresentation.rightLabel} {scorePresentation.rightText}
                           </span>
                         </div>
+                        <div style={styles.confidenceReason}>{scorePresentation.confidenceReason}</div>
                       </>
                     )}
                   </div>
@@ -2369,6 +2371,15 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "10.5px",
     lineHeight: 1.2,
     whiteSpace: "nowrap",
+  },
+  confidenceReason: {
+    maxWidth: "320px",
+    marginTop: "7px",
+    color: "#8b93a7",
+    fontSize: "10.5px",
+    lineHeight: 1.4,
+    textAlign: "center",
+    overflowWrap: "anywhere",
   },
   dataStatus: {
     color: "#787b86",

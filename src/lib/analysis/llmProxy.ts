@@ -9,7 +9,15 @@ export interface LLMConfig {
 // response parsing, and local fallback generation.
 const LLM_PROVIDER_TIMEOUT_MS = 270_000;
 const MAX_UPSTREAM_ERROR_CHARS = 240;
-const ANALYSIS_SYSTEM_BOUNDARY = "You are reviewing an immutable technical-analysis evidence snapshot. Interpret the supplied facts and challenge the rule score only when cited evidence supports it. Do not recalculate indicators, invent market data, or introduce outside facts. Any score adjustment must stay within +/-0.5 and cite provided evidence IDs.";
+const ANALYSIS_SYSTEM_BOUNDARY = [
+  "You are the sole independent decision-maker for this technical market analysis.",
+  "No prior numeric assessment, fixed weighting formula, or predetermined conclusion exists.",
+  "Determine the market outlook, opportunity score, confidence, setup state, and strategy yourself from the supplied immutable evidence.",
+  "Do not recalculate indicators, alter or invent market data, introduce outside facts, or defer to hidden heuristics.",
+  "Ground score reasons and every strategy action in provided evidence IDs.",
+  "Evidence IDs are machine-only metadata and must never appear in user-visible prose.",
+  "Return only the JSON requested by the user prompt.",
+].join(" ");
 
 // Hostnames/IP ranges that must never be reachable through a user-supplied baseUrl.
 // This blocks SSRF against cloud metadata endpoints and internal networks.

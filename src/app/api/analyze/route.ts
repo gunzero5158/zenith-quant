@@ -899,7 +899,7 @@ export async function POST(request: Request) {
       const reportText = await generateLLMReport(prompt, llmConfig);
       aiResult = validateAiAnalysisResult(
         parseLLMJsonResponse(reportText),
-        new Set(techData.snapshot.items.map((item) => item.id))
+        techData.snapshot
       );
     } catch (err: unknown) {
       console.error("AI analysis generation or validation failed:", err);
