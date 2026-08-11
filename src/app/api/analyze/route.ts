@@ -10,7 +10,7 @@ import { generateLLMReport, LLMConfig } from "@/lib/analysis/llmProxy";
 import { generateMockCandles } from "@/lib/analysis/mockData";
 import { getMarketCurrencySymbol, normalizeManualSymbolInput, replaceDollarPriceSymbols } from "@/lib/analysis/market";
 import { fetchKabutanMarketData, getKabutanCode } from "@/lib/analysis/kabutan";
-import { fetchProviderMarketData } from "@/lib/analysis/marketDataProviders";
+import { fetchProviderMarketData, hasConfiguredMarketDataProvider } from "@/lib/analysis/marketDataProviders";
 import { fetchTencentMarketData } from "@/lib/analysis/tencent";
 import { buildEastMoneyKlineUrl, fetchEastMoneyJson } from "@/lib/analysis/eastmoneyHttp";
 import { fetchTonghuashunMarketData } from "@/lib/analysis/tonghuashun";
@@ -37,6 +37,11 @@ import {
   getShanghaiDateKey,
   parseAnalysisQuoteSnapshot,
 } from "@/lib/analysis/analysisQuoteSnapshot";
+import {
+  isMarketDataCacheReusable,
+  MARKET_DATA_CACHE_MAX_RETENTION_MS,
+} from "@/lib/analysis/analysisCache";
+import { marketDataCircuitBreaker } from "@/lib/analysis/providerCircuitBreaker";
 
 export const maxDuration = 300;
 
@@ -63,7 +68,7 @@ const EAST_MONEY_WEEKLY_CANDLE_LIMIT = 180;
 
 const SUPPORTED_LANGUAGES = ["zh-CN", "zh-TW", "en", "ja"];
 
-// Simple in-memory cache for technical analysis data (1 hour TTL)
+// Per-instance cache for normalized market data and its derived technical snapshot.
 interface TechnicalIndicators {
   ema5: number[];
   ema10: number[];
@@ -105,7 +110,6 @@ interface CacheEntry {
 }
 
 const techCache: Record<string, CacheEntry> = {};
-const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const TECH_CACHE_MAX_ENTRIES = 50;
 // Coalesce concurrent requests for the same symbol into a single upstream fetch.
 const inflightTechFetches = new Map<string, Promise<CacheEntry["data"]>>();
@@ -114,7 +118,7 @@ const MIN_REAL_DAILY_CANDLES = 20;
 function pruneTechCache(now: number): void {
   const keys = Object.keys(techCache);
   for (const key of keys) {
-    if (now - techCache[key].timestamp >= CACHE_TTL) {
+    if (now - techCache[key].timestamp > MARKET_DATA_CACHE_MAX_RETENTION_MS) {
       delete techCache[key];
     }
   }
@@ -479,14 +483,14 @@ export async function POST(request: Request) {
 
     let techData: CacheEntry["data"];
 
-    // Drop expired cache entries as soon as they are encountered.
-    if (techCache[cacheKey] && now - techCache[cacheKey].timestamp >= CACHE_TTL) {
+    // Trading data expires after ten minutes during a session and at the next session boundary while closed.
+    if (techCache[cacheKey] && !isMarketDataCacheReusable(cleanSymbol, techCache[cacheKey].timestamp, now)) {
       delete techCache[cacheKey];
     }
 
     // Check if technical data is cached. Mock/demo data is intentionally not reused:
     // a temporary provider outage should not poison later real-data analyses.
-    if (!isAShareRequest && techCache[cacheKey] && now - techCache[cacheKey].timestamp < CACHE_TTL && !techCache[cacheKey].data.isMock) {
+    if (techCache[cacheKey] && !techCache[cacheKey].data.isMock) {
       techData = techCache[cacheKey].data;
     } else {
       if (techCache[cacheKey]?.data.isMock) {
@@ -506,13 +510,17 @@ export async function POST(request: Request) {
         let companyNameEn = "";
         let changePercent = 0;
         let isMock = false;
-        let usedRealtimeQuote = false;
         let dataSource: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'tonghuashun' | 'kabutan' | 'tencent' | 'twelve-data' | 'fmp' | 'provider' | 'mock' = 'yahoo';
         const realtimeQuotePromise = isAShareRequest
           ? fetchAShareRealtimeQuote(cleanSymbol)
           : Promise.resolve(null);
 
+        let yahooAttempted = false;
         try {
+          if (!marketDataCircuitBreaker.shouldAttempt("yahoo", false)) {
+            throw new Error("Yahoo Finance circuit is temporarily open");
+          }
+          yahooAttempted = true;
           const oneYearAgo = new Date();
           oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
           const threeYearsAgo = new Date();
@@ -592,26 +600,34 @@ export async function POST(request: Request) {
             }));
 
           dataSource = "yahoo";
+          marketDataCircuitBreaker.recordSuccess("yahoo");
         } catch (networkErr: unknown) {
+          if (yahooAttempted) {
+            marketDataCircuitBreaker.recordFailure("yahoo");
+          }
           console.warn("Yahoo Finance fetch failed, attempting Yahoo Chart API:", networkErr);
           let realDataSuccess = false;
 
-          try {
-            const chartData = await fetchYahooChartCandles(cleanSymbol);
-            dailyCandles = chartData.dailyCandles;
-            weeklyCandles = chartData.weeklyCandles;
-            companyName = chartData.companyName || cleanSymbol;
-            companyNameEn = chartData.companyNameEn || "";
-            changePercent = chartData.changePercent;
-            isMock = false;
-            dataSource = "yahoo-chart";
-            realDataSuccess = true;
-            console.log(`Successfully loaded real data from Yahoo Chart API for: ${companyName}`);
-          } catch (chartErr: unknown) {
-            console.warn("Yahoo Chart API failed, attempting EastMoney API:", chartErr);
+          if (marketDataCircuitBreaker.shouldAttempt("yahoo-chart", realDataSuccess)) {
+            try {
+              const chartData = await fetchYahooChartCandles(cleanSymbol);
+              dailyCandles = chartData.dailyCandles;
+              weeklyCandles = chartData.weeklyCandles;
+              companyName = chartData.companyName || cleanSymbol;
+              companyNameEn = chartData.companyNameEn || "";
+              changePercent = chartData.changePercent;
+              isMock = false;
+              dataSource = "yahoo-chart";
+              realDataSuccess = true;
+              marketDataCircuitBreaker.recordSuccess("yahoo-chart");
+              console.log(`Successfully loaded real data from Yahoo Chart API for: ${companyName}`);
+            } catch (chartErr: unknown) {
+              marketDataCircuitBreaker.recordFailure("yahoo-chart");
+              console.warn("Yahoo Chart API failed, attempting EastMoney API:", chartErr);
+            }
           }
 
-          if (!realDataSuccess && getKabutanCode(cleanSymbol)) {
+          if (getKabutanCode(cleanSymbol) && marketDataCircuitBreaker.shouldAttempt("kabutan", realDataSuccess)) {
             try {
               console.log(`Fetching Kabutan daily candles for symbol: ${cleanSymbol}`);
               const kabutanData = await fetchKabutanMarketData(cleanSymbol);
@@ -623,8 +639,10 @@ export async function POST(request: Request) {
               isMock = false;
               dataSource = "kabutan";
               realDataSuccess = true;
+              marketDataCircuitBreaker.recordSuccess("kabutan");
               console.log(`Successfully loaded real data from Kabutan for: ${companyName}`);
             } catch (kabutanErr: unknown) {
+              marketDataCircuitBreaker.recordFailure("kabutan");
               console.warn("Kabutan API failed, attempting EastMoney API:", kabutanErr);
             }
           }
@@ -632,7 +650,7 @@ export async function POST(request: Request) {
           const secidCandidates = getEastMoneySecidCandidates(cleanSymbol);
           let eastMoneySuccess = false;
 
-          if (!realDataSuccess && secidCandidates.length > 0) {
+          if (secidCandidates.length > 0 && marketDataCircuitBreaker.shouldAttempt("eastmoney", realDataSuccess)) {
             for (const secid of secidCandidates) {
               try {
                 console.log(`Fetching EastMoney klines for secid: ${secid}`);
@@ -680,11 +698,18 @@ export async function POST(request: Request) {
                 console.error(`EastMoney API failed for ${secid}:`, emErr);
               }
             }
+            if (eastMoneySuccess) {
+              marketDataCircuitBreaker.recordSuccess("eastmoney");
+            } else {
+              marketDataCircuitBreaker.recordFailure("eastmoney");
+            }
           }
 
           if (eastMoneySuccess) {
             realDataSuccess = true;
-          } else {
+          }
+
+          if (marketDataCircuitBreaker.shouldAttempt("tonghuashun", realDataSuccess)) {
             try {
               console.log(`Fetching Tonghuashun market data for symbol: ${cleanSymbol}`);
               const tonghuashunData = await fetchTonghuashunMarketData(cleanSymbol);
@@ -697,14 +722,18 @@ export async function POST(request: Request) {
                 isMock = false;
                 dataSource = "tonghuashun";
                 realDataSuccess = true;
+                marketDataCircuitBreaker.recordSuccess("tonghuashun");
                 console.log(`Successfully loaded real data from Tonghuashun for: ${companyName}`);
+              } else {
+                marketDataCircuitBreaker.recordFailure("tonghuashun");
               }
             } catch (tonghuashunErr: unknown) {
+              marketDataCircuitBreaker.recordFailure("tonghuashun");
               console.warn("Tonghuashun API failed as well:", tonghuashunErr);
             }
           }
 
-          if (!realDataSuccess) {
+          if (hasConfiguredMarketDataProvider() && marketDataCircuitBreaker.shouldAttempt("optional-provider", realDataSuccess)) {
             try {
               console.log(`Fetching optional provider market data for symbol: ${cleanSymbol}`);
               const providerData = await fetchProviderMarketData(cleanSymbol);
@@ -717,14 +746,18 @@ export async function POST(request: Request) {
                 isMock = false;
                 dataSource = providerData.source;
                 realDataSuccess = true;
+                marketDataCircuitBreaker.recordSuccess("optional-provider");
                 console.log(`Successfully loaded real data from optional provider for: ${companyName}`);
+              } else {
+                marketDataCircuitBreaker.recordFailure("optional-provider");
               }
             } catch (providerErr: unknown) {
+              marketDataCircuitBreaker.recordFailure("optional-provider");
               console.warn("Optional provider APIs failed as well:", providerErr);
             }
           }
 
-          if (!realDataSuccess) {
+          if (marketDataCircuitBreaker.shouldAttempt("tencent", realDataSuccess)) {
             try {
               console.log(`Fetching Tencent market data for symbol: ${cleanSymbol}`);
               const tencentData = await fetchTencentMarketData(cleanSymbol);
@@ -737,9 +770,13 @@ export async function POST(request: Request) {
                 isMock = false;
                 dataSource = "tencent";
                 realDataSuccess = true;
+                marketDataCircuitBreaker.recordSuccess("tencent");
                 console.log(`Successfully loaded real data from Tencent for: ${companyName}`);
+              } else {
+                marketDataCircuitBreaker.recordFailure("tencent");
               }
             } catch (tencentErr: unknown) {
+              marketDataCircuitBreaker.recordFailure("tencent");
               console.warn("Tencent API failed as well:", tencentErr);
             }
           }
@@ -770,7 +807,6 @@ export async function POST(request: Request) {
             if (realtimeQuote.name && companyName === cleanSymbol) {
               companyName = realtimeQuote.name;
             }
-            usedRealtimeQuote = true;
             console.log(`Applied A-share realtime quote from ${realtimeQuote.source} for: ${cleanSymbol}`);
           }
         }
@@ -822,11 +858,10 @@ export async function POST(request: Request) {
           dataSource,
         };
 
-          // Write to cache only for primary real market data. Last-resort fallback should retry primary sources next time.
-          if (!usedRealtimeQuote && !freshData.isMock && freshData.dataSource !== "tencent") {
+          if (!freshData.isMock) {
             pruneTechCache(Date.now());
             techCache[cacheKey] = {
-              timestamp: now,
+              timestamp: Date.now(),
               data: freshData,
             };
           }
