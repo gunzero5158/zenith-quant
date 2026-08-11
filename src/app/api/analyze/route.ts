@@ -38,6 +38,8 @@ import {
   parseAnalysisQuoteSnapshot,
 } from "@/lib/analysis/analysisQuoteSnapshot";
 
+export const maxDuration = 300;
+
 const yahooFinance = new YahooFinance();
 const EAST_MONEY_KLINE_HOSTS = [
   "push2his.eastmoney.com",

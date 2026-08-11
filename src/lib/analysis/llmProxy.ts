@@ -5,7 +5,9 @@ export interface LLMConfig {
   modelName: string;
 }
 
-const OFFICIAL_PROVIDER_TIMEOUT_MS = 180_000;
+// Leave 30 seconds inside Vercel's 300-second Hobby ceiling for market data,
+// response parsing, and local fallback generation.
+const LLM_PROVIDER_TIMEOUT_MS = 270_000;
 const MAX_UPSTREAM_ERROR_CHARS = 240;
 const ANALYSIS_SYSTEM_BOUNDARY = "You are reviewing an immutable technical-analysis evidence snapshot. Interpret the supplied facts and challenge the rule score only when cited evidence supports it. Do not recalculate indicators, invent market data, or introduce outside facts. Any score adjustment must stay within +/-0.5 and cite provided evidence IDs.";
 
@@ -161,7 +163,7 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify(payload)
-    }, "Gemini", OFFICIAL_PROVIDER_TIMEOUT_MS);
+    }, "Gemini", LLM_PROVIDER_TIMEOUT_MS);
 
     if (!res.ok) {
       throw await upstreamError("Gemini", res);
@@ -196,7 +198,7 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
         "anthropic-version": "2023-06-01"
       },
       body: JSON.stringify(payload)
-    }, "Anthropic", OFFICIAL_PROVIDER_TIMEOUT_MS);
+    }, "Anthropic", LLM_PROVIDER_TIMEOUT_MS);
 
     if (!res.ok) {
       throw await upstreamError("Anthropic", res);
@@ -235,7 +237,7 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
 
   // "custom" endpoints get the same timeout as official providers — a hung
   // endpoint must never hold the request handler open indefinitely.
-  const res = await fetchWithTimeout(openaiUrl, requestInit, provider.toUpperCase(), OFFICIAL_PROVIDER_TIMEOUT_MS);
+  const res = await fetchWithTimeout(openaiUrl, requestInit, provider.toUpperCase(), LLM_PROVIDER_TIMEOUT_MS);
 
   if (!res.ok) {
     throw await upstreamError(provider.toUpperCase(), res);
