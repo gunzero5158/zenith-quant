@@ -110,6 +110,30 @@ describe('llmProxy', () => {
     expect(result).toBe('OpenAI simulated response');
   });
 
+  it('aborts a hung LLM request after 270 seconds', async () => {
+    vi.useFakeTimers();
+    const globalFetchMock = vi.fn().mockImplementation((_url, init: RequestInit) => (
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => {
+          const error = new Error('Aborted');
+          error.name = 'AbortError';
+          reject(error);
+        });
+      })
+    ));
+    vi.stubGlobal('fetch', globalFetchMock);
+
+    const rejection = expect(generateLLMReport('slow prompt', {
+      provider: 'openai',
+      apiKey: 'openai-key',
+      modelName: 'gpt-4o',
+    })).rejects.toThrow('OPENAI API timeout after 270s');
+
+    await vi.advanceTimersByTimeAsync(270_000);
+    await rejection;
+    vi.useRealTimers();
+  });
+
   it('adds the OpenAI-compatible /v1 path when a custom base URL is only an origin', async () => {
     const globalFetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       choices: [{ message: { content: 'Custom provider response' } }],
