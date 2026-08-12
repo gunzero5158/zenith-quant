@@ -44,6 +44,7 @@ import {
   MARKET_DATA_CACHE_MAX_RETENTION_MS,
 } from "@/lib/analysis/analysisCache";
 import { marketDataCircuitBreaker } from "@/lib/analysis/providerCircuitBreaker";
+import { getMarketDataPriority, MarketDataProvider } from "@/lib/analysis/marketDataPriority";
 
 export const maxDuration = 300;
 
@@ -165,6 +166,17 @@ interface EastMoneyNameResponse {
   };
 }
 
+type AnalysisDataSource = NonNullable<CacheEntry["data"]["dataSource"]>;
+
+interface MarketDataResult {
+  dailyCandles: Candle[];
+  weeklyCandles: Candle[];
+  companyName: string;
+  companyNameEn?: string;
+  changePercent: number;
+  dataSource: Exclude<AnalysisDataSource, "mock" | "provider">;
+}
+
 interface EastMoneySuggestItem {
   Code?: string;
   Name?: string;
@@ -217,6 +229,135 @@ function isYahooHistoricalCandle(candle: YahooHistoricalCandle): candle is Requi
     candle.close !== undefined &&
     candle.volume !== undefined
   );
+}
+
+async function fetchYahooSdkMarketData(symbol: string): Promise<MarketDataResult> {
+  const oneYearAgo = new Date();
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+  const threeYearsAgo = new Date();
+  threeYearsAgo.setFullYear(threeYearsAgo.getFullYear() - 3);
+  const today = new Date();
+  const [quote, dailyRaw, weeklyRaw] = await Promise.all([
+    yahooFinance.quote(symbol) as Promise<YahooQuote>,
+    yahooFinance.historical(symbol, { period1: oneYearAgo, period2: today, interval: "1d" }) as Promise<YahooHistoricalCandle[]>,
+    yahooFinance.historical(symbol, { period1: threeYearsAgo, period2: today, interval: "1wk" }) as Promise<YahooHistoricalCandle[]>,
+  ]);
+  const dailyCandles = dailyRaw.filter(isYahooHistoricalCandle).map((candle) => ({
+    date: candle.date,
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+    volume: candle.volume,
+  }));
+  if (dailyCandles.length < MIN_REAL_DAILY_CANDLES) {
+    throw new Error(`Yahoo returned fewer than ${MIN_REAL_DAILY_CANDLES} daily candles`);
+  }
+  const weeklyCandles = weeklyRaw.filter(isYahooHistoricalCandle).map((candle) => ({
+    date: candle.date,
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+    volume: candle.volume,
+  }));
+  const companyName = quote?.longName || quote?.shortName || symbol;
+  return {
+    dailyCandles,
+    weeklyCandles,
+    companyName,
+    companyNameEn: companyName,
+    changePercent: quote?.regularMarketChangePercent || 0,
+    dataSource: "yahoo",
+  };
+}
+
+async function fetchEastMoneyMarketData(symbol: string): Promise<MarketDataResult> {
+  let lastError: unknown = null;
+  for (const secid of getEastMoneySecidCandidates(symbol)) {
+    try {
+      const [dailyCandles, weeklyFetched] = await Promise.all([
+        fetchReliableEastMoneyKlines(secid, false),
+        fetchReliableEastMoneyKlines(secid, true).catch(() => null),
+      ]);
+      if (dailyCandles.length < MIN_REAL_DAILY_CANDLES) continue;
+      const weeklyCandles = weeklyFetched ?? buildWeeklyCandlesFromDaily(dailyCandles);
+      const last = dailyCandles.at(-1)!;
+      const previous = dailyCandles.at(-2) || last;
+      let companyName = symbol;
+      try {
+        const response = await fetch(`https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f58`, {
+          signal: AbortSignal.timeout(2500),
+          headers: { Referer: "https://quote.eastmoney.com/" },
+        });
+        if (response.ok) {
+          const data = await response.json() as EastMoneyNameResponse;
+          companyName = data.data?.f58 || symbol;
+        }
+      } catch {
+        // The K-line response is valid even if the optional display name fails.
+      }
+      return {
+        dailyCandles,
+        weeklyCandles,
+        companyName,
+        changePercent: previous.close ? ((last.close - previous.close) / previous.close) * 100 : 0,
+        dataSource: "eastmoney",
+      };
+    } catch (error: unknown) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`EastMoney returned no usable data for ${symbol}`);
+}
+
+async function fetchMarketDataFromProvider(provider: MarketDataProvider, symbol: string): Promise<MarketDataResult | null> {
+  if (provider === "yahoo") return fetchYahooSdkMarketData(symbol);
+  if (provider === "yahoo-chart") {
+    const data = await fetchYahooChartCandles(symbol);
+    return { ...data, dataSource: "yahoo-chart" };
+  }
+  if (provider === "eastmoney") return fetchEastMoneyMarketData(symbol);
+  if (provider === "tonghuashun") {
+    const data = await fetchTonghuashunMarketData(symbol);
+    return data ? { ...data, companyNameEn: "", dataSource: "tonghuashun" } : null;
+  }
+  if (provider === "tencent") {
+    const data = await fetchTencentMarketData(symbol);
+    return data ? { ...data, companyNameEn: "", dataSource: "tencent" } : null;
+  }
+  if (provider === "kabutan") {
+    if (!getKabutanCode(symbol)) return null;
+    const data = await fetchKabutanMarketData(symbol);
+    return { ...data, companyNameEn: "", dataSource: "kabutan" };
+  }
+  if (!hasConfiguredMarketDataProvider()) return null;
+  const data = await fetchProviderMarketData(symbol);
+  return data
+    ? {
+        ...data,
+        companyName: data.companyName || symbol,
+        companyNameEn: "",
+        dataSource: data.source,
+      }
+    : null;
+}
+
+async function fetchMarketDataByPriority(symbol: string): Promise<MarketDataResult | null> {
+  for (const provider of getMarketDataPriority(symbol)) {
+    if (!marketDataCircuitBreaker.shouldAttempt(provider, false)) continue;
+    try {
+      const result = await fetchMarketDataFromProvider(provider, symbol);
+      if (!result) continue;
+      marketDataCircuitBreaker.recordSuccess(provider);
+      console.log(`Successfully loaded ${symbol} market data from ${result.dataSource}`);
+      return result;
+    } catch (error: unknown) {
+      marketDataCircuitBreaker.recordFailure(provider);
+      console.warn(`${provider} market data failed for ${symbol}:`, error);
+    }
+  }
+  return null;
 }
 
 async function resolveInputSymbol(input: string): Promise<string> {
@@ -501,7 +642,7 @@ export async function POST(request: Request) {
         techData = await existingFetch;
       } else {
         const techDataPromise = (async (): Promise<CacheEntry["data"]> => {
-        // 1. Fetch stock data with fallback to EastMoney and mock data
+        // Fetch stock data using the configured market-specific provider order.
         let dailyCandles: Candle[] = [];
         let weeklyCandles: Candle[] = [];
         let companyName = cleanSymbol;
@@ -513,284 +654,24 @@ export async function POST(request: Request) {
           ? fetchAShareRealtimeQuote(cleanSymbol)
           : Promise.resolve(null);
 
-        let yahooAttempted = false;
-        try {
-          if (!marketDataCircuitBreaker.shouldAttempt("yahoo", false)) {
-            throw new Error("Yahoo Finance circuit is temporarily open");
-          }
-          yahooAttempted = true;
-          const oneYearAgo = new Date();
-          oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-          const threeYearsAgo = new Date();
-          threeYearsAgo.setFullYear(threeYearsAgo.getFullYear() - 3);
-          const today = new Date();
-
-          // Fetch quote, historical candles and the EastMoney native name in parallel
-          const nameSecid = convertSymbolToEastMoneySecid(cleanSymbol);
-          const [quoteResult, dailyResult, weeklyResult, nameResult] = await Promise.allSettled([
-            yahooFinance.quote(cleanSymbol) as Promise<YahooQuote>,
-            yahooFinance.historical(cleanSymbol, {
-              period1: oneYearAgo,
-              period2: today,
-              interval: "1d",
-            }) as Promise<YahooHistoricalCandle[]>,
-            yahooFinance.historical(cleanSymbol, {
-              period1: threeYearsAgo,
-              period2: today,
-              interval: "1wk",
-            }) as Promise<YahooHistoricalCandle[]>,
-            nameSecid
-              ? fetch(`https://push2.eastmoney.com/api/qt/stock/get?secid=${nameSecid}&fields=f58`, {
-                  signal: AbortSignal.timeout(2500),
-                  headers: { "Referer": "https://quote.eastmoney.com/" }
-                }).then(async (nameRes) => nameRes.ok ? (await nameRes.json() as EastMoneyNameResponse) : null)
-              : Promise.resolve(null),
-          ]);
-
-          if (quoteResult.status === "rejected") {
-            console.error("Yahoo Quote error for:", cleanSymbol, quoteResult.reason);
-            const err = { message: getErrorMessage(quoteResult.reason) };
-            throw new Error(`无法获取股票 [${cleanSymbol}] 的实时报价: ${err?.message || err}`);
-          }
-          const quote: YahooQuote | null = quoteResult.value;
-
-          companyNameEn = quote?.longName || quote?.shortName || "";
-          // Chinese/Native name from EastMoney (fetched in parallel above)
-          const nameData = nameResult.status === "fulfilled" ? nameResult.value : null;
-          companyName = nameData?.data?.f58 || companyNameEn || cleanSymbol;
-
-          changePercent = quote?.regularMarketChangePercent || 0;
-
-          // 2. Historical candles (fetched in parallel above)
-          if (dailyResult.status === "rejected") {
-            throw dailyResult.reason;
-          }
-          if (weeklyResult.status === "rejected") {
-            throw weeklyResult.reason;
-          }
-          const dailyRaw = dailyResult.value;
-          const weeklyRaw = weeklyResult.value;
-
-          if (!dailyRaw || dailyRaw.length < MIN_REAL_DAILY_CANDLES) {
-            throw new Error(`雅虎财经返回的K线数据长度不足(少于${MIN_REAL_DAILY_CANDLES}天)`);
-          }
-
-          dailyCandles = dailyRaw
-            .filter(isYahooHistoricalCandle)
-            .map((c) => ({
-              date: c.date,
-              open: c.open,
-              high: c.high,
-              low: c.low,
-              close: c.close,
-              volume: c.volume,
-            }));
-
-          weeklyCandles = weeklyRaw
-            .filter(isYahooHistoricalCandle)
-            .map((c) => ({
-              date: c.date,
-              open: c.open,
-              high: c.high,
-              low: c.low,
-              close: c.close,
-              volume: c.volume,
-            }));
-
-          dataSource = "yahoo";
-          marketDataCircuitBreaker.recordSuccess("yahoo");
-        } catch (networkErr: unknown) {
-          if (yahooAttempted) {
-            marketDataCircuitBreaker.recordFailure("yahoo");
-          }
-          console.warn("Yahoo Finance fetch failed, attempting Yahoo Chart API:", networkErr);
-          let realDataSuccess = false;
-
-          if (marketDataCircuitBreaker.shouldAttempt("yahoo-chart", realDataSuccess)) {
-            try {
-              const chartData = await fetchYahooChartCandles(cleanSymbol);
-              dailyCandles = chartData.dailyCandles;
-              weeklyCandles = chartData.weeklyCandles;
-              companyName = chartData.companyName || cleanSymbol;
-              companyNameEn = chartData.companyNameEn || "";
-              changePercent = chartData.changePercent;
-              isMock = false;
-              dataSource = "yahoo-chart";
-              realDataSuccess = true;
-              marketDataCircuitBreaker.recordSuccess("yahoo-chart");
-              console.log(`Successfully loaded real data from Yahoo Chart API for: ${companyName}`);
-            } catch (chartErr: unknown) {
-              marketDataCircuitBreaker.recordFailure("yahoo-chart");
-              console.warn("Yahoo Chart API failed, attempting EastMoney API:", chartErr);
-            }
-          }
-
-          if (getKabutanCode(cleanSymbol) && marketDataCircuitBreaker.shouldAttempt("kabutan", realDataSuccess)) {
-            try {
-              console.log(`Fetching Kabutan daily candles for symbol: ${cleanSymbol}`);
-              const kabutanData = await fetchKabutanMarketData(cleanSymbol);
-              dailyCandles = kabutanData.dailyCandles;
-              weeklyCandles = kabutanData.weeklyCandles;
-              companyName = kabutanData.companyName || cleanSymbol;
-              companyNameEn = "";
-              changePercent = kabutanData.changePercent;
-              isMock = false;
-              dataSource = "kabutan";
-              realDataSuccess = true;
-              marketDataCircuitBreaker.recordSuccess("kabutan");
-              console.log(`Successfully loaded real data from Kabutan for: ${companyName}`);
-            } catch (kabutanErr: unknown) {
-              marketDataCircuitBreaker.recordFailure("kabutan");
-              console.warn("Kabutan API failed, attempting EastMoney API:", kabutanErr);
-            }
-          }
-
-          const secidCandidates = getEastMoneySecidCandidates(cleanSymbol);
-          let eastMoneySuccess = false;
-
-          if (secidCandidates.length > 0 && marketDataCircuitBreaker.shouldAttempt("eastmoney", realDataSuccess)) {
-            for (const secid of secidCandidates) {
-              try {
-                console.log(`Fetching EastMoney klines for secid: ${secid}`);
-                const [dailyRaw, weeklyFetched] = await Promise.all([
-                  fetchReliableEastMoneyKlines(secid, false),
-                  fetchReliableEastMoneyKlines(secid, true).catch((weeklyErr: unknown) => {
-                    console.warn(`EastMoney weekly K-line failed for ${secid}, building weekly candles from daily data:`, weeklyErr);
-                    return null;
-                  }),
-                ]);
-                const weeklyRaw: Candle[] = weeklyFetched ?? buildWeeklyCandlesFromDaily(dailyRaw);
-
-                if (dailyRaw.length >= MIN_REAL_DAILY_CANDLES) {
-                  dailyCandles = dailyRaw;
-                  weeklyCandles = weeklyRaw;
-
-                  const lastCandle = dailyCandles[dailyCandles.length - 1];
-                  const prevCandle = dailyCandles[dailyCandles.length - 2] || lastCandle;
-
-                  changePercent = ((lastCandle.close - prevCandle.close) / prevCandle.close) * 100;
-
-                  // Fetch company name from EastMoney Web API
-                  try {
-                    const nameRes = await fetch(`https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f58`, {
-                      signal: AbortSignal.timeout(2500),
-                      headers: { "Referer": "https://quote.eastmoney.com/" }
-                    });
-                    if (nameRes.ok) {
-                      const nameData = await nameRes.json() as EastMoneyNameResponse;
-                      companyName = nameData?.data?.f58 || cleanSymbol;
-                    } else {
-                      companyName = cleanSymbol;
-                    }
-                  } catch {
-                    companyName = cleanSymbol;
-                  }
-
-                  isMock = false;
-                  dataSource = "eastmoney";
-                  eastMoneySuccess = true;
-                  console.log(`Successfully loaded real data from EastMoney for: ${companyName}`);
-                  break;
-                }
-              } catch (emErr: unknown) {
-                console.error(`EastMoney API failed for ${secid}:`, emErr);
-              }
-            }
-            if (eastMoneySuccess) {
-              marketDataCircuitBreaker.recordSuccess("eastmoney");
-            } else {
-              marketDataCircuitBreaker.recordFailure("eastmoney");
-            }
-          }
-
-          if (eastMoneySuccess) {
-            realDataSuccess = true;
-          }
-
-          if (marketDataCircuitBreaker.shouldAttempt("tonghuashun", realDataSuccess)) {
-            try {
-              console.log(`Fetching Tonghuashun market data for symbol: ${cleanSymbol}`);
-              const tonghuashunData = await fetchTonghuashunMarketData(cleanSymbol);
-              if (tonghuashunData) {
-                dailyCandles = tonghuashunData.dailyCandles;
-                weeklyCandles = tonghuashunData.weeklyCandles;
-                companyName = tonghuashunData.companyName || cleanSymbol;
-                companyNameEn = "";
-                changePercent = tonghuashunData.changePercent;
-                isMock = false;
-                dataSource = "tonghuashun";
-                realDataSuccess = true;
-                marketDataCircuitBreaker.recordSuccess("tonghuashun");
-                console.log(`Successfully loaded real data from Tonghuashun for: ${companyName}`);
-              } else {
-                marketDataCircuitBreaker.recordFailure("tonghuashun");
-              }
-            } catch (tonghuashunErr: unknown) {
-              marketDataCircuitBreaker.recordFailure("tonghuashun");
-              console.warn("Tonghuashun API failed as well:", tonghuashunErr);
-            }
-          }
-
-          if (hasConfiguredMarketDataProvider() && marketDataCircuitBreaker.shouldAttempt("optional-provider", realDataSuccess)) {
-            try {
-              console.log(`Fetching optional provider market data for symbol: ${cleanSymbol}`);
-              const providerData = await fetchProviderMarketData(cleanSymbol);
-              if (providerData) {
-                dailyCandles = providerData.dailyCandles;
-                weeklyCandles = providerData.weeklyCandles;
-                companyName = providerData.companyName || cleanSymbol;
-                companyNameEn = "";
-                changePercent = providerData.changePercent;
-                isMock = false;
-                dataSource = providerData.source;
-                realDataSuccess = true;
-                marketDataCircuitBreaker.recordSuccess("optional-provider");
-                console.log(`Successfully loaded real data from optional provider for: ${companyName}`);
-              } else {
-                marketDataCircuitBreaker.recordFailure("optional-provider");
-              }
-            } catch (providerErr: unknown) {
-              marketDataCircuitBreaker.recordFailure("optional-provider");
-              console.warn("Optional provider APIs failed as well:", providerErr);
-            }
-          }
-
-          if (marketDataCircuitBreaker.shouldAttempt("tencent", realDataSuccess)) {
-            try {
-              console.log(`Fetching Tencent market data for symbol: ${cleanSymbol}`);
-              const tencentData = await fetchTencentMarketData(cleanSymbol);
-              if (tencentData) {
-                dailyCandles = tencentData.dailyCandles;
-                weeklyCandles = tencentData.weeklyCandles;
-                companyName = tencentData.companyName || cleanSymbol;
-                companyNameEn = "";
-                changePercent = tencentData.changePercent;
-                isMock = false;
-                dataSource = "tencent";
-                realDataSuccess = true;
-                marketDataCircuitBreaker.recordSuccess("tencent");
-                console.log(`Successfully loaded real data from Tencent for: ${companyName}`);
-              } else {
-                marketDataCircuitBreaker.recordFailure("tencent");
-              }
-            } catch (tencentErr: unknown) {
-              marketDataCircuitBreaker.recordFailure("tencent");
-              console.warn("Tencent API failed as well:", tencentErr);
-            }
-          }
-
-          if (!realDataSuccess) {
-            console.warn("All real data APIs (Yahoo, Kabutan, EastMoney, Tonghuashun, optional providers) failed, rolling back to mock data.");
-            isMock = true;
-            dataSource = "mock";
-            const mockDaily = generateMockCandles(cleanSymbol, 250, false);
-            const mockWeekly = generateMockCandles(cleanSymbol, 150, true);
-
-            dailyCandles = mockDaily.candles;
-            weeklyCandles = mockWeekly.candles;
-            companyName = mockDaily.companyName;
-            changePercent = mockDaily.changePercent;
-          }
+        const marketData = await fetchMarketDataByPriority(cleanSymbol);
+        if (marketData) {
+          dailyCandles = marketData.dailyCandles;
+          weeklyCandles = marketData.weeklyCandles;
+          companyName = marketData.companyName;
+          companyNameEn = marketData.companyNameEn || "";
+          changePercent = marketData.changePercent;
+          dataSource = marketData.dataSource;
+        } else {
+          console.warn(`All real market data providers failed for ${cleanSymbol}; using mock data.`);
+          isMock = true;
+          dataSource = "mock";
+          const mockDaily = generateMockCandles(cleanSymbol, 250, false);
+          const mockWeekly = generateMockCandles(cleanSymbol, 150, true);
+          dailyCandles = mockDaily.candles;
+          weeklyCandles = mockWeekly.candles;
+          companyName = mockDaily.companyName;
+          changePercent = mockDaily.changePercent;
         }
 
         if (!isMock && isAShareRequest) {

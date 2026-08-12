@@ -86,6 +86,12 @@ export async function fetchTencentMarketData(symbol: string): Promise<TencentMar
 
 function getTencentSymbolCandidates(symbol: string): string[] {
   const clean = symbol.trim().toUpperCase();
+  const cn = clean.match(/^(\d{6})(?:\.(SS|SH|SZ))?$/);
+  if (cn) {
+    const market = cn[2] === "SZ" || (!cn[2] && /^[023]/.test(cn[1])) ? "sz" : "sh";
+    return [`${market}${cn[1]}`];
+  }
+
   const hk = clean.match(/^(\d{1,5})(?:\.HK)?$/);
   if (hk) {
     return [`hk${hk[1].padStart(5, "0")}`];

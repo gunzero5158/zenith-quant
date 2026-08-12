@@ -103,6 +103,12 @@ export async function fetchAShareRealtimeQuote(symbol: string): Promise<AShareRe
   }
 }
 
+export async function fetchEastMoneyAShareRealtimeQuote(symbol: string): Promise<AShareRealtimeQuote | null> {
+  const secid = convertSymbolToEastMoneyAShareSecid(symbol);
+  if (!secid) return null;
+  return fetchEastMoneyRealtimeQuote(secid);
+}
+
 async function fetchFreshAShareRealtimeQuote(symbol: string, secid: string): Promise<AShareRealtimeQuote | null> {
   try {
     const eastMoneyQuote = await fetchEastMoneyRealtimeQuote(secid);

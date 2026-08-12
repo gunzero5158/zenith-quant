@@ -3,9 +3,13 @@ import YahooFinance from "yahoo-finance2";
 import { generateMockCandles } from "@/lib/analysis/mockData";
 import { fetchKabutanQuote, getKabutanCode } from "@/lib/analysis/kabutan";
 import { fetchProviderQuote } from "@/lib/analysis/marketDataProviders";
+import { getRealtimeQuotePriority, type MarketDataProvider } from "@/lib/analysis/marketDataPriority";
 import { fetchTencentQuote } from "@/lib/analysis/tencent";
 import { fetchEastMoneyJson } from "@/lib/analysis/eastmoneyHttp";
-import { convertSymbolToEastMoneyAShareSecid, fetchAShareRealtimeQuote } from "@/lib/analysis/ashareRealtime";
+import {
+  convertSymbolToEastMoneyAShareSecid,
+  fetchEastMoneyAShareRealtimeQuote,
+} from "@/lib/analysis/ashareRealtime";
 import { fetchTonghuashunQuote } from "@/lib/analysis/tonghuashun";
 import { aShareCodeToSuffixedSymbol, getEastMoneySecidCandidates } from "@/lib/analysis/symbolConversion";
 
@@ -16,6 +20,7 @@ interface QuoteCacheEntry {
   timestamp: number;
   price: number;
   change: number;
+  source: string;
 }
 const quoteCache: Record<string, QuoteCacheEntry> = {};
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -52,6 +57,12 @@ interface EastMoneySuggestResponse {
   };
 }
 
+interface QuoteResult {
+  price: number;
+  change: number;
+  source: string;
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -72,7 +83,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const quotes: Record<string, { price: number; change: number; isMock?: true }> = {};
+    const quotes: Record<string, { price: number; change: number; dataSource: string; isMock?: true }> = {};
 
     let nextSymbolIndex = 0;
     const workers = Array.from(
@@ -85,6 +96,7 @@ export async function GET(request: Request) {
             quotes[sym] = {
               price: quote.price,
               change: quote.change,
+              dataSource: quote.source,
             };
           } catch (e) {
             console.error(`Error fetching quote for ${sym}:`, e);
@@ -92,6 +104,7 @@ export async function GET(request: Request) {
             quotes[sym] = {
               price: mock.price,
               change: mock.changePercent,
+              dataSource: "mock",
               isMock: true
             };
           }
@@ -107,109 +120,118 @@ export async function GET(request: Request) {
   }
 }
 
-async function fetchSingleQuote(inputSymbol: string): Promise<{ price: number; change: number }> {
+async function fetchSingleQuote(inputSymbol: string): Promise<QuoteResult> {
   const symbol = await resolveInputSymbol(inputSymbol);
   const now = Date.now();
   const shouldUseCache = convertSymbolToEastMoneyAShareSecid(symbol) === null;
   if (shouldUseCache && quoteCache[inputSymbol] && now - quoteCache[inputSymbol].timestamp < CACHE_TTL) {
     return {
       price: quoteCache[inputSymbol].price,
-      change: quoteCache[inputSymbol].change
+      change: quoteCache[inputSymbol].change,
+      source: quoteCache[inputSymbol].source,
     };
   }
 
-  const res = await (async () => {
-    if (getKabutanCode(symbol)) {
-      try {
-        const data = await fetchKabutanQuote(symbol);
-        return {
-          price: data.price,
-          change: data.changePercent,
-          source: "kabutan"
-        };
-      } catch (err) {
-        console.warn(`Kabutan quote fetch failed for ${symbol}:`, err);
-      }
-    }
-
-    const aShareQuote = await fetchAShareRealtimeQuote(symbol);
-    if (aShareQuote) {
-      return {
-        price: aShareQuote.price,
-        change: aShareQuote.changePercent,
-        source: "ashare-realtime"
-      };
-    }
-
-    const tonghuashunQuote = await fetchTonghuashunQuote(symbol);
-    if (tonghuashunQuote) {
-      return {
-        price: tonghuashunQuote.price,
-        change: tonghuashunQuote.changePercent,
-        source: "tonghuashun"
-      };
-    }
-
-    // 1. Try EastMoney first as it is fast and requires no proxy
-    for (const secid of getEastMoneySecidCandidates(symbol)) {
-      try {
-        const klines = await fetchReliableEastMoneyKlinesLmt2(secid);
-        if (klines && klines.length >= 2) {
-          const last = klines[klines.length - 1];
-          const prev = klines[klines.length - 2];
-          const price = last.close;
-          const change = ((last.close - prev.close) / prev.close) * 100;
-          return { price, change, source: "eastmoney" };
-        }
-      } catch (err) {
-        console.warn(`EastMoney quote fetch failed for ${symbol} (${secid}):`, err);
-      }
-    }
-
-    // 2. Fallback to Yahoo Finance
-    try {
-      const q = await yahooFinance.quote(symbol) as YahooQuote;
-      if (q && q.regularMarketPrice !== undefined) {
-        return {
-          price: q.regularMarketPrice,
-          change: q.regularMarketChangePercent || 0,
-          source: "yahoo"
-        };
-      }
-    } catch (err) {
-      console.warn(`Yahoo quote fetch failed for ${symbol}:`, err);
-    }
-
-    // 3. Optional formal API fallback (Twelve Data / FMP)
-    const providerQuote = await fetchProviderQuote(symbol);
-    if (providerQuote) {
-      return {
-        price: providerQuote.price,
-        change: providerQuote.changePercent,
-        source: providerQuote.source,
-      };
-    }
-
-    const tencentQuote = await fetchTencentQuote(symbol);
-    if (tencentQuote) {
-      return {
-        price: tencentQuote.price,
-        change: tencentQuote.changePercent,
-        source: "tencent"
-      };
-    }
-
+  let res: QuoteResult | null = null;
+  for (const provider of getRealtimeQuotePriority(symbol)) {
+    res = await fetchQuoteFromProvider(provider, symbol);
+    if (res) break;
+  }
+  if (!res) {
     throw new Error("Invalid quote from all real data providers");
-  })();
+  }
 
   if (shouldUseCache && res.source !== "tencent") {
     setQuoteCacheEntry(inputSymbol, {
       timestamp: now,
       price: res.price,
-      change: res.change
+      change: res.change,
+      source: res.source,
     });
   }
   return res;
+}
+
+async function fetchQuoteFromProvider(
+  provider: MarketDataProvider,
+  symbol: string
+): Promise<QuoteResult | null> {
+  try {
+    if (provider === "eastmoney") {
+      try {
+        const aShareQuote = await fetchEastMoneyAShareRealtimeQuote(symbol);
+        if (aShareQuote) {
+          return {
+            price: aShareQuote.price,
+            change: aShareQuote.changePercent,
+            source: "eastmoney",
+          };
+        }
+      } catch (error: unknown) {
+        console.warn(`EastMoney realtime quote failed for ${symbol}:`, error);
+      }
+
+      for (const secid of getEastMoneySecidCandidates(symbol)) {
+        try {
+          const klines = await fetchReliableEastMoneyKlinesLmt2(secid);
+          if (klines.length >= 2) {
+            const last = klines[klines.length - 1];
+            const prev = klines[klines.length - 2];
+            return {
+              price: last.close,
+              change: ((last.close - prev.close) / prev.close) * 100,
+              source: "eastmoney",
+            };
+          }
+        } catch (error: unknown) {
+          console.warn(`EastMoney K-line quote failed for ${symbol} (${secid}):`, error);
+        }
+      }
+      return null;
+    }
+
+    if (provider === "tonghuashun") {
+      const quote = await fetchTonghuashunQuote(symbol);
+      return quote
+        ? { price: quote.price, change: quote.changePercent, source: "tonghuashun" }
+        : null;
+    }
+
+    if (provider === "tencent") {
+      const quote = await fetchTencentQuote(symbol);
+      return quote
+        ? { price: quote.price, change: quote.changePercent, source: "tencent" }
+        : null;
+    }
+
+    if (provider === "yahoo") {
+      const quote = await yahooFinance.quote(symbol) as YahooQuote;
+      return quote?.regularMarketPrice !== undefined
+        ? {
+            price: quote.regularMarketPrice,
+            change: quote.regularMarketChangePercent || 0,
+            source: "yahoo",
+          }
+        : null;
+    }
+
+    if (provider === "kabutan" && getKabutanCode(symbol)) {
+      const quote = await fetchKabutanQuote(symbol);
+      return { price: quote.price, change: quote.changePercent, source: "kabutan" };
+    }
+
+    if (provider === "optional-provider") {
+      const quote = await fetchProviderQuote(symbol);
+      return quote
+        ? { price: quote.price, change: quote.changePercent, source: quote.source }
+        : null;
+    }
+
+    return null;
+  } catch (error: unknown) {
+    console.warn(`${provider} quote fetch failed for ${symbol}:`, error);
+    return null;
+  }
 }
 
 function setQuoteCacheEntry(key: string, entry: QuoteCacheEntry): void {

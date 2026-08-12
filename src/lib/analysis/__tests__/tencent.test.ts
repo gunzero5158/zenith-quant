@@ -40,6 +40,25 @@ describe("tencent market data provider", () => {
     vi.unstubAllGlobals();
   });
 
+  it("fetches A-share daily and weekly candles", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(makeTencentResponse("sh600519", "day", dailyRows, "贵州茅台")),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(makeTencentResponse("sh600519", "week", weeklyRows, "贵州茅台")),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchTencentMarketData("600519.SS");
+
+    expect(result?.source).toBe("tencent");
+    expect(result?.dailyCandles).toHaveLength(25);
+    expect(fetchMock.mock.calls[0][0]).toContain("sh600519,day");
+  });
+
   it("fetches HK daily and weekly candles with padded Tencent code", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({
