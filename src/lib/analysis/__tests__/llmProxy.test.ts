@@ -136,6 +136,30 @@ describe('llmProxy', () => {
     vi.useRealTimers();
   });
 
+  it('supports a shorter per-call timeout for an automatic correction', async () => {
+    vi.useFakeTimers();
+    const globalFetchMock = vi.fn().mockImplementation((_url, init: RequestInit) => (
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => {
+          const error = new Error('Aborted');
+          error.name = 'AbortError';
+          reject(error);
+        });
+      })
+    ));
+    vi.stubGlobal('fetch', globalFetchMock);
+
+    const rejection = expect(generateLLMReport('repair prompt', {
+      provider: 'openai',
+      apiKey: 'openai-key',
+      modelName: 'gpt-4o',
+    }, 60_000)).rejects.toThrow('OPENAI API timeout after 60s');
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await rejection;
+    vi.useRealTimers();
+  });
+
   it('adds the OpenAI-compatible /v1 path when a custom base URL is only an origin', async () => {
     const globalFetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       choices: [{ message: { content: 'Custom provider response' } }],

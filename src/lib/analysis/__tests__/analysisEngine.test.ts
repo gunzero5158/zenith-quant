@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runAnalysisEngine } from "../analysisEngine";
-import { buildEvidenceAnalystPrompt } from "../analysisPrompt";
+import { buildAnalysisRepairPrompt, buildEvidenceAnalystPrompt } from "../analysisPrompt";
 import { Candle } from "../indicators";
 
 function tradingDays(count: number): Candle[] {
@@ -107,6 +107,18 @@ describe("pure analysis engine", () => {
       expect(localizedPrompt).toContain(`Output language: ${languageName}`);
       expect(localizedPrompt).toContain("Write every user-visible string in that language");
     }
+
+    const repairPrompt = buildAnalysisRepairPrompt(
+      prompt,
+      '{"scoreAssessment":{"activeSetup":"left","riskPlan":{}}}',
+      "An actionable entry requires both a grounded stop and target in scoreAssessment.riskPlan"
+    );
+    expect(repairPrompt).toContain("Return a complete corrected JSON object");
+    expect(repairPrompt).toContain("exact valid stop and exact valid target");
+    expect(repairPrompt).toContain("change the entry action to wait");
+    expect(repairPrompt).toContain("rather than inventing a level");
+    expect(repairPrompt).toContain("PREVIOUS_INVALID_RESPONSE");
+    expect(repairPrompt).toContain("An actionable entry requires both a grounded stop and target");
   });
 
   it("normalizes and chronologically sorts Yahoo Date candles before analysis", () => {

@@ -29,7 +29,7 @@ import { runAnalysisEngine } from "@/lib/analysis/analysisEngine";
 import { EvidenceSnapshot } from "@/lib/analysis/evidence";
 import { toLegacyAiScoreDetail, validateAiAnalysisResult } from "@/lib/analysis/aiAnalysisResult";
 import type { AiAnalysisResult } from "@/lib/analysis/aiAnalysisResult";
-import { buildEvidenceAnalystPrompt } from "@/lib/analysis/analysisPrompt";
+import { buildAnalysisRepairPrompt, buildEvidenceAnalystPrompt } from "@/lib/analysis/analysisPrompt";
 import { composeAiReport } from "@/lib/analysis/reportComposition";
 import { parseLLMJsonResponse } from "@/lib/analysis/llmJson";
 import {
@@ -65,6 +65,8 @@ const EAST_MONEY_MAX_TIMEOUT_HOSTS = 2; // a timeout is a strong signal: try at 
 const EAST_MONEY_OVERALL_BUDGET_MS = 10000;
 const EAST_MONEY_DAILY_CANDLE_LIMIT = 320;
 const EAST_MONEY_WEEKLY_CANDLE_LIMIT = 180;
+const INITIAL_LLM_TIMEOUT_MS = 210_000;
+const REPAIR_LLM_TIMEOUT_MS = 60_000;
 
 const SUPPORTED_LANGUAGES = ["zh-CN", "zh-TW", "en", "ja"];
 
@@ -897,7 +899,7 @@ export async function POST(request: Request) {
 
     let reportText: string;
     try {
-      reportText = await generateLLMReport(prompt, llmConfig);
+      reportText = await generateLLMReport(prompt, llmConfig, INITIAL_LLM_TIMEOUT_MS);
     } catch (err: unknown) {
       console.error("AI analysis request failed:", err);
       const detail = summarizeLLMError(err);
@@ -916,14 +918,26 @@ export async function POST(request: Request) {
         techData.snapshot
       );
     } catch (err: unknown) {
-      console.error("AI response parsing or validation failed:", err);
-      const detail = summarizeLLMError(err);
-      const error = effectiveLang === "en"
-        ? `The AI returned an invalid response format: ${detail}. Please retry; this usually is not an API key issue.`
-        : effectiveLang === "ja"
-          ? `AI の応答形式が正しくありません: ${detail}。再試行してください。通常、API キーの問題ではありません。`
-          : `AI 返回内容格式异常：${detail}。请重试，这通常不是 API Key 配置问题。`;
-      return NextResponse.json({ error }, { status: 502 });
+      const initialDetail = summarizeLLMError(err);
+      console.warn("AI response failed validation; requesting one correction:", initialDetail);
+
+      try {
+        const repairPrompt = buildAnalysisRepairPrompt(prompt, reportText, initialDetail);
+        reportText = await generateLLMReport(repairPrompt, llmConfig, REPAIR_LLM_TIMEOUT_MS);
+        aiResult = validateAiAnalysisResult(
+          parseLLMJsonResponse(reportText),
+          techData.snapshot
+        );
+      } catch (repairErr: unknown) {
+        console.error("AI response correction failed:", repairErr);
+        const detail = summarizeLLMError(repairErr);
+        const error = effectiveLang === "en"
+          ? `The AI response remained inconsistent after one automatic correction: ${detail}. Please retry.`
+          : effectiveLang === "ja"
+            ? `AI 応答は自動修正後も整合性を満たしませんでした: ${detail}。再試行してください。`
+            : `AI 返回内容自动修正一次后仍不一致：${detail}。请重试。`;
+        return NextResponse.json({ error }, { status: 502 });
+      }
     }
 
     const report = composeAiReport(aiResult, effectiveLang);

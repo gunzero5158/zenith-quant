@@ -138,7 +138,11 @@ async function fetchWithTimeout(url: string, init: RequestInit, provider: string
 /**
  * Dynamically forwards the generated analysis prompt to the specified LLM provider using standard HTTP fetch.
  */
-export async function generateLLMReport(prompt: string, config: LLMConfig): Promise<string> {
+export async function generateLLMReport(
+  prompt: string,
+  config: LLMConfig,
+  timeoutMs: number = LLM_PROVIDER_TIMEOUT_MS
+): Promise<string> {
   const { provider, apiKey, baseUrl, modelName } = config;
 
   if (!apiKey) {
@@ -171,7 +175,7 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify(payload)
-    }, "Gemini", LLM_PROVIDER_TIMEOUT_MS);
+    }, "Gemini", timeoutMs);
 
     if (!res.ok) {
       throw await upstreamError("Gemini", res);
@@ -206,7 +210,7 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
         "anthropic-version": "2023-06-01"
       },
       body: JSON.stringify(payload)
-    }, "Anthropic", LLM_PROVIDER_TIMEOUT_MS);
+    }, "Anthropic", timeoutMs);
 
     if (!res.ok) {
       throw await upstreamError("Anthropic", res);
@@ -245,7 +249,7 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
 
   // "custom" endpoints get the same timeout as official providers — a hung
   // endpoint must never hold the request handler open indefinitely.
-  const res = await fetchWithTimeout(openaiUrl, requestInit, provider.toUpperCase(), LLM_PROVIDER_TIMEOUT_MS);
+  const res = await fetchWithTimeout(openaiUrl, requestInit, provider.toUpperCase(), timeoutMs);
 
   if (!res.ok) {
     throw await upstreamError(provider.toUpperCase(), res);
