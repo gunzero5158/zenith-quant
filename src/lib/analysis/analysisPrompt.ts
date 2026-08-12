@@ -89,6 +89,7 @@ Risk-plan rules:
 
 Confidence calibration:
 - confidence measures certainty in the conclusion, not bullishness and not score magnitude.
+- Return confidence as a JSON number from 0 to 1, where 0.78 means 78%. Never return 78, "78%", or a percentage string.
 - Base it on data completeness, agreement across independent evidence families and timeframes, provisional-bar status, conflicting signals, and proximity to confirmation or invalidation.
 - Explain the main reason for the confidence value in confidenceReason. Do not use a mechanical cap.
 
@@ -109,7 +110,7 @@ Return JSON only with this shape:
   "scoreAssessment": {
     "outlook": "bullish",
     "finalScore": 0,
-    "confidence": 0,
+    "confidence": 0.72,
     "confidenceReason": "string",
     "leftStatus": "watch",
     "rightStatus": "not_formed",

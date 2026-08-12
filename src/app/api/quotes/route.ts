@@ -8,6 +8,7 @@ import { fetchEastMoneyJson } from "@/lib/analysis/eastmoneyHttp";
 import { convertSymbolToEastMoneyAShareSecid, fetchAShareRealtimeQuote } from "@/lib/analysis/ashareRealtime";
 import { fetchTonghuashunQuote } from "@/lib/analysis/tonghuashun";
 import { aShareCodeToSuffixedSymbol, getEastMoneySecidCandidates } from "@/lib/analysis/symbolConversion";
+import { getQuoteMarketDataPriority } from "@/lib/analysis/marketDataPriority";
 
 const yahooFinance = new YahooFinance();
 
@@ -109,6 +110,8 @@ export async function GET(request: Request) {
 
 async function fetchSingleQuote(inputSymbol: string): Promise<{ price: number; change: number }> {
   const symbol = await resolveInputSymbol(inputSymbol);
+  const quotePriority = getQuoteMarketDataPriority(symbol);
+  const tonghuashunBeforeTencent = quotePriority.indexOf("tonghuashun") < quotePriority.indexOf("tencent");
   const now = Date.now();
   const shouldUseCache = convertSymbolToEastMoneyAShareSecid(symbol) === null;
   if (shouldUseCache && quoteCache[inputSymbol] && now - quoteCache[inputSymbol].timestamp < CACHE_TTL) {
@@ -141,13 +144,15 @@ async function fetchSingleQuote(inputSymbol: string): Promise<{ price: number; c
       };
     }
 
-    const tonghuashunQuote = await fetchTonghuashunQuote(symbol);
-    if (tonghuashunQuote) {
-      return {
-        price: tonghuashunQuote.price,
-        change: tonghuashunQuote.changePercent,
-        source: "tonghuashun"
-      };
+    if (tonghuashunBeforeTencent) {
+      const tonghuashunQuote = await fetchTonghuashunQuote(symbol);
+      if (tonghuashunQuote) {
+        return {
+          price: tonghuashunQuote.price,
+          change: tonghuashunQuote.changePercent,
+          source: "tonghuashun"
+        };
+      }
     }
 
     // 1. Try EastMoney first as it is fast and requires no proxy
@@ -197,6 +202,17 @@ async function fetchSingleQuote(inputSymbol: string): Promise<{ price: number; c
         change: tencentQuote.changePercent,
         source: "tencent"
       };
+    }
+
+    if (!tonghuashunBeforeTencent) {
+      const tonghuashunQuote = await fetchTonghuashunQuote(symbol);
+      if (tonghuashunQuote) {
+        return {
+          price: tonghuashunQuote.price,
+          change: tonghuashunQuote.changePercent,
+          source: "tonghuashun"
+        };
+      }
     }
 
     throw new Error("Invalid quote from all real data providers");

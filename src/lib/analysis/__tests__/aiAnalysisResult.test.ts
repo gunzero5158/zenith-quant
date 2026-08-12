@@ -121,6 +121,25 @@ describe("AI-native analysis result validation", () => {
     expect(() => validateAiAnalysisResult(value, snapshot)).toThrow(/finalScore/);
   });
 
+  it.each([
+    [78, 0.78],
+    ["78%", 0.78],
+    ["0.78", 0.78],
+    [1, 1],
+  ])("normalizes common confidence format %s", (confidence, expected) => {
+    const value = validResult();
+    value.scoreAssessment.confidence = confidence as number;
+
+    expect(validateAiAnalysisResult(value, snapshot).scoreAssessment.confidence).toBe(expected);
+  });
+
+  it.each([-1, 101, "not-a-number"])('rejects invalid confidence: %s', (confidence) => {
+    const value = validResult();
+    value.scoreAssessment.confidence = confidence as number;
+
+    expect(() => validateAiAnalysisResult(value, snapshot)).toThrow(/confidence/);
+  });
+
   it("rejects unknown evidence references", () => {
     const value = validResult();
     value.scoreAssessment.reasons[0].evidenceIds = ["invented.signal"];

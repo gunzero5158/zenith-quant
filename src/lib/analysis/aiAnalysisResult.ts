@@ -100,6 +100,30 @@ function numberInRange(value: unknown, path: string, min: number, max: number): 
   return value;
 }
 
+function normalizedConfidence(value: unknown): number {
+  let parsed: number;
+
+  if (typeof value === "number") {
+    parsed = value;
+  } else if (typeof value === "string") {
+    const text = value.trim();
+    const match = text.match(/^(\d+(?:\.\d+)?)\s*(%)?$/u);
+    if (!match) {
+      throw new Error("scoreAssessment.confidence must be a number between 0 and 1 or a percentage between 0 and 100");
+    }
+    parsed = Number(match[1]);
+    if (match[2]) parsed /= 100;
+  } else {
+    throw new Error("scoreAssessment.confidence must be a number between 0 and 1 or a percentage between 0 and 100");
+  }
+
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+    throw new Error("scoreAssessment.confidence must be a number between 0 and 1 or a percentage between 0 and 100");
+  }
+
+  return parsed > 1 ? parsed / 100 : parsed;
+}
+
 function optionalPositiveNumber(value: unknown, path: string): number | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
@@ -334,7 +358,7 @@ export function validateAiAnalysisResult(
     source: "ai",
     outlook: oneOf(score.outlook, "scoreAssessment.outlook", ["bullish", "neutral", "bearish"]),
     finalScore: numberInRange(score.finalScore, "scoreAssessment.finalScore", 0, 5),
-    confidence: numberInRange(score.confidence, "scoreAssessment.confidence", 0, 1),
+    confidence: normalizedConfidence(score.confidence),
     confidenceReason: visibleText(score.confidenceReason, "scoreAssessment.confidenceReason", validEvidenceIds),
     leftStatus: oneOf(score.leftStatus, "scoreAssessment.leftStatus", ["not_formed", "watch", "triggered", "too_late"]),
     rightStatus: oneOf(score.rightStatus, "scoreAssessment.rightStatus", ["not_formed", "watch", "triggered", "too_late"]),

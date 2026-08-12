@@ -42,6 +42,7 @@ import {
   MARKET_DATA_CACHE_MAX_RETENTION_MS,
 } from "@/lib/analysis/analysisCache";
 import { marketDataCircuitBreaker } from "@/lib/analysis/providerCircuitBreaker";
+import { getAnalysisMarketDataPriority } from "@/lib/analysis/marketDataPriority";
 
 export const maxDuration = 300;
 
@@ -479,6 +480,9 @@ export async function POST(request: Request) {
     const currencySymbol = getMarketCurrencySymbol(cleanSymbol);
     const now = Date.now();
     const isAShareRequest = convertSymbolToEastMoneyAShareSecid(cleanSymbol) !== null;
+    const providerPriority = getAnalysisMarketDataPriority(cleanSymbol, isAShareRequest);
+    const tonghuashunBeforeYahoo = providerPriority.indexOf("tonghuashun") < providerPriority.indexOf("yahoo");
+    const tonghuashunBeforeTencent = providerPriority.indexOf("tonghuashun") < providerPriority.indexOf("tencent");
     const analysisQuoteSnapshot = isAShareRequest
       ? parseAnalysisQuoteSnapshot(quoteSnapshot, requestedSymbol)
       : null;
@@ -522,6 +526,9 @@ export async function POST(request: Request) {
 
         let yahooAttempted = false;
         try {
+          if (tonghuashunBeforeYahoo) {
+            throw new Error("A-share local providers take priority over Yahoo");
+          }
           if (!marketDataCircuitBreaker.shouldAttempt("yahoo", false)) {
             throw new Error("Yahoo Finance circuit is temporarily open");
           }
@@ -613,7 +620,7 @@ export async function POST(request: Request) {
           console.warn("Yahoo Finance fetch failed, attempting Yahoo Chart API:", networkErr);
           let realDataSuccess = false;
 
-          if (marketDataCircuitBreaker.shouldAttempt("yahoo-chart", realDataSuccess)) {
+          if (!tonghuashunBeforeYahoo && marketDataCircuitBreaker.shouldAttempt("yahoo-chart", realDataSuccess)) {
             try {
               const chartData = await fetchYahooChartCandles(cleanSymbol);
               dailyCandles = chartData.dailyCandles;
@@ -714,7 +721,7 @@ export async function POST(request: Request) {
             realDataSuccess = true;
           }
 
-          if (marketDataCircuitBreaker.shouldAttempt("tonghuashun", realDataSuccess)) {
+          if (tonghuashunBeforeTencent && marketDataCircuitBreaker.shouldAttempt("tonghuashun", realDataSuccess)) {
             try {
               console.log(`Fetching Tonghuashun market data for symbol: ${cleanSymbol}`);
               const tonghuashunData = await fetchTonghuashunMarketData(cleanSymbol);
@@ -735,6 +742,61 @@ export async function POST(request: Request) {
             } catch (tonghuashunErr: unknown) {
               marketDataCircuitBreaker.recordFailure("tonghuashun");
               console.warn("Tonghuashun API failed as well:", tonghuashunErr);
+            }
+          }
+
+          if (tonghuashunBeforeYahoo && marketDataCircuitBreaker.shouldAttempt("yahoo", realDataSuccess)) {
+            try {
+              const yahooData = await fetchYahooSdkMarketData(cleanSymbol);
+              dailyCandles = yahooData.dailyCandles;
+              weeklyCandles = yahooData.weeklyCandles;
+              companyName = yahooData.companyName;
+              companyNameEn = yahooData.companyNameEn;
+              changePercent = yahooData.changePercent;
+              isMock = false;
+              dataSource = "yahoo";
+              realDataSuccess = true;
+              marketDataCircuitBreaker.recordSuccess("yahoo");
+            } catch (yahooErr: unknown) {
+              marketDataCircuitBreaker.recordFailure("yahoo");
+              console.warn("Yahoo Finance A-share fallback failed:", yahooErr);
+            }
+          }
+
+          if (tonghuashunBeforeYahoo && marketDataCircuitBreaker.shouldAttempt("yahoo-chart", realDataSuccess)) {
+            try {
+              const chartData = await fetchYahooChartCandles(cleanSymbol);
+              dailyCandles = chartData.dailyCandles;
+              weeklyCandles = chartData.weeklyCandles;
+              companyName = chartData.companyName || cleanSymbol;
+              companyNameEn = chartData.companyNameEn || "";
+              changePercent = chartData.changePercent;
+              isMock = false;
+              dataSource = "yahoo-chart";
+              realDataSuccess = true;
+              marketDataCircuitBreaker.recordSuccess("yahoo-chart");
+            } catch (chartErr: unknown) {
+              marketDataCircuitBreaker.recordFailure("yahoo-chart");
+              console.warn("Yahoo Chart A-share fallback failed:", chartErr);
+            }
+          }
+
+          if (!tonghuashunBeforeTencent && marketDataCircuitBreaker.shouldAttempt("tencent", realDataSuccess)) {
+            try {
+              const tencentData = await fetchTencentMarketData(cleanSymbol);
+              if (!tencentData) throw new Error("Tencent returned no usable HK market data");
+              dailyCandles = tencentData.dailyCandles;
+              weeklyCandles = tencentData.weeklyCandles;
+              companyName = tencentData.companyName || cleanSymbol;
+              companyNameEn = "";
+              changePercent = tencentData.changePercent;
+              isMock = false;
+              dataSource = "tencent";
+              realDataSuccess = true;
+              marketDataCircuitBreaker.recordSuccess("tencent");
+            } catch (tencentErr: unknown) {
+              marketDataCircuitBreaker.recordFailure("tencent");
+              console.warn("Tencent HK market data failed:", tencentErr);
             }
           }
 
@@ -762,7 +824,7 @@ export async function POST(request: Request) {
             }
           }
 
-          if (marketDataCircuitBreaker.shouldAttempt("tencent", realDataSuccess)) {
+          if (tonghuashunBeforeTencent && marketDataCircuitBreaker.shouldAttempt("tencent", realDataSuccess)) {
             try {
               console.log(`Fetching Tencent market data for symbol: ${cleanSymbol}`);
               const tencentData = await fetchTencentMarketData(cleanSymbol);
@@ -783,6 +845,25 @@ export async function POST(request: Request) {
             } catch (tencentErr: unknown) {
               marketDataCircuitBreaker.recordFailure("tencent");
               console.warn("Tencent API failed as well:", tencentErr);
+            }
+          }
+
+          if (!tonghuashunBeforeTencent && marketDataCircuitBreaker.shouldAttempt("tonghuashun", realDataSuccess)) {
+            try {
+              const tonghuashunData = await fetchTonghuashunMarketData(cleanSymbol);
+              if (!tonghuashunData) throw new Error("Tonghuashun returned no usable HK market data");
+              dailyCandles = tonghuashunData.dailyCandles;
+              weeklyCandles = tonghuashunData.weeklyCandles;
+              companyName = tonghuashunData.companyName || cleanSymbol;
+              companyNameEn = "";
+              changePercent = tonghuashunData.changePercent;
+              isMock = false;
+              dataSource = "tonghuashun";
+              realDataSuccess = true;
+              marketDataCircuitBreaker.recordSuccess("tonghuashun");
+            } catch (tonghuashunErr: unknown) {
+              marketDataCircuitBreaker.recordFailure("tonghuashun");
+              console.warn("Tonghuashun HK market data failed:", tonghuashunErr);
             }
           }
 
@@ -1126,6 +1207,64 @@ Return JSON only:
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function buildAnalystPrompt(symbol: string, data: CacheEntry["data"], language: string = "zh-CN", currencySymbol = "$"): string {
   return buildUnifiedAnalystPrompt(symbol, data, language, currencySymbol);
+}
+
+async function fetchYahooSdkMarketData(symbol: string): Promise<{
+  dailyCandles: Candle[];
+  weeklyCandles: Candle[];
+  companyName: string;
+  companyNameEn: string;
+  changePercent: number;
+}> {
+  const oneYearAgo = new Date();
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+  const threeYearsAgo = new Date();
+  threeYearsAgo.setFullYear(threeYearsAgo.getFullYear() - 3);
+  const today = new Date();
+
+  const [quote, dailyRaw, weeklyRaw] = await Promise.all([
+    yahooFinance.quote(symbol) as Promise<YahooQuote>,
+    yahooFinance.historical(symbol, {
+      period1: oneYearAgo,
+      period2: today,
+      interval: "1d",
+    }) as Promise<YahooHistoricalCandle[]>,
+    yahooFinance.historical(symbol, {
+      period1: threeYearsAgo,
+      period2: today,
+      interval: "1wk",
+    }) as Promise<YahooHistoricalCandle[]>,
+  ]);
+
+  if (dailyRaw.length < MIN_REAL_DAILY_CANDLES) {
+    throw new Error(`Yahoo returned insufficient daily data for ${symbol}`);
+  }
+
+  const dailyCandles = dailyRaw.filter(isYahooHistoricalCandle).map((c) => ({
+    date: c.date,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+    volume: c.volume,
+  }));
+  const weeklyCandles = weeklyRaw.filter(isYahooHistoricalCandle).map((c) => ({
+    date: c.date,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+    volume: c.volume,
+  }));
+  const companyNameEn = quote?.longName || quote?.shortName || "";
+
+  return {
+    dailyCandles,
+    weeklyCandles,
+    companyName: companyNameEn || symbol,
+    companyNameEn,
+    changePercent: quote?.regularMarketChangePercent || 0,
+  };
 }
 
 async function fetchYahooChartCandles(symbol: string): Promise<{
