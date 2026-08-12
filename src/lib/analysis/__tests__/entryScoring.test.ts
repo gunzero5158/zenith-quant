@@ -160,6 +160,82 @@ describe("gated entry assessment", () => {
     expect(withSellNine.pathScores.right).toBeLessThan(confirmed.pathScores.right);
   });
 
+  it("does not call proximity to an ordinary resistance a right-side watch", () => {
+    const result = calculateEntryAssessment(snapshot({
+      dailyPhase: "range",
+      items: [atr()],
+      levels: [
+        { price: 94, kind: "support", source: "horizontal", strength: 0.8 },
+        { price: 100.8, kind: "resistance", source: "horizontal", strength: 0.55 },
+      ],
+    }));
+
+    expect(result.leftStatus).toBe("not_formed");
+    expect(result.rightStatus).toBe("not_formed");
+  });
+
+  it("allows an independent right-side watch when structure and early repair are present", () => {
+    const result = calculateEntryAssessment(snapshot({
+      dailyPhase: "range",
+      items: [
+        atr(),
+        freshMacd(),
+        evidence("daily.pattern.doubleBottom.near_trigger", "classicalPattern", "bullish", "near_trigger", {
+          confidence: 0.8,
+          triggerPrice: 101,
+        }),
+      ],
+      levels: [
+        { price: 90, kind: "support", source: "horizontal", strength: 0.8 },
+        { price: 101, kind: "resistance", source: "pattern", strength: 0.8 },
+      ],
+    }));
+
+    expect(result.leftStatus).toBe("not_formed");
+    expect(result.rightStatus).toBe("watch");
+  });
+
+  it("does not watch a bullish trigger structure while price is still breaking down", () => {
+    const result = calculateEntryAssessment(snapshot({
+      weeklyRegime: "bearish",
+      dailyPhase: "breakdown",
+      items: [
+        atr(),
+        freshMacd(),
+        evidence("daily.pattern.doubleBottom.near_trigger", "classicalPattern", "bullish", "near_trigger", {
+          confidence: 0.8,
+          triggerPrice: 101,
+        }),
+      ],
+      levels: [
+        { price: 90, kind: "support", source: "horizontal", strength: 0.8 },
+        { price: 101, kind: "resistance", source: "pattern", strength: 0.8 },
+      ],
+    }));
+
+    expect(result.rightStatus).toBe("not_formed");
+  });
+
+  it("does not confirm a right-side entry when the broader daily phase is breaking down", () => {
+    const result = calculateEntryAssessment(snapshot({
+      weeklyRegime: "bearish",
+      dailyPhase: "breakdown",
+      items: [
+        atr(),
+        evidence("daily.volume.bullish", "volume", "bullish", "bullish", {
+          relativeVolume: 1.8,
+          hasVolumeBreakout: true,
+        }),
+      ],
+      levels: [
+        { price: 99, kind: "support", source: "horizontal", strength: 0.8 },
+        { price: 108, kind: "resistance", source: "horizontal", strength: 0.8 },
+      ],
+    }));
+
+    expect(result.rightStatus).toBe("not_formed");
+  });
+
   it("penalizes price/OBV divergence without double-counting CMF and OBV", () => {
     const levels: TradeLevel[] = [
       { price: 99, kind: "support", source: "horizontal", strength: 0.8 },

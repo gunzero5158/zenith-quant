@@ -387,10 +387,19 @@ function scenarioStatuses(
     (context.breakoutDistanceAtr ?? Infinity) >= 0 &&
     (context.breakoutDistanceAtr ?? Infinity) <= 1.5 &&
     rightConfirmation &&
+    !["breakdown", "extended"].includes(snapshot.dailyPhase) &&
     !confirmedBearishPattern &&
     executablePayoff(riskPlan);
-  const nearResistance = (context.resistanceDistanceAtr ?? Infinity) <= 0.5;
   const nearPattern = items.some((item) => item.family === "classicalPattern" && item.direction === "bullish" && item.state === "near_trigger");
+  const nearStrongHorizontalResistance = context.resistance?.source === "horizontal" &&
+    context.resistance.strength >= 0.65 &&
+    (context.resistanceDistanceAtr ?? Infinity) <= 0.5;
+  const rightCandidateStructure = nearPattern || nearStrongHorizontalResistance;
+  const earlyRepairEvidence = freshMomentum || bullishVolume || positiveFlow || lowVolumePullback;
+  const rightWatch = rightCandidateStructure &&
+    earlyRepairEvidence &&
+    !["breakdown", "extended"].includes(snapshot.dailyPhase) &&
+    !confirmedBearishPattern;
   const rightSetupPresent = context.breakoutReference !== undefined && (confirmedBullishPattern || volumeBreakout || snapshot.dailyPhase === "breakout");
   const rightExpired = rightSetupPresent && (
     (context.breakoutDistanceAtr ?? 0) > 1.5 ||
@@ -400,7 +409,7 @@ function scenarioStatuses(
     ? snapshot.dataQuality.dailyBarComplete ? "triggered" : "provisional"
     : rightExpired
       ? "too_late"
-      : nearResistance || nearPattern || volumeBreakout
+      : rightWatch
         ? "watch"
         : "not_formed";
 
