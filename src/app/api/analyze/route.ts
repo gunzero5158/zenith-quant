@@ -29,7 +29,7 @@ import { runAnalysisEngine } from "@/lib/analysis/analysisEngine";
 import { EvidenceSnapshot } from "@/lib/analysis/evidence";
 import { toLegacyAiScoreDetail, validateAiAnalysisResult } from "@/lib/analysis/aiAnalysisResult";
 import type { AiAnalysisResult } from "@/lib/analysis/aiAnalysisResult";
-import { buildAnalysisRepairPrompt, buildEvidenceAnalystPrompt } from "@/lib/analysis/analysisPrompt";
+import { buildEvidenceAnalystPrompt } from "@/lib/analysis/analysisPrompt";
 import { composeAiReport } from "@/lib/analysis/reportComposition";
 import { parseLLMJsonResponse } from "@/lib/analysis/llmJson";
 import {
@@ -65,10 +65,13 @@ const EAST_MONEY_MAX_TIMEOUT_HOSTS = 2; // a timeout is a strong signal: try at 
 const EAST_MONEY_OVERALL_BUDGET_MS = 10000;
 const EAST_MONEY_DAILY_CANDLE_LIMIT = 320;
 const EAST_MONEY_WEEKLY_CANDLE_LIMIT = 180;
-const INITIAL_LLM_TIMEOUT_MS = 210_000;
-const REPAIR_LLM_TIMEOUT_MS = 60_000;
 
-const SUPPORTED_LANGUAGES = ["zh-CN", "zh-TW", "en", "ja"];
+const SUPPORTED_LANGUAGES = ["zh-CN", "zh-TW", "en", "ja"] as const;
+type SupportedLanguage = typeof SUPPORTED_LANGUAGES[number];
+
+function isSupportedLanguage(value: unknown): value is SupportedLanguage {
+  return typeof value === "string" && SUPPORTED_LANGUAGES.includes(value as SupportedLanguage);
+}
 
 // Per-instance cache for normalized market data and its derived technical snapshot.
 interface TechnicalIndicators {
@@ -459,7 +462,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid llmConfig: expected an object" }, { status: 400 });
     }
 
-    const effectiveLang = typeof language === "string" && SUPPORTED_LANGUAGES.includes(language) ? language : "zh-CN";
+    const effectiveLang: SupportedLanguage = isSupportedLanguage(language) ? language : "zh-CN";
     if (!llmConfig?.apiKey) {
       const error = effectiveLang === "en"
         ? "This experimental version requires an AI API key. Configure it in Settings before running analysis."
@@ -899,15 +902,22 @@ export async function POST(request: Request) {
 
     let reportText: string;
     try {
-      reportText = await generateLLMReport(prompt, llmConfig, INITIAL_LLM_TIMEOUT_MS);
+      reportText = await generateLLMReport(prompt, llmConfig);
     } catch (err: unknown) {
       console.error("AI analysis request failed:", err);
       const detail = summarizeLLMError(err);
+      const networkFailure = /connection|network|timeout|closed by the upstream/i.test(detail);
       const error = effectiveLang === "en"
-        ? `AI analysis failed: ${detail}. Check the API key and model configuration.`
+        ? networkFailure
+          ? `The AI service request failed over the network: ${detail}. Please retry shortly.`
+          : `AI analysis failed: ${detail}. Check the API key and model configuration.`
         : effectiveLang === "ja"
-          ? `AI 分析に失敗しました: ${detail}。API キーとモデル設定を確認してください。`
-          : `AI 分析失败：${detail}。请检查 API Key 与模型配置。`;
+          ? networkFailure
+            ? `AI サービスへのネットワーク要求に失敗しました: ${detail}。しばらくしてから再試行してください。`
+            : `AI 分析に失敗しました: ${detail}。API キーとモデル設定を確認してください。`
+          : networkFailure
+            ? `AI 服务网络请求失败：${detail}。请稍后重试。`
+            : `AI 分析失败：${detail}。请检查 API Key 与模型配置。`;
       return NextResponse.json({ error }, { status: 502 });
     }
 
@@ -915,29 +925,18 @@ export async function POST(request: Request) {
     try {
       aiResult = validateAiAnalysisResult(
         parseLLMJsonResponse(reportText),
-        techData.snapshot
+        techData.snapshot,
+        effectiveLang
       );
     } catch (err: unknown) {
-      const initialDetail = summarizeLLMError(err);
-      console.warn("AI response failed validation; requesting one correction:", initialDetail);
-
-      try {
-        const repairPrompt = buildAnalysisRepairPrompt(prompt, reportText, initialDetail);
-        reportText = await generateLLMReport(repairPrompt, llmConfig, REPAIR_LLM_TIMEOUT_MS);
-        aiResult = validateAiAnalysisResult(
-          parseLLMJsonResponse(reportText),
-          techData.snapshot
-        );
-      } catch (repairErr: unknown) {
-        console.error("AI response correction failed:", repairErr);
-        const detail = summarizeLLMError(repairErr);
-        const error = effectiveLang === "en"
-          ? `The AI response remained inconsistent after one automatic correction: ${detail}. Please retry.`
-          : effectiveLang === "ja"
-            ? `AI 応答は自動修正後も整合性を満たしませんでした: ${detail}。再試行してください。`
-            : `AI 返回内容自动修正一次后仍不一致：${detail}。请重试。`;
-        return NextResponse.json({ error }, { status: 502 });
-      }
+      console.error("AI response parsing or validation failed:", err);
+      const detail = summarizeLLMError(err);
+      const error = effectiveLang === "en"
+        ? `The AI returned an invalid response structure: ${detail}. Please retry.`
+        : effectiveLang === "ja"
+          ? `AI の応答構造が正しくありません: ${detail}。再試行してください。`
+          : `AI 返回结构异常：${detail}。请重试。`;
+      return NextResponse.json({ error }, { status: 502 });
     }
 
     const report = composeAiReport(aiResult, effectiveLang);

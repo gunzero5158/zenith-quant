@@ -118,7 +118,7 @@ Return JSON only with this shape:
     "reasons": [{ "evidenceIds": ["existing.id"], "text": "string" }]
   },
   "strategyAdvice": {
-    "holder": { "action": "hold_protect", "evidenceIds": ["existing.id"], "text": "string" },
+    "holder": { "action": "hold", "evidenceIds": ["existing.id"], "text": "string" },
     "leftEntry": { "action": "wait", "evidenceIds": ["existing.id"], "text": "string" },
     "rightAdd": { "action": "wait_breakout", "evidenceIds": ["existing.id"], "text": "string" },
     "exitStop": { "trigger": "close", "evidenceIds": ["existing.id"], "text": "string" }
@@ -127,27 +127,4 @@ Return JSON only with this shape:
 
 IMMUTABLE_FACTS:
 ${JSON.stringify(payload)}`;
-}
-
-export function buildAnalysisRepairPrompt(
-  originalPrompt: string,
-  invalidResponse: string,
-  validationError: string
-): string {
-  return `${originalPrompt}
-
-CORRECTION REQUIRED:
-Your previous response failed server validation with this exact error:
-${validationError}
-
-Return a complete corrected JSON object, not a patch and not an explanation.
-- Preserve independent analytical judgment; do not change the conclusion merely to satisfy validation.
-- Resolve every inconsistency identified by the error.
-- For an actionable probe or add_on_retest, use both an exact valid stop and exact valid target from immutableFacts.snapshot.levels.
-- If no defensible valid stop-target pair exists, change the entry action to wait, wait_breakout, avoid_chasing, or not_applicable as appropriate, set activeSetup to none, and omit stop and target rather than inventing a level.
-- Recheck all allowed enum values, evidence IDs, setup/action consistency, and risk-plan rules.
-- Return JSON only.
-
-PREVIOUS_INVALID_RESPONSE:
-${invalidResponse}`;
 }

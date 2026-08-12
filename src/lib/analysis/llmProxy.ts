@@ -129,7 +129,20 @@ async function fetchWithTimeout(url: string, init: RequestInit, provider: string
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(`${provider} API timeout after ${timeoutMs / 1000}s`);
     }
-    throw error;
+    const cause = error instanceof Error && "cause" in error
+      ? (error as Error & { cause?: unknown }).cause
+      : undefined;
+    const code = cause && typeof cause === "object" && "code" in cause
+      ? String((cause as { code?: unknown }).code || "")
+      : "";
+
+    if (code === "UND_ERR_SOCKET" || code === "ECONNRESET") {
+      throw new Error(`${provider} connection was closed by the upstream service (${code})`);
+    }
+    if (code === "UND_ERR_CONNECT_TIMEOUT" || code === "ETIMEDOUT") {
+      throw new Error(`${provider} connection timed out (${code})`);
+    }
+    throw new Error(`${provider} network request failed${code ? ` (${code})` : ""}`);
   } finally {
     clearTimeout(timeout);
   }
@@ -138,11 +151,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, provider: string
 /**
  * Dynamically forwards the generated analysis prompt to the specified LLM provider using standard HTTP fetch.
  */
-export async function generateLLMReport(
-  prompt: string,
-  config: LLMConfig,
-  timeoutMs: number = LLM_PROVIDER_TIMEOUT_MS
-): Promise<string> {
+export async function generateLLMReport(prompt: string, config: LLMConfig): Promise<string> {
   const { provider, apiKey, baseUrl, modelName } = config;
 
   if (!apiKey) {
@@ -175,7 +184,7 @@ export async function generateLLMReport(
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify(payload)
-    }, "Gemini", timeoutMs);
+    }, "Gemini", LLM_PROVIDER_TIMEOUT_MS);
 
     if (!res.ok) {
       throw await upstreamError("Gemini", res);
@@ -210,7 +219,7 @@ export async function generateLLMReport(
         "anthropic-version": "2023-06-01"
       },
       body: JSON.stringify(payload)
-    }, "Anthropic", timeoutMs);
+    }, "Anthropic", LLM_PROVIDER_TIMEOUT_MS);
 
     if (!res.ok) {
       throw await upstreamError("Anthropic", res);
@@ -249,7 +258,7 @@ export async function generateLLMReport(
 
   // "custom" endpoints get the same timeout as official providers — a hung
   // endpoint must never hold the request handler open indefinitely.
-  const res = await fetchWithTimeout(openaiUrl, requestInit, provider.toUpperCase(), timeoutMs);
+  const res = await fetchWithTimeout(openaiUrl, requestInit, provider.toUpperCase(), LLM_PROVIDER_TIMEOUT_MS);
 
   if (!res.ok) {
     throw await upstreamError(provider.toUpperCase(), res);

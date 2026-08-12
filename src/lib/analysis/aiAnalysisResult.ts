@@ -52,6 +52,7 @@ export interface AiAnalysisResult {
 }
 
 type UnknownRecord = Record<string, unknown>;
+type AnalysisLanguage = "zh-CN" | "zh-TW" | "en" | "ja";
 
 function record(value: unknown, path: string): UnknownRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -178,27 +179,21 @@ function matchesSuppliedLevel(
 
 function validateRiskPlan(value: unknown, snapshot: EvidenceSnapshot): AiEntryAssessment["riskPlan"] {
   const riskPlan = record(value, "scoreAssessment.riskPlan");
-  const stop = optionalPositiveNumber(riskPlan.stop, "scoreAssessment.riskPlan.stop");
-  const target = optionalPositiveNumber(riskPlan.target, "scoreAssessment.riskPlan.target");
+  let stop = optionalPositiveNumber(riskPlan.stop, "scoreAssessment.riskPlan.stop");
+  let target = optionalPositiveNumber(riskPlan.target, "scoreAssessment.riskPlan.target");
 
   if (stop !== undefined) {
-    if (!(stop < snapshot.price)) {
-      throw new Error("scoreAssessment.riskPlan.stop must be below current price");
-    }
-    if (!matchesSuppliedLevel(stop, new Set<TradeLevelKind>(["support", "stop"]), snapshot)) {
-      throw new Error("scoreAssessment.riskPlan.stop must match a supplied support or stop level");
+    if (!(stop < snapshot.price)
+      || !matchesSuppliedLevel(stop, new Set<TradeLevelKind>(["support", "stop"]), snapshot)) {
+      stop = undefined;
     }
   }
 
   if (target !== undefined) {
-    if (!(target > snapshot.price)) {
-      throw new Error("scoreAssessment.riskPlan.target must be above current price");
-    }
-    if (!matchesSuppliedLevel(target, new Set<TradeLevelKind>(["resistance", "target"]), snapshot)) {
-      throw new Error("scoreAssessment.riskPlan.target must match a supplied resistance or target level");
-    }
-    if (stop === undefined) {
-      throw new Error("scoreAssessment.riskPlan.target requires a stop");
+    if (!(target > snapshot.price)
+      || !matchesSuppliedLevel(target, new Set<TradeLevelKind>(["resistance", "target"]), snapshot)
+      || stop === undefined) {
+      target = undefined;
     }
   }
 
@@ -246,9 +241,75 @@ function validateDecisionConsistency(
   }
 }
 
+function normalizedAdviceText(
+  language: AnalysisLanguage,
+  kind: "holder" | "left" | "right"
+): string {
+  const messages = {
+    "zh-CN": {
+      holder: "当前缺少可验证的保护止损位，暂按普通持有处理；待形成明确止损依据后再采用保护性持仓策略。",
+      left: "当前没有同时满足条件的止损与目标组合，暂不执行左侧试仓，等待风险收益边界明确。",
+      right: "当前没有同时满足条件的止损与目标组合，暂不执行右侧加仓，等待突破与回踩确认。",
+    },
+    "zh-TW": {
+      holder: "目前缺少可驗證的保護止損位，暫按普通持有處理；待形成明確止損依據後再採用保護性持倉策略。",
+      left: "目前沒有同時滿足條件的止損與目標組合，暫不執行左側試倉，等待風險收益邊界明確。",
+      right: "目前沒有同時滿足條件的止損與目標組合，暫不執行右側加倉，等待突破與回踩確認。",
+    },
+    en: {
+      holder: "No validated protective stop is available, so treat this as a regular hold until a defensible stop is established.",
+      left: "No validated stop-target pair is available, so do not take the left-side entry yet; wait for a defined risk-reward boundary.",
+      right: "No validated stop-target pair is available, so do not add on the right side yet; wait for breakout and retest confirmation.",
+    },
+    ja: {
+      holder: "検証可能な保護ストップがないため、妥当な損切り根拠が形成されるまでは通常保有として扱います。",
+      left: "有効な損切り・目標の組み合わせがないため、左側エントリーは見送り、リスクとリターンが明確になるまで待ちます。",
+      right: "有効な損切り・目標の組み合わせがないため、右側追加は見送り、ブレイクと押し目確認を待ちます。",
+    },
+  } as const;
+  return messages[language][kind];
+}
+
+function normalizeUnsafeActions(
+  assessment: AiEntryAssessment,
+  strategy: AiStrategyAdvice,
+  language: AnalysisLanguage
+): void {
+  const hasCompleteRiskPlan = assessment.riskPlan.stop !== undefined
+    && assessment.riskPlan.target !== undefined;
+  const leftActionable = hasCompleteRiskPlan
+    && assessment.activeSetup === "left"
+    && assessment.leftStatus === "triggered"
+    && strategy.leftEntry.action === "probe";
+  const rightActionable = hasCompleteRiskPlan
+    && assessment.activeSetup === "right"
+    && assessment.rightStatus === "triggered"
+    && strategy.rightAdd.action === "add_on_retest";
+
+  if (!leftActionable && (assessment.activeSetup === "left" || strategy.leftEntry.action === "probe")) {
+    if (assessment.activeSetup === "left") assessment.activeSetup = "none";
+    if (strategy.leftEntry.action === "probe") {
+      strategy.leftEntry.action = "wait";
+      strategy.leftEntry.text = normalizedAdviceText(language, "left");
+    }
+  }
+  if (!rightActionable && (assessment.activeSetup === "right" || strategy.rightAdd.action === "add_on_retest")) {
+    if (assessment.activeSetup === "right") assessment.activeSetup = "none";
+    if (strategy.rightAdd.action === "add_on_retest") {
+      strategy.rightAdd.action = "wait_breakout";
+      strategy.rightAdd.text = normalizedAdviceText(language, "right");
+    }
+  }
+  if (assessment.riskPlan.stop === undefined && strategy.holder.action === "hold_protect") {
+    strategy.holder.action = "hold";
+    strategy.holder.text = normalizedAdviceText(language, "holder");
+  }
+}
+
 export function validateAiAnalysisResult(
   value: unknown,
-  snapshot: EvidenceSnapshot
+  snapshot: EvidenceSnapshot,
+  language: AnalysisLanguage = "zh-CN"
 ): AiAnalysisResult {
   const validEvidenceIds = new Set(snapshot.items.map((item) => item.id));
   const result = record(value, "result");
@@ -282,6 +343,7 @@ export function validateAiAnalysisResult(
     reasons,
   };
   const strategyAdvice = validateStrategyAdvice(result.strategyAdvice, validEvidenceIds);
+  normalizeUnsafeActions(assessment, strategyAdvice, language);
   validateDecisionConsistency(assessment, strategyAdvice);
 
   return {

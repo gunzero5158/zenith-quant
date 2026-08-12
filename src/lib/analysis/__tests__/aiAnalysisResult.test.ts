@@ -144,22 +144,47 @@ describe("AI-native analysis result validation", () => {
     ["target below current price", { stop: 95, target: 99 }],
     ["stop not in supplied levels", { stop: 94, target: 112 }],
     ["target not in supplied levels", { stop: 95, target: 113 }],
-  ])("rejects an unreasonable %s", (_name, riskPlan) => {
+  ])("removes an unreasonable %s and downgrades the entry", (_name, riskPlan) => {
     const value = validResult();
     value.scoreAssessment.riskPlan = riskPlan;
-    expect(() => validateAiAnalysisResult(value, snapshot)).toThrow(/riskPlan/);
+    const result = validateAiAnalysisResult(value, snapshot, "en");
+
+    expect(result.strategyAdvice.leftEntry.action).toBe("wait");
+    expect(result.scoreAssessment.activeSetup).toBe("none");
+    expect(result.scoreAssessment.riskPlan.target).toBeUndefined();
+    expect(result.scoreAssessment.finalScore).toBe(3.75);
   });
 
-  it("requires actionable entries to include both a grounded stop and target", () => {
+  it("downgrades an actionable entry when a grounded stop-target pair is incomplete", () => {
     const value = validResult();
     value.scoreAssessment.riskPlan = { stop: 95 } as { stop: number; target: number };
-    expect(() => validateAiAnalysisResult(value, snapshot)).toThrow(/actionable entry/i);
+    const result = validateAiAnalysisResult(value, snapshot, "en");
+
+    expect(result.scoreAssessment.activeSetup).toBe("none");
+    expect(result.strategyAdvice.leftEntry.action).toBe("wait");
+    expect(result.strategyAdvice.leftEntry.text).toMatch(/No validated stop-target pair/);
+    expect(result.scoreAssessment.finalScore).toBe(3.75);
+    expect(result.overview).toBe(value.overview);
   });
 
-  it("rejects contradictory setup status and strategy action", () => {
+  it("downgrades hold protection when no grounded stop is available", () => {
+    const value = validResult();
+    value.scoreAssessment.activeSetup = "none";
+    value.scoreAssessment.riskPlan = {} as { stop: number; target: number };
+    value.strategyAdvice.leftEntry.action = "wait";
+    const result = validateAiAnalysisResult(value, snapshot, "zh-CN");
+
+    expect(result.strategyAdvice.holder.action).toBe("hold");
+    expect(result.strategyAdvice.holder.text).toContain("缺少可验证的保护止损位");
+  });
+
+  it("downgrades contradictory setup status and strategy action", () => {
     const value = validResult();
     value.scoreAssessment.leftStatus = "watch";
-    expect(() => validateAiAnalysisResult(value, snapshot)).toThrow(/activeSetup/i);
+    const result = validateAiAnalysisResult(value, snapshot, "en");
+
+    expect(result.scoreAssessment.activeSetup).toBe("none");
+    expect(result.strategyAdvice.leftEntry.action).toBe("wait");
   });
 
   it("removes internal evidence IDs from every user-visible string", () => {

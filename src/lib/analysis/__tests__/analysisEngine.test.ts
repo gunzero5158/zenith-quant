@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runAnalysisEngine } from "../analysisEngine";
-import { buildAnalysisRepairPrompt, buildEvidenceAnalystPrompt } from "../analysisPrompt";
+import { buildEvidenceAnalystPrompt } from "../analysisPrompt";
 import { Candle } from "../indicators";
 
 function tradingDays(count: number): Candle[] {
@@ -87,6 +87,8 @@ describe("pure analysis engine", () => {
     expect(prompt).toContain("sole decision-maker");
     expect(prompt).toContain("exact price from immutableFacts.snapshot.levels");
     expect(prompt).toContain("Do not return rewardRisk or stopDistancePct");
+    expect(prompt).toContain('"holder": { "action": "hold"');
+    expect(prompt).not.toContain('"holder": { "action": "hold_protect"');
     expect(prompt).toContain('"ema5"');
     expect(prompt).toContain('"dif"');
 
@@ -108,17 +110,6 @@ describe("pure analysis engine", () => {
       expect(localizedPrompt).toContain("Write every user-visible string in that language");
     }
 
-    const repairPrompt = buildAnalysisRepairPrompt(
-      prompt,
-      '{"scoreAssessment":{"activeSetup":"left","riskPlan":{}}}',
-      "An actionable entry requires both a grounded stop and target in scoreAssessment.riskPlan"
-    );
-    expect(repairPrompt).toContain("Return a complete corrected JSON object");
-    expect(repairPrompt).toContain("exact valid stop and exact valid target");
-    expect(repairPrompt).toContain("change the entry action to wait");
-    expect(repairPrompt).toContain("rather than inventing a level");
-    expect(repairPrompt).toContain("PREVIOUS_INVALID_RESPONSE");
-    expect(repairPrompt).toContain("An actionable entry requires both a grounded stop and target");
   });
 
   it("normalizes and chronologically sorts Yahoo Date candles before analysis", () => {

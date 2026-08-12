@@ -136,28 +136,28 @@ describe('llmProxy', () => {
     vi.useRealTimers();
   });
 
-  it('supports a shorter per-call timeout for an automatic correction', async () => {
-    vi.useFakeTimers();
-    const globalFetchMock = vi.fn().mockImplementation((_url, init: RequestInit) => (
-      new Promise((_resolve, reject) => {
-        init.signal?.addEventListener('abort', () => {
-          const error = new Error('Aborted');
-          error.name = 'AbortError';
-          reject(error);
-        });
-      })
-    ));
-    vi.stubGlobal('fetch', globalFetchMock);
+  it('reports when the upstream closes the connection', async () => {
+    const cause = Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed', { cause })));
 
-    const rejection = expect(generateLLMReport('repair prompt', {
-      provider: 'openai',
-      apiKey: 'openai-key',
-      modelName: 'gpt-4o',
-    }, 60_000)).rejects.toThrow('OPENAI API timeout after 60s');
+    await expect(generateLLMReport('prompt', {
+      provider: 'custom',
+      apiKey: 'test-key',
+      baseUrl: 'https://relay.example/v1',
+      modelName: 'gpt-4o-mini',
+    })).rejects.toThrow('CUSTOM connection was closed by the upstream service (UND_ERR_SOCKET)');
+  });
 
-    await vi.advanceTimersByTimeAsync(60_000);
-    await rejection;
-    vi.useRealTimers();
+  it('reports connection timeouts separately from generic fetch failures', async () => {
+    const cause = Object.assign(new Error('connect timeout'), { code: 'UND_ERR_CONNECT_TIMEOUT' });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed', { cause })));
+
+    await expect(generateLLMReport('prompt', {
+      provider: 'custom',
+      apiKey: 'test-key',
+      baseUrl: 'https://relay.example/v1',
+      modelName: 'gpt-4o-mini',
+    })).rejects.toThrow('CUSTOM connection timed out (UND_ERR_CONNECT_TIMEOUT)');
   });
 
   it('adds the OpenAI-compatible /v1 path when a custom base URL is only an origin', async () => {
