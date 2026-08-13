@@ -32,7 +32,7 @@ describe("isShanghaiAShareCode / aShareCodeToSuffixedSymbol", () => {
 });
 
 describe("convertSymbolToEastMoneySecid", () => {
-  it("converts A-share, HK and US symbols", () => {
+  it("converts A-share, HK, Japan and US symbols", () => {
     expect(convertSymbolToEastMoneySecid("600519.SS")).toBe("1.600519");
     expect(convertSymbolToEastMoneySecid("688001.SH")).toBe("1.688001");
     expect(convertSymbolToEastMoneySecid("000001.SZ")).toBe("0.000001");
@@ -40,6 +40,8 @@ describe("convertSymbolToEastMoneySecid", () => {
     expect(convertSymbolToEastMoneySecid("900948")).toBe("1.900948");
     expect(convertSymbolToEastMoneySecid("300059")).toBe("0.300059");
     expect(convertSymbolToEastMoneySecid("0700.HK")).toBe("116.00700");
+    expect(convertSymbolToEastMoneySecid("7203.T")).toBe("176.7203");
+    expect(convertSymbolToEastMoneySecid("285A.T")).toBe("176.285A");
     expect(convertSymbolToEastMoneySecid("AAPL")).toBe("105.AAPL");
     expect(convertSymbolToEastMoneySecid("!invalid!")).toBeNull();
   });
@@ -47,6 +49,7 @@ describe("convertSymbolToEastMoneySecid", () => {
   it("returns all US market candidates", () => {
     expect(getEastMoneySecidCandidates("AAPL")).toEqual(["105.AAPL", "106.AAPL", "107.AAPL"]);
     expect(getEastMoneySecidCandidates("600519")).toEqual(["1.600519"]);
+    expect(getEastMoneySecidCandidates("9984.T")).toEqual(["176.9984"]);
   });
 
   it("A-share-only variant rejects HK/US symbols", () => {

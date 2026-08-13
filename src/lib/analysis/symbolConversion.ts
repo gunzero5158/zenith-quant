@@ -20,7 +20,7 @@ export function aShareCodeToSuffixedSymbol(code: string): string {
 
 /**
  * Converts a user-facing symbol to an EastMoney secid.
- * Supports A-shares (1./0.), HK (116.) and US (105.) symbols; null otherwise.
+ * Supports A-shares (1./0.), HK (116.), Japan (176.) and US (105.) symbols; null otherwise.
  */
 export function convertSymbolToEastMoneySecid(symbol: string): string | null {
   const clean = symbol.trim().toUpperCase();
@@ -46,7 +46,12 @@ export function convertSymbolToEastMoneySecid(symbol: string): string | null {
     return `116.${clean.padStart(5, "0")}`;
   }
 
-  // 3. US stock (e.g. AAPL, TSLA, MSFT)
+  // 3. Japan stock (e.g. 7203.T, 9984.T, 285A.T)
+  if (/^\d{3}[0-9A-Z]\.T$/.test(clean)) {
+    return `176.${clean.slice(0, -2)}`;
+  }
+
+  // 4. US stock (e.g. AAPL, TSLA, MSFT)
   if (/^[A-Z]{1,5}$/.test(clean)) {
     return `105.${clean}`;
   }

@@ -85,6 +85,32 @@ describe("gated entry assessment", () => {
     expect(healthy.ruleScore).toBeGreaterThan(expired.ruleScore);
   });
 
+  it("does not carry an expired breakout into a newly confirmed left-side cycle", () => {
+    const result = calculateEntryAssessment(snapshot({
+      price: 104,
+      items: [
+        evidence("daily.atr.expanding", "atr", "neutral", "expanding", { value: 2, percentOfPrice: 1.92 }),
+        evidence("daily.ema.bullish", "ema", "bullish", "bullish"),
+        freshMacd(),
+        evidence("daily.volume.bullish", "volume", "bullish", "bullish", {
+          relativeVolume: 2.1,
+          hasVolumeBreakout: true,
+        }),
+        lowVolumePullback(),
+      ],
+      levels: [
+        { price: 103, kind: "support", source: "horizontal", strength: 0.5 },
+        { price: 100, kind: "support", source: "horizontal", strength: 0.8 },
+        { price: 112, kind: "resistance", source: "horizontal", strength: 0.8 },
+      ],
+      dailyPhase: "pullback",
+    }));
+
+    expect(result.leftStatus).toBe("triggered");
+    expect(result.rightStatus).toBe("watch");
+    expect(result.activeSetup).toBe("left");
+  });
+
   it("does not treat oversold oscillators in a falling knife as triggered left entry", () => {
     const result = calculateEntryAssessment(snapshot({
       weeklyRegime: "bearish",

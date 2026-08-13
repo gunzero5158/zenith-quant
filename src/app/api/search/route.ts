@@ -17,6 +17,14 @@ interface YahooSearchResult {
   quotes?: YahooSearchQuote[];
 }
 
+interface YahooHttpSearchQuote extends YahooSearchQuote {
+  exchange?: string;
+}
+
+interface YahooHttpSearchResult {
+  quotes?: YahooHttpSearchQuote[];
+}
+
 interface SearchSuggestion {
   symbol: string;
   name: string;
@@ -45,6 +53,13 @@ interface StaticSearchSuggestion extends SearchSuggestion {
 
 const STATIC_FALLBACK_SUGGESTIONS: StaticSearchSuggestion[] = [
   {
+    symbol: "7203.T",
+    name: "Toyota Motor Corporation",
+    exchDisp: "TSE",
+    typeDisp: "日本株",
+    aliases: ["7203", "7203.t", "toyota", "toyotamotor", "丰田", "豐田", "トヨタ", "トヨタ自動車"],
+  },
+  {
     symbol: "285A.T",
     name: "KIOXIA Holdings",
     exchDisp: "TSE",
@@ -56,7 +71,7 @@ const STATIC_FALLBACK_SUGGESTIONS: StaticSearchSuggestion[] = [
     name: "SoftBank Group",
     exchDisp: "TSE",
     typeDisp: "日本株",
-    aliases: ["9984", "softbank", "softbankgroup", "ruanyin"],
+    aliases: ["9984", "softbank", "softbankgroup", "ruanyin", "软银", "軟銀", "ソフトバンク", "ソフトバンクグループ"],
   },
   {
     symbol: "603799.SS",
@@ -125,37 +140,81 @@ export async function GET(request: Request) {
   }
 
   const cleanQuery = q.trim();
+  const staticSuggestions = findStaticFallbackSuggestions(cleanQuery);
+  if (staticSuggestions.length > 0 && (/[^\x00-\x7F]/.test(cleanQuery) || /^\d{3}[0-9A-Z](?:\.T)?$/i.test(cleanQuery))) {
+    return NextResponse.json({ quotes: staticSuggestions });
+  }
 
+  let yahooQuotes: SearchSuggestion[] = [];
   try {
     const searchResult = await yahooFinance.search(cleanQuery, {
       newsCount: 0, // We only need quotes, not news
     }) as YahooSearchResult;
 
-    const quotes = (searchResult.quotes || [])
-      .filter((item) => item.symbol && (item.quoteType === "EQUITY" || item.quoteType === "ETF" || item.quoteType === "INDEX"))
-      .map((item) => ({
-        symbol: item.symbol || "",
-        name: item.shortname || item.longname || item.symbol || "",
-        exchDisp: item.exchDisp || "GLOBAL",
-        typeDisp: item.typeDisp || "Stock",
-      }))
-      .slice(0, 8);
-
-    return NextResponse.json({ quotes });
+    yahooQuotes = mapYahooSuggestions(searchResult.quotes || []);
   } catch (error: unknown) {
     console.warn("Yahoo search API failed, using lightweight fallback:", error);
-    const fallbackQuotes = await fetchFallbackSuggestions(cleanQuery);
-    return NextResponse.json({ quotes: fallbackQuotes });
   }
+
+  if (yahooQuotes.length > 0) {
+    const quotes = /[^\x00-\x7F]/.test(cleanQuery)
+      ? mergeSuggestions(staticSuggestions, yahooQuotes)
+      : mergeSuggestions(yahooQuotes, staticSuggestions);
+    return NextResponse.json({ quotes });
+  }
+
+  const fallbackQuotes = await fetchFallbackSuggestions(cleanQuery);
+  return NextResponse.json({ quotes: fallbackQuotes });
 }
 
 async function fetchFallbackSuggestions(query: string): Promise<SearchSuggestion[]> {
-  const [providerSuggestions, eastMoneySuggestions] = await Promise.all([
+  const [yahooHttpSuggestions, providerSuggestions, eastMoneySuggestions] = await Promise.all([
+    fetchYahooHttpSuggestions(query),
     fetchProviderSearchSuggestions(query),
     fetchEastMoneySuggestions(query),
   ]);
   const staticSuggestions = findStaticFallbackSuggestions(query);
-  return mergeSuggestions(providerSuggestions, eastMoneySuggestions, staticSuggestions);
+  const remoteSuggestions = mergeSuggestions(providerSuggestions, yahooHttpSuggestions, eastMoneySuggestions);
+  return /[^\x00-\x7F]/.test(query)
+    ? mergeSuggestions(staticSuggestions, remoteSuggestions)
+    : mergeSuggestions(remoteSuggestions, staticSuggestions);
+}
+
+function mapYahooSuggestions(items: YahooSearchQuote[]): SearchSuggestion[] {
+  return items
+    .filter((item) => item.symbol && (item.quoteType === "EQUITY" || item.quoteType === "ETF" || item.quoteType === "INDEX"))
+    .map((item) => ({
+      symbol: item.symbol || "",
+      name: item.shortname || item.longname || item.symbol || "",
+      exchDisp: item.exchDisp || "GLOBAL",
+      typeDisp: item.typeDisp || "Stock",
+    }))
+    .slice(0, 8);
+}
+
+async function fetchYahooHttpSuggestions(query: string): Promise<SearchSuggestion[]> {
+  const tickerQuery = /^\d{3}[0-9A-Z](?:\.T)?$/i.test(query.trim())
+    ? query.trim().toUpperCase().replace(/\.T$/, "") + ".T"
+    : query.trim();
+  try {
+    const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(tickerQuery)}&quotesCount=8&newsCount=0`;
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(3500),
+      headers: {
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+      },
+    });
+    if (!response.ok) return [];
+    const data = await response.json() as YahooHttpSearchResult;
+    return mapYahooSuggestions((data.quotes || []).map((item) => ({
+      ...item,
+      exchDisp: item.exchDisp || item.exchange,
+    })));
+  } catch (error: unknown) {
+    console.warn("Yahoo HTTP search fallback failed:", error);
+    return [];
+  }
 }
 
 function findStaticFallbackSuggestions(query: string): SearchSuggestion[] {
@@ -170,7 +229,8 @@ function findStaticFallbackSuggestions(query: string): SearchSuggestion[] {
     .filter((item) =>
       item.aliases.some((alias) => {
         const normalizedAlias = normalizeAlias(alias);
-        return normalizedAlias.startsWith(normalizedQuery) || alias.toLowerCase().startsWith(rawQuery);
+        return (normalizedQuery.length > 0 && normalizedAlias.startsWith(normalizedQuery)) ||
+          (rawQuery.length > 0 && alias.toLowerCase().startsWith(rawQuery));
       }) || item.name.toLowerCase().includes(rawQuery)
     )
     .map((item) => ({
@@ -217,6 +277,8 @@ function isSupportedEastMoneySuggestion(item: EastMoneySuggestItem): boolean {
     classify === "UsStock" ||
     classify === "HKStock" ||
     classify === "AStock" ||
+    classify === "JPX" ||
+    item.QuoteID?.startsWith("176.") ||
     type.includes("美股") ||
     type.includes("港股") ||
     type.includes("A股")
@@ -230,6 +292,9 @@ function normalizeEastMoneySymbol(item: EastMoneySuggestItem): string {
 
   if (classify === "HKStock" || quoteId.startsWith("116.")) {
     return `${code.padStart(4, "0")}.HK`;
+  }
+  if (classify === "JPX" || quoteId.startsWith("176.")) {
+    return /^\d{3}[0-9A-Z]$/i.test(code) ? `${code.toUpperCase()}.T` : code;
   }
   if (classify === "AStock" || quoteId.startsWith("1.") || quoteId.startsWith("0.")) {
     if (/^\d{6}$/.test(code)) {

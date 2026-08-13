@@ -19,7 +19,7 @@ describe("market data provider priorities", () => {
   it.each([
     ["600519.SS", ["eastmoney", "tonghuashun", "tencent", "yahoo", "yahoo-chart", "optional-provider"]],
     ["0700.HK", ["eastmoney", "tencent", "yahoo", "yahoo-chart", "tonghuashun", "optional-provider"]],
-    ["7203.T", ["yahoo", "yahoo-chart", "kabutan", "optional-provider"]],
+    ["7203.T", ["yahoo-chart", "yahoo", "kabutan", "optional-provider"]],
     ["AAPL", ["yahoo", "yahoo-chart", "tencent", "eastmoney", "tonghuashun", "optional-provider"]],
   ] as const)("uses the requested order for %s", (symbol, expected) => {
     expect(getMarketDataPriority(symbol)).toEqual(expected);

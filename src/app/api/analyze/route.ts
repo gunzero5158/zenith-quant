@@ -46,6 +46,7 @@ import {
 import { marketDataCircuitBreaker } from "@/lib/analysis/providerCircuitBreaker";
 import { getMarketDataPriority, MarketDataProvider } from "@/lib/analysis/marketDataPriority";
 import { DEFAULT_ANALYSIS_MODE, isAnalysisMode } from "@/lib/analysis/analysisMode";
+import { fetchYahooJsonViaWindows } from "@/lib/analysis/windowsHttpFallback";
 import { buildAiNativeAnalystPrompt } from "@/lib/analysis/aiNativeAnalysisPrompt";
 import { validateAiAnalysisResult, toLegacyAiScoreDetail } from "@/lib/analysis/aiAnalysisResult";
 import { composeAiNativeReport } from "@/lib/analysis/aiNativeReportComposition";
@@ -1178,19 +1179,25 @@ async function fetchYahooChartRange(
   interval: "1d" | "1wk"
 ): Promise<{ candles: Candle[]; meta: NonNullable<NonNullable<YahooChartResponse["chart"]>["result"]>[number]["meta"] & {} }> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`;
-  const res = await fetch(url, {
-    signal: AbortSignal.timeout(8000),
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Accept": "application/json",
-    },
-  });
+  let data: YahooChartResponse;
+  try {
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(8000),
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+      },
+    });
 
-  if (!res.ok) {
-    throw new Error(`Yahoo Chart request failed (${res.status})`);
+    if (!res.ok) {
+      throw new Error(`Yahoo Chart request failed (${res.status})`);
+    }
+    data = await res.json() as YahooChartResponse;
+  } catch (error: unknown) {
+    if (process.platform !== "win32") throw error;
+    console.warn(`Yahoo Chart Node request failed for ${symbol}; retrying through Windows HTTP stack.`);
+    data = await fetchYahooJsonViaWindows<YahooChartResponse>(url, 12000);
   }
-
-  const data = await res.json() as YahooChartResponse;
   const result = data.chart?.result?.[0];
   const quote = result?.indicators?.quote?.[0];
   const timestamps = result?.timestamp || [];

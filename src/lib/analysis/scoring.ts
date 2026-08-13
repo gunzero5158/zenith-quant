@@ -405,13 +405,20 @@ function scenarioStatuses(
     (context.breakoutDistanceAtr ?? 0) > 1.5 ||
     (riskPlan.rewardRisk !== undefined && riskPlan.rewardRisk < 1.2)
   );
-  const rightStatus: ScenarioStatus = rightTrigger
+  let rightStatus: ScenarioStatus = rightTrigger
     ? snapshot.dataQuality.dailyBarComplete ? "triggered" : "provisional"
     : rightExpired
       ? "too_late"
       : rightWatch
         ? "watch"
         : "not_formed";
+
+  // A fresh left-side setup starts a new structural cycle. An older breakout
+  // anchor can remain historically extended, but it must not label the new
+  // cycle's right-side path as already too late.
+  if (["triggered", "provisional"].includes(leftStatus) && rightStatus === "too_late") {
+    rightStatus = rightCandidateStructure || rightConfirmation ? "watch" : "not_formed";
+  }
 
   return { leftStatus, rightStatus };
 }

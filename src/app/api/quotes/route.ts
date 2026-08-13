@@ -12,6 +12,7 @@ import {
 } from "@/lib/analysis/ashareRealtime";
 import { fetchTonghuashunQuote } from "@/lib/analysis/tonghuashun";
 import { aShareCodeToSuffixedSymbol, getEastMoneySecidCandidates } from "@/lib/analysis/symbolConversion";
+import { fetchYahooJsonViaWindows } from "@/lib/analysis/windowsHttpFallback";
 
 const yahooFinance = new YahooFinance();
 
@@ -38,6 +39,17 @@ const EAST_MONEY_TIMEOUT_MS = 1500;
 interface YahooQuote {
   regularMarketPrice?: number;
   regularMarketChangePercent?: number;
+}
+
+interface YahooChartQuoteResponse {
+  chart?: {
+    result?: Array<{
+      meta?: {
+        regularMarketPrice?: number;
+        chartPreviousClose?: number;
+      };
+    }>;
+  };
 }
 
 interface EastMoneyKline {
@@ -205,7 +217,24 @@ async function fetchQuoteFromProvider(
     }
 
     if (provider === "yahoo") {
-      const quote = await yahooFinance.quote(symbol) as YahooQuote;
+      let quote: YahooQuote;
+      try {
+        quote = await yahooFinance.quote(symbol) as YahooQuote;
+      } catch (error: unknown) {
+        if (process.platform !== "win32") throw error;
+        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=1d`;
+        const data = await fetchYahooJsonViaWindows<YahooChartQuoteResponse>(url, 12000);
+        const meta = data.chart?.result?.[0]?.meta;
+        const price = meta?.regularMarketPrice;
+        const previousClose = meta?.chartPreviousClose;
+        quote = {
+          regularMarketPrice: price,
+          regularMarketChangePercent:
+            typeof price === "number" && typeof previousClose === "number" && previousClose !== 0
+              ? ((price - previousClose) / previousClose) * 100
+              : 0,
+        };
+      }
       return quote?.regularMarketPrice !== undefined
         ? {
             price: quote.regularMarketPrice,

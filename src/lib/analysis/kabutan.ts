@@ -74,20 +74,22 @@ export async function fetchKabutanMarketData(symbol: string): Promise<KabutanMar
 
   const rowsByDate = new Map<string, KabutanRow>();
   let companyName = symbol;
+  let lastError: unknown;
 
-  const pageResults = await Promise.allSettled(
-    Array.from({ length: KABUTAN_MAX_PAGES }, (_, index) => fetchKabutanDailyPage(code, index + 1))
-  );
-
-  for (const result of pageResults) {
+  for (let page = 1; page <= KABUTAN_MAX_PAGES; page++) {
     if (rowsByDate.size >= 300) {
       break;
     }
-    if (result.status === "rejected") {
-      throw result.reason;
+    let pageData: KabutanPageData;
+    try {
+      pageData = await fetchKabutanDailyPage(code, page);
+    } catch (error: unknown) {
+      lastError = error;
+      if (rowsByDate.size === 0) {
+        break;
+      }
+      continue;
     }
-
-    const pageData = result.value;
     if (pageData.companyName) {
       companyName = pageData.companyName;
     }
@@ -106,7 +108,8 @@ export async function fetchKabutanMarketData(symbol: string): Promise<KabutanMar
   );
 
   if (dailyRows.length < MIN_REAL_DAILY_CANDLES) {
-    throw new Error(`Kabutan returned insufficient daily data for ${symbol}`);
+    const detail = lastError instanceof Error ? `: ${lastError.message}` : "";
+    throw new Error(`Kabutan returned insufficient daily data for ${symbol}${detail}`);
   }
 
   const last = dailyRows[dailyRows.length - 1];

@@ -12,7 +12,7 @@ export type MarketDataProvider =
 const MARKET_DATA_PRIORITIES: Record<MarketRegion, readonly MarketDataProvider[]> = {
   "a-share": ["eastmoney", "tonghuashun", "tencent", "yahoo", "yahoo-chart", "optional-provider"],
   "hong-kong": ["eastmoney", "tencent", "yahoo", "yahoo-chart", "tonghuashun", "optional-provider"],
-  japan: ["yahoo", "yahoo-chart", "kabutan", "optional-provider"],
+  japan: ["yahoo-chart", "yahoo", "kabutan", "optional-provider"],
   "united-states": ["yahoo", "yahoo-chart", "tencent", "eastmoney", "tonghuashun", "optional-provider"],
 };
 

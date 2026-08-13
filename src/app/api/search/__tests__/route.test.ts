@@ -125,7 +125,7 @@ describe("/api/search", () => {
       exchDisp: "Shanghai",
       typeDisp: "Stock",
     });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(body.quotes).toHaveLength(1);
   });
 
@@ -143,5 +143,52 @@ describe("/api/search", () => {
       exchDisp: "TSE",
       typeDisp: "日本株",
     });
+  });
+
+  it("resolves a known Japanese code without waiting for remote search", async () => {
+    searchMock.mockResolvedValue({ quotes: [] });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        quotes: [{
+          symbol: "7203.T",
+          quoteType: "EQUITY",
+          shortname: "TOYOTA MOTOR CORP",
+          exchange: "JPX",
+          typeDisp: "Equity",
+        }],
+      }),
+    }));
+
+    const response = await GET(new Request("http://localhost/api/search?q=7203"));
+    const body = await response.json();
+
+    expect(body.quotes[0]).toMatchObject({
+      symbol: "7203.T",
+      name: "Toyota Motor Corporation",
+    });
+    expect(searchMock).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not match every static suggestion for a non-Latin query", async () => {
+    searchMock.mockResolvedValue({ quotes: [] });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("remote search blocked")));
+
+    const response = await GET(new Request("http://localhost/api/search?q=%E4%B8%B0%E7%94%B0"));
+    const body = await response.json();
+
+    expect(body.quotes).toHaveLength(1);
+    expect(body.quotes[0].symbol).toBe("7203.T");
+  });
+
+  it("resolves a Japanese company name from the local fallback", async () => {
+    searchMock.mockResolvedValue({ quotes: [] });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("remote search blocked")));
+
+    const response = await GET(new Request(`http://localhost/api/search?q=${encodeURIComponent("ソフトバンク")}`));
+    const body = await response.json();
+
+    expect(body.quotes[0]).toMatchObject({ symbol: "9984.T" });
   });
 });

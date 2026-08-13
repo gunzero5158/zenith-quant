@@ -31,6 +31,10 @@ import { mergeAnalysisQuoteIntoWatchlist, WatchQuote } from "@/lib/analysis/watc
 // Keep lightweight-charts out of the initial bundle
 const StockChart = dynamic(() => import("@/components/StockChart"), { ssr: false });
 
+const isAShareDisplaySymbol = (symbol: string): boolean => (
+  /^\d{6}(?:\.(?:SS|SH|SZ))?$/.test(symbol.trim().toUpperCase())
+);
+
 interface SearchSuggestion {
   symbol: string;
   name: string;
@@ -1187,6 +1191,28 @@ export default function Home() {
     setShowSuggestions(false);
   };
 
+  const handleSearchSubmit = async () => {
+    const query = searchQuery.trim();
+    if (!query) return;
+    if (suggestions[0]?.symbol) {
+      handleSelectSymbol(suggestions[0].symbol);
+      return;
+    }
+    try {
+      const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+      if (response.ok) {
+        const data = await response.json() as SearchResponse;
+        if (data.quotes?.[0]?.symbol) {
+          handleSelectSymbol(data.quotes[0].symbol);
+          return;
+        }
+      }
+    } catch (error: unknown) {
+      console.warn("Resolve submitted search query failed:", error);
+    }
+    handleSelectSymbol(query.toUpperCase());
+  };
+
   const handleHistorySelect = (symbol: string) => {
     if (symbol === activeSymbol) {
       void fetchActiveStockDataRef.current();
@@ -1322,7 +1348,8 @@ export default function Home() {
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && searchQuery.trim()) {
-                handleSelectSymbol((showSuggestions && suggestions[0]?.symbol) || searchQuery.trim().toUpperCase());
+                e.preventDefault();
+                void handleSearchSubmit();
               }
             }}
             style={styles.searchInput}
@@ -1511,22 +1538,19 @@ export default function Home() {
                   <div style={{ display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" }}>
                     <h1 style={styles.tickerName}>{renderStockName()}</h1>
                     <span style={styles.tickerSymbol}>{stockData.symbol}</span>
-                    {stockData.dataSource === "eastmoney" && (
+                    {isAShareDisplaySymbol(stockData.symbol) && stockData.dataSource === "eastmoney" && (
                       <span style={styles.eastMoneyBadge}>⚡ 东方财富</span>
                     )}
-                    {stockData.dataSource === "tonghuashun" && (
+                    {isAShareDisplaySymbol(stockData.symbol) && stockData.dataSource === "tonghuashun" && (
                       <span style={styles.tonghuashunBadge}>⚡ 同花顺</span>
                     )}
-                    {(stockData.dataSource === "yahoo" || stockData.dataSource === "yahoo-chart") && (
+                    {isAShareDisplaySymbol(stockData.symbol) && (stockData.dataSource === "yahoo" || stockData.dataSource === "yahoo-chart") && (
                       <span style={styles.yahooBadge}>🌐 雅虎财经</span>
                     )}
-                    {stockData.dataSource === "kabutan" && (
-                      <span style={styles.kabutanBadge}>🌐 株探</span>
-                    )}
-                    {stockData.dataSource === "twelve-data" && (
+                    {isAShareDisplaySymbol(stockData.symbol) && stockData.dataSource === "twelve-data" && (
                       <span style={styles.providerBadge}>🌐 Twelve Data</span>
                     )}
-                    {stockData.dataSource === "fmp" && (
+                    {isAShareDisplaySymbol(stockData.symbol) && stockData.dataSource === "fmp" && (
                       <span style={styles.providerBadge}>🌐 FMP</span>
                     )}
                     {scorePresentation?.dataStatus && (
