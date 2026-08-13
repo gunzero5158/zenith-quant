@@ -171,6 +171,13 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     langEn: "English",
     langJa: "日本語 (Japanese)",
     ruleBadge: "内置算法生成",
+    sourceEastMoney: "东方财富",
+    sourceTonghuashun: "同花顺",
+    sourceYahoo: "雅虎财经",
+    sourceTencent: "腾讯行情",
+    sourceKabutan: "株探",
+    sourceMarketApi: "行情数据 API",
+    sourceMock: "模拟演示",
     llmBadge: "LLM 生成",
     queryFailed: "查询失败",
     queryError: "查询出错",
@@ -248,6 +255,13 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     langEn: "English",
     langJa: "日本語 (Japanese)",
     ruleBadge: "內置算法生成",
+    sourceEastMoney: "東方財富",
+    sourceTonghuashun: "同花順",
+    sourceYahoo: "雅虎財經",
+    sourceTencent: "騰訊行情",
+    sourceKabutan: "株探",
+    sourceMarketApi: "行情數據 API",
+    sourceMock: "模擬演示",
     llmBadge: "LLM 生成",
     queryFailed: "查詢失敗",
     queryError: "查詢出錯",
@@ -325,6 +339,13 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     langEn: "English",
     langJa: "日本語 (Japanese)",
     ruleBadge: "Algorithm Generated",
+    sourceEastMoney: "East Money",
+    sourceTonghuashun: "Tonghuashun",
+    sourceYahoo: "Yahoo Finance",
+    sourceTencent: "Tencent Market Data",
+    sourceKabutan: "Kabutan",
+    sourceMarketApi: "Market Data API",
+    sourceMock: "Simulated Data",
     llmBadge: "LLM Generated",
     queryFailed: "Query Failed",
     queryError: "Query Error",
@@ -402,6 +423,13 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     langEn: "English",
     langJa: "日本語 (Japanese)",
     ruleBadge: "システム生成",
+    sourceEastMoney: "East Money",
+    sourceTonghuashun: "同花順",
+    sourceYahoo: "Yahoo!ファイナンス",
+    sourceTencent: "Tencentマーケットデータ",
+    sourceKabutan: "株探",
+    sourceMarketApi: "市場データAPI",
+    sourceMock: "シミュレーションデータ",
     llmBadge: "LLM 生成",
     queryFailed: "取得失敗",
     queryError: "エラー発生",
@@ -1535,19 +1563,19 @@ export default function Home() {
                     <h1 style={styles.tickerName}>{renderStockName()}</h1>
                     <span style={styles.tickerSymbol}>{stockData.symbol}</span>
                     {stockData.dataSource === "eastmoney" && (
-                      <span style={styles.eastMoneyBadge}>⚡ 东方财富</span>
+                      <span style={styles.eastMoneyBadge}>⚡ {t.sourceEastMoney}</span>
                     )}
                     {stockData.dataSource === "tonghuashun" && (
-                      <span style={styles.tonghuashunBadge}>⚡ 同花顺</span>
+                      <span style={styles.tonghuashunBadge}>⚡ {t.sourceTonghuashun}</span>
                     )}
                     {(stockData.dataSource === "yahoo" || stockData.dataSource === "yahoo-chart") && (
-                      <span style={styles.yahooBadge}>🌐 雅虎财经</span>
+                      <span style={styles.yahooBadge}>🌐 {t.sourceYahoo}</span>
                     )}
                     {stockData.dataSource === "tencent" && (
-                      <span style={styles.providerBadge}>⚡ 腾讯行情</span>
+                      <span style={styles.providerBadge}>⚡ {t.sourceTencent}</span>
                     )}
                     {stockData.dataSource === "kabutan" && (
-                      <span style={styles.providerBadge}>🌐 株探</span>
+                      <span style={styles.providerBadge}>🌐 {t.sourceKabutan}</span>
                     )}
                     {stockData.dataSource === "twelve-data" && (
                       <span style={styles.providerBadge}>🌐 Twelve Data</span>
@@ -1556,13 +1584,13 @@ export default function Home() {
                       <span style={styles.providerBadge}>🌐 FMP</span>
                     )}
                     {stockData.dataSource === "provider" && (
-                      <span style={styles.providerBadge}>🌐 Market Data API</span>
+                      <span style={styles.providerBadge}>🌐 {t.sourceMarketApi}</span>
                     )}
                     {scorePresentation?.dataStatus && (
                       <span style={styles.dataStatus}>{scorePresentation.dataStatus}</span>
                     )}
                     {stockData.dataSource === "mock" && (
-                      <span style={styles.mockBadge}>⚠️ 模拟演示</span>
+                      <span style={styles.mockBadge}>⚠️ {t.sourceMock}</span>
                     )}
                   </div>
                   <div style={styles.priceContainer}>
