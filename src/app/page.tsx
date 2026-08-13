@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useSyncExternalStore, useCallback } from "react";
 import dynamic from "next/dynamic";
-import { Info, Search, Settings, Star, TrendingUp, TrendingDown, RefreshCw, Trash2, Zap } from "lucide-react";
+import { BrainCircuit, Check, Database, Info, ListChecks, Search, Settings, ShieldAlert, Star, TrendingUp, TrendingDown, RefreshCw, Trash2, Zap } from "lucide-react";
 import LoadingOverlay from "@/components/LoadingOverlay";
 import SettingsModal from "@/components/SettingsModal";
 import { LLMConfig } from "@/lib/analysis/llmProxy";
@@ -180,7 +180,27 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     customEndpointOption: "Custom Endpoint (apimax等中转站)",
     fallbackLabel: "启用本地非AI指标兜底分析",
     fallbackDesc: "若大模型因额度不足/网络异常等原因生成失败，允许自动降级并启用内置技术指标算法计算评分与报表。",
-    analysisModeLabel: "分析模式", ruleAiMode: "规则评分 + AI", aiNativeMode: "纯 AI 分析"
+    analysisModeLabel: "分析模式", ruleAiMode: "规则评分 + AI", aiNativeMode: "纯 AI 分析",
+    welcomeEyebrow: "双引擎技术分析工作台",
+    welcomeIntro: "基于同一份客观行情与技术指标，选择规则框架复核，或让 AI 独立完成判断。",
+    modeSectionTitle: "选择本次分析方式",
+    modeSectionSubtitle: "切换只改变结论如何形成，不改变底层行情、K 线和技术指标。",
+    ruleAiSummary: "本地规则先形成可解释的基础分，AI 再结合完整证据复核结论。",
+    ruleAiPoint1: "固定评分维度，结果稳定、便于横向比较",
+    ruleAiPoint2: "AI 调整限制在 ±0.5，保留规则约束",
+    ruleAiBestFor: "适合：稳定筛选、连续跟踪、结果复核",
+    aiNativeSummary: "不向 AI 提供规则分或预设走势，由模型根据客观证据独立评分与分析。",
+    aiNativePoint1: "AI 自主判断走势、入场质量与置信度",
+    aiNativePoint2: "独立生成左右侧状态、风险方案与结论",
+    aiNativeBestFor: "适合：开放判断、复杂结构、观点探索",
+    selectedMode: "当前模式",
+    selectMode: "选择此模式",
+    objectiveTitle: "统一客观数据底座",
+    objectiveDesc: "两种模式共享真实行情、日周 K 线、EMA、MACD、KDJ、RSI、成交量、支撑压力、形态与结构证据。",
+    riskNoticeTitle: "分析边界与风险提示",
+    riskNoticeDesc: "本工具提供基于公开行情和技术指标的客观分析，不构成投资建议、收益承诺或买卖指令。AI 与规则模型均可能出错，投资决策请独立判断并自行承担风险。",
+    quickStartTitle: "选择标的开始分析",
+    quickStartDesc: "先选择分析模式，再搜索股票代码或从下方示例开始。"
   },
   "zh-TW": {
     title: "天台分析",
@@ -227,7 +247,27 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     customEndpointOption: "Custom Endpoint (apimax等中轉站)",
     fallbackLabel: "啟用本地非AI指標兜底分析",
     fallbackDesc: "若大模型因額度不足/網絡異常等原因生成失敗，允許自動降級並啟用內置技術指標算法計算評分與報表。",
-    analysisModeLabel: "分析模式", ruleAiMode: "規則評分 + AI", aiNativeMode: "純 AI 分析"
+    analysisModeLabel: "分析模式", ruleAiMode: "規則評分 + AI", aiNativeMode: "純 AI 分析",
+    welcomeEyebrow: "雙引擎技術分析工作台",
+    welcomeIntro: "基於同一份客觀行情與技術指標，選擇規則框架複核，或讓 AI 獨立完成判斷。",
+    modeSectionTitle: "選擇本次分析方式",
+    modeSectionSubtitle: "切換只改變結論如何形成，不改變底層行情、K 線和技術指標。",
+    ruleAiSummary: "本地規則先形成可解釋的基礎分，AI 再結合完整證據複核結論。",
+    ruleAiPoint1: "固定評分維度，結果穩定、便於橫向比較",
+    ruleAiPoint2: "AI 調整限制在 ±0.5，保留規則約束",
+    ruleAiBestFor: "適合：穩定篩選、連續追蹤、結果複核",
+    aiNativeSummary: "不向 AI 提供規則分或預設走勢，由模型根據客觀證據獨立評分與分析。",
+    aiNativePoint1: "AI 自主判斷走勢、入場品質與置信度",
+    aiNativePoint2: "獨立生成左右側狀態、風險方案與結論",
+    aiNativeBestFor: "適合：開放判斷、複雜結構、觀點探索",
+    selectedMode: "目前模式",
+    selectMode: "選擇此模式",
+    objectiveTitle: "統一客觀數據底座",
+    objectiveDesc: "兩種模式共享真實行情、日週 K 線、EMA、MACD、KDJ、RSI、成交量、支撐壓力、形態與結構證據。",
+    riskNoticeTitle: "分析邊界與風險提示",
+    riskNoticeDesc: "本工具提供基於公開行情和技術指標的客觀分析，不構成投資建議、收益承諾或買賣指令。AI 與規則模型均可能出錯，投資決策請獨立判斷並自行承擔風險。",
+    quickStartTitle: "選擇標的開始分析",
+    quickStartDesc: "先選擇分析模式，再搜尋股票代碼或從下方範例開始。"
   },
   "en": {
     title: "Rooftop Quant",
@@ -274,7 +314,27 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     customEndpointOption: "Custom Endpoint (apimax & other relays)",
     fallbackLabel: "Enable Local Non-AI Fallback Analysis",
     fallbackDesc: "If LLM generation fails due to network/quota limits, allow automatic fallback to built-in technical indicators scoring & report.",
-    analysisModeLabel: "Analysis mode", ruleAiMode: "Rules + AI", aiNativeMode: "AI Native"
+    analysisModeLabel: "Analysis mode", ruleAiMode: "Rules + AI", aiNativeMode: "AI Native",
+    welcomeEyebrow: "Dual-engine technical analysis workspace",
+    welcomeIntro: "Use the same objective market data and indicators with either a governed rule framework or independent AI judgment.",
+    modeSectionTitle: "Choose how this analysis is formed",
+    modeSectionSubtitle: "Switching modes changes the decision process, not the underlying quotes, candles, or indicators.",
+    ruleAiSummary: "Local rules produce an explainable base score, then AI reviews the conclusion against the full evidence set.",
+    ruleAiPoint1: "Fixed scoring dimensions for stable comparison",
+    ruleAiPoint2: "AI adjustment limited to ±0.5 under rule constraints",
+    ruleAiBestFor: "Best for: screening, ongoing tracking, and review",
+    aiNativeSummary: "AI receives no rule score or predetermined outlook and independently evaluates the objective evidence.",
+    aiNativePoint1: "AI judges outlook, entry quality, and confidence",
+    aiNativePoint2: "Independent setup states, risk plan, and conclusion",
+    aiNativeBestFor: "Best for: open judgment and complex structures",
+    selectedMode: "Current mode",
+    selectMode: "Select mode",
+    objectiveTitle: "One objective data foundation",
+    objectiveDesc: "Both modes share live quotes, daily and weekly candles, EMA, MACD, KDJ, RSI, volume, levels, patterns, and structural evidence.",
+    riskNoticeTitle: "Analysis boundary and risk notice",
+    riskNoticeDesc: "This tool provides objective analysis based on public market data and technical indicators. It is not investment advice, a return guarantee, or a trading instruction. AI and rule models can be wrong; make independent decisions and bear your own risk.",
+    quickStartTitle: "Choose a symbol to begin",
+    quickStartDesc: "Select an analysis mode, then search a ticker or start with an example below."
   },
   "ja": {
     title: "屋上クオンツ",
@@ -321,7 +381,27 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     customEndpointOption: "Custom Endpoint (apimax等の代理サーバー)",
     fallbackLabel: "ローカルの非AIバックアップ分析を有効にする",
     fallbackDesc: "大モデルの生成がネットワークエラーやクォータ不足で失敗した場合、組み込みのテクニカル分析アルゴリズムによるスコアとレポートへの自动切り替えを許可します。",
-    analysisModeLabel: "分析モード", ruleAiMode: "ルール + AI", aiNativeMode: "AI判断"
+    analysisModeLabel: "分析モード", ruleAiMode: "ルール + AI", aiNativeMode: "AI判断",
+    welcomeEyebrow: "デュアルエンジン・テクニカル分析ワークスペース",
+    welcomeIntro: "同じ客観的な市場データと指標を使い、ルールに基づく評価または AI の独自判断を選べます。",
+    modeSectionTitle: "今回の分析方法を選択",
+    modeSectionSubtitle: "モード切替で変わるのは結論の形成方法だけで、株価、ローソク足、指標は共通です。",
+    ruleAiSummary: "ローカルルールが説明可能な基礎スコアを作成し、AI が全根拠から結論を再評価します。",
+    ruleAiPoint1: "固定評価軸により安定した比較が可能",
+    ruleAiPoint2: "AI 調整は ±0.5 以内でルール制約を維持",
+    ruleAiBestFor: "用途：スクリーニング、継続追跡、結果確認",
+    aiNativeSummary: "ルールスコアや事前の見通しを渡さず、AI が客観的根拠から独自に評価します。",
+    aiNativePoint1: "AI が見通し、エントリー品質、確信度を判断",
+    aiNativePoint2: "左右状態、リスク計画、結論を独自生成",
+    aiNativeBestFor: "用途：自由な判断、複雑な構造、見解探索",
+    selectedMode: "現在のモード",
+    selectMode: "このモードを選択",
+    objectiveTitle: "共通の客観データ基盤",
+    objectiveDesc: "両モードは実際の株価、日足・週足、EMA、MACD、KDJ、RSI、出来高、支持抵抗、パターン、構造根拠を共有します。",
+    riskNoticeTitle: "分析範囲とリスク注意",
+    riskNoticeDesc: "本ツールは公開市場データとテクニカル指標に基づく客観的分析を提供します。投資助言、収益保証、売買指示ではありません。AI とルールモデルは誤る可能性があり、投資判断はご自身の責任で行ってください。",
+    quickStartTitle: "銘柄を選んで分析開始",
+    quickStartDesc: "分析モードを選択し、銘柄コードを検索するか、下の例から開始してください。"
   }
 };
 
@@ -1240,9 +1320,14 @@ export default function Home() {
               onClick={() => setAnalysisMode(mode)}
               style={{
                 ...styles.analysisModeButton,
-                ...(analysisMode === mode ? styles.analysisModeButtonActive : {}),
+                ...(analysisMode === mode
+                  ? mode === "rule-ai"
+                    ? styles.ruleModeButtonActive
+                    : styles.aiModeButtonActive
+                  : {}),
               }}
             >
+              {mode === "rule-ai" ? <ListChecks size={15} /> : <BrainCircuit size={15} />}
               {mode === "rule-ai" ? t.ruleAiMode : t.aiNativeMode}
             </button>
           ))}
@@ -1606,305 +1691,148 @@ export default function Home() {
           ) : (
             <div className="welcome-container" style={{
               ...styles.welcomeContainer,
-              background: "radial-gradient(circle at center, #182030 0%, #131722 100%)",
-              padding: "40px 20px",
+              backgroundColor: "#0b1018",
+              padding: "32px 20px 40px",
               overflowY: "auto",
             }}>
               <style>{`
-                .gradient-title {
-                  background: linear-gradient(135deg, #ffffff 0%, #2962ff 100%);
-                  -webkit-background-clip: text;
-                  -webkit-text-fill-color: transparent;
-                  filter: drop-shadow(0 0 20px rgba(41, 98, 255, 0.15));
-                }
-                @keyframes search-glow {
-                  0%, 100% { box-shadow: 0 0 6px rgba(41, 98, 255, 0.15), 0 0 12px rgba(8, 153, 129, 0.08); }
-                  50% { box-shadow: 0 0 14px rgba(41, 98, 255, 0.35), 0 0 28px rgba(8, 153, 129, 0.18); }
-                }
                 .search-input-glow {
-                  animation: search-glow 2.5s ease-in-out infinite;
-                  border: 1.5px solid rgba(41, 98, 255, 0.4) !important;
+                  border: 1px solid rgba(45, 212, 191, 0.45) !important;
+                  transition: border-color 180ms ease, box-shadow 180ms ease;
                 }
                 .search-input-glow:focus {
-                  animation: none;
-                  box-shadow: 0 0 20px rgba(41, 98, 255, 0.5), 0 0 40px rgba(8, 153, 129, 0.2) !important;
-                  border-color: #2962ff !important;
+                  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.12) !important;
+                  border-color: #2dd4bf !important;
                 }
-                @keyframes guide-number-pulse {
-                  0%, 100% { box-shadow: 0 0 0 0 rgba(41, 98, 255, 0.3); }
-                  50% { box-shadow: 0 0 8px 3px rgba(41, 98, 255, 0.25); }
+                .mode-card:hover {
+                  border-color: rgba(255, 255, 255, 0.24) !important;
+                  background-color: #151d29 !important;
                 }
-                .guide-step-number {
-                  animation: guide-number-pulse 2s ease-in-out infinite;
+                .mode-card:focus-visible, .analysis-mode-switch button:focus-visible, .quick-badge-btn:focus-visible {
+                  outline: 3px solid rgba(255, 255, 255, 0.75);
+                  outline-offset: 3px;
                 }
-                .apimax-ad-card {
-                  background: linear-gradient(135deg, rgba(13, 27, 62, 0.8) 0%, rgba(26, 16, 64, 0.6) 50%, rgba(10, 14, 26, 0.9) 100%) !important;
-                  border: 1px solid rgba(41, 98, 255, 0.25) !important;
-                  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
-                }
-                .apimax-ad-card:hover {
-                  border-color: rgba(96, 165, 250, 0.6) !important;
-                  box-shadow: 0 8px 30px rgba(41, 98, 255, 0.2), 0 0 20px rgba(96, 165, 250, 0.1) !important;
-                  transform: translateY(-2px);
+                @media (prefers-reduced-motion: reduce) {
+                  .search-input-glow, .mode-card { transition: none !important; }
                 }
               `}</style>
-              
-              <div className="welcome-hero" style={styles.welcomeHero}>
-                <div style={{
-                  position: "relative",
-                  width: "80px",
-                  height: "80px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  animation: "pulse-glow 2.5s ease-in-out infinite",
-                  marginBottom: "8px",
-                }}>
-                  <svg
-                    width="80"
-                    height="80"
-                    viewBox="0 0 64 64"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
-                    style={{ filter: "drop-shadow(0 0 12px rgba(41, 98, 255, 0.6))" }}
-                  >
-                    {/* Grid Background */}
-                    <circle cx="32" cy="32" r="30" fill="url(#heroBgGrad)" stroke="url(#heroStrokeGrad)" strokeWidth="1.5" strokeDasharray="3 3" />
-                    {/* Candlesticks */}
-                    <rect x="18" y="28" width="4" height="18" rx="1" fill="#089981" />
-                    <line x1="20" y1="22" x2="20" y2="48" stroke="#089981" strokeWidth="1.5" />
-                    
-                    <rect x="28" y="22" width="4" height="20" rx="1" fill="#f23645" />
-                    <line x1="30" y1="16" x2="30" y2="44" stroke="#f23645" strokeWidth="1.5" />
-
-                    <rect x="38" y="14" width="4" height="22" rx="1" fill="#089981" />
-                    <line x1="40" y1="8" x2="40" y2="40" stroke="#089981" strokeWidth="1.5" />
-                    
-                    {/* Trend line */}
-                    <path d="M12 42 L24 32 L36 26 L48 12" stroke="url(#heroTrendGrad)" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
-                    <circle cx="48" cy="12" r="4" fill="#fbbf24" style={{ filter: "drop-shadow(0 0 8px #fbbf24)" }} />
-                    
-                    {/* Gradients */}
-                    <defs>
-                      <linearGradient id="heroBgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stopColor="rgba(41, 98, 255, 0.05)" />
-                        <stop offset="100%" stopColor="rgba(13, 23, 42, 0.4)" />
-                      </linearGradient>
-                      <linearGradient id="heroStrokeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stopColor="#2962ff" stopOpacity="0.8" />
-                        <stop offset="100%" stopColor="#089981" stopOpacity="0.2" />
-                      </linearGradient>
-                      <linearGradient id="heroTrendGrad" x1="0%" y1="100%" x2="100%" y2="0%">
-                        <stop offset="0%" stopColor="#2962ff" />
-                        <stop offset="50%" stopColor="#00f5d4" />
-                        <stop offset="100%" stopColor="#fbbf24" />
-                      </linearGradient>
-                    </defs>
-                  </svg>
-                </div>
-                <h1 className="gradient-title" style={{ ...styles.welcomeTitle, fontSize: "32px", marginTop: "12px", marginBottom: "16px" }}>{t.welcomeTitle}</h1>
-                <p style={{ ...styles.welcomeSubtitle, fontSize: "14.5px", color: "#b2b5be", lineHeight: "1.6" }}>
-                  {effectiveLang === "zh-CN" && "针对全球主流的美股、港股、A股与日股，系统采用多维度指标、多形态结构进行综合技术面扫描，为您一键组装出具备 TradingView 深度的大脑级分析研报。"}
-                  {effectiveLang === "zh-TW" && "針對全球主流的美股、港股、A股與日股，系統採用多維度指標、多形態結構進行綜合技術面掃描，為您一鍵組裝出具備 TradingView 深度的大腦級分析研報。"}
-                  {effectiveLang === "en" && "Scanning global stock markets through multi-dimensional technical indicators and chart patterns to assemble detailed, professional analyst-grade reports in one click."}
-                  {effectiveLang === "ja" && "グローバル株式を対象に、複数時間軸のテクニカル指標と相場形態を総合スキャン。TradingViewスタイルのスマートレポートをワンクリックで自動作成。"}
-                </p>
-              </div>
-
-              {/* Bento-style Features Grid */}
-              <div className="welcome-features" style={styles.welcomeFeatures}>
-                <div className="feature-card" style={styles.featureCard}>
-                  <div style={styles.featureIcon}>🔬</div>
-                  <h3 style={styles.featureTitle}>
-                    {effectiveLang === "zh-CN" && "多维指标扫描"}
-                    {effectiveLang === "zh-TW" && "多維指標掃描"}
-                    {effectiveLang === "en" && "Indicators Scan"}
-                    {effectiveLang === "ja" && "複数指標 of 分析"}
-                  </h3>
-                  <p style={styles.featureDesc}>
-                    {effectiveLang === "zh-CN" && "日K与周K双周期共振，计算 EMA 多均线排列、布林线轨道收敛、MACD、KDJ 及 RSI 指标。"}
-                    {effectiveLang === "zh-TW" && "日K與周K雙週期共振，計算 EMA 多均線排列、布林線軌道收斂、MACD、KDJ 及 RSI 指標。"}
-                    {effectiveLang === "en" && "Calculates EMA arrangements, Bollinger Band limits, MACD, KDJ, and RSI across daily and weekly frames."}
-                    {effectiveLang === "ja" && "日足・週足 of EMA配列、ボリンジャーバンド、MACD、KDJ、RSIなどの指標を並行計算。"}
-                  </p>
+              <div className="welcome-content" style={styles.welcomeContent}>
+                <div className="welcome-hero" style={styles.welcomeHero}>
+                  <div style={styles.welcomeEyebrow}>{t.welcomeEyebrow}</div>
+                  <h1 style={styles.welcomeTitle}>{t.welcomeTitle}</h1>
+                  <p style={styles.welcomeSubtitle}>{t.welcomeIntro}</p>
                 </div>
 
-                <div className="feature-card" style={styles.featureCard}>
-                  <div style={styles.featureIcon}>📊</div>
-                  <h3 style={styles.featureTitle}>
-                    {effectiveLang === "zh-CN" && "筹码与水平支撑压力"}
-                    {effectiveLang === "zh-TW" && "籌碼與水平支撐壓力"}
-                    {effectiveLang === "en" && "Volume Profile & Support/Resistance"}
-                    {effectiveLang === "ja" && "出来高POCとサポート・レジスタンス"}
-                  </h3>
-                  <p style={styles.featureDesc}>
-                    {effectiveLang === "zh-CN" && "基于极值密度聚类自动绘制水平支撑压力线，结合筹码量分布计算多空博弈控制点 (POC)。"}
-                    {effectiveLang === "zh-TW" && "基於極值密度聚類自動繪製水平支撐壓力線，結合籌碼量分布計算多空博弈控制點 (POC)。"}
-                    {effectiveLang === "en" && "Draws support lines via swing pivot clustering, and locates Volume Profile Control Points (POC)."}
-                    {effectiveLang === "ja" && "波値の密度クラスタリングからレジサポ線を自動描画し、出来高POCから主要な価格帯を特定。"}
-                  </p>
-                </div>
-
-                <div className="feature-card" style={styles.featureCard}>
-                  <div style={styles.featureIcon}>🌊</div>
-                  <h3 style={styles.featureTitle}>
-                    {effectiveLang === "zh-CN" && "波浪理论与简易缠论"}
-                    {effectiveLang === "zh-TW" && "波浪理論與簡易纏論"}
-                    {effectiveLang === "en" && "Wave & Chanlun Theory"}
-                    {effectiveLang === "ja" && "エリオット波動と纏論"}
-                  </h3>
-                  <p style={styles.featureDesc}>
-                    {effectiveLang === "zh-CN" && "自动识别艾略特 1-5 浪主升与 ABC 调整，并通过缠论算法提取 K 线合并、分型及笔画结构。"}
-                    {effectiveLang === "zh-TW" && "自動識別艾略特 1-5 浪主升與 ABC 調整，並通過纏論算法提取 K 線合併、分型及筆畫結構。"}
-                    {effectiveLang === "en" && "Identifies Impulse/Correction wave counts and processes Chanlun K-line inclusion & strokes."}
-                    {effectiveLang === "ja" && "エリオット波動の1-5推進波・ABC修正波を検出し、K線包含処理や頂底分型から筆画を構成。"}
-                  </p>
-                </div>
-
-                <div className="feature-card" style={styles.featureCard}>
-                  <div style={styles.featureIcon}>🤖</div>
-                  <h3 style={styles.featureTitle}>
-                    {effectiveLang === "zh-CN" && "大模型智能研报"}
-                    {effectiveLang === "zh-TW" && "大模型智能研報"}
-                    {effectiveLang === "en" && "AI Analyst Report"}
-                    {effectiveLang === "ja" && "AIモデルによるスマートレポート"}
-                  </h3>
-                  <p style={styles.featureDesc}>
-                    {effectiveLang === "zh-CN" && "输入客观算法结果，驱动您自选的 AI 模型一键撰写极富量化深度的行情概况与操作策略。"}
-                    {effectiveLang === "zh-TW" && "輸入客觀算法結果，驅動您自選 of AI 模型一鍵撰寫極富量化深度的行情概况與操作策略。"}
-                    {effectiveLang === "en" && "Injects computed outputs into your configured LLM to generate professional analyst-grade stock ideas."}
-                    {effectiveLang === "ja" && "計算された客観データをAIプロンプトに注入し、TradingViewライクな専門レポートを即座に作成。"}
-                  </p>
-                </div>
-              </div>
-
-              {/* Step Guide */}
-              <div className="guide-step-card" style={{
-                ...styles.welcomeGuide,
-                background: "linear-gradient(135deg, rgba(28, 32, 48, 0.4) 0%, rgba(20, 24, 38, 0.6) 100%)",
-                backdropFilter: "blur(12px)",
-                border: "1px solid rgba(255, 255, 255, 0.04)"
-              }}>
-                <h3 style={styles.guideTitle}>
-                  {effectiveLang === "zh-CN" && "💡 新手快速入门"}
-                  {effectiveLang === "zh-TW" && "💡 新手快速入門"}
-                  {effectiveLang === "en" && "💡 Quick Start Guide"}
-                  {effectiveLang === "ja" && "💡 クイックスタートガイド"}
-                </h3>
-                <div style={styles.guideSteps}>
-                  <div style={styles.guideStepItem}>
-                    <span style={styles.guideStepNumber}>1</span>
-                    <span>
-                      {effectiveLang === "zh-CN" && "在上方搜索框输入全球任意有效股票代码 (如 AAPL, 700.HK, 600519)"}
-                      {effectiveLang === "zh-TW" && "在上方搜尋框輸入全球任意有效股票代碼 (如 AAPL, 700.HK, 600519)"}
-                      {effectiveLang === "en" && "Type any stock symbol (e.g. AAPL, 0700.HK) in the top search bar"}
-                      {effectiveLang === "ja" && "上部の検索ボックスに銘柄コード（例：AAPL, 700.HK, 600519）を入力します"}
-                    </span>
+                <section className="welcome-mode-section" style={styles.welcomeModeSection} aria-labelledby="mode-section-title">
+                  <div className="welcome-section-heading" style={styles.welcomeSectionHeading}>
+                    <div>
+                      <h2 id="mode-section-title" style={styles.welcomeSectionTitle}>{t.modeSectionTitle}</h2>
+                      <p style={styles.welcomeSectionSubtitle}>{t.modeSectionSubtitle}</p>
+                    </div>
+                    <div style={styles.sharedDataBadge}><Database size={15} /> {t.objectiveTitle}</div>
                   </div>
-                  <div style={styles.guideStepItem}>
-                    <span style={styles.guideStepNumber}>2</span>
-                    <span>
-                      {effectiveLang === "zh-CN" && "点击左侧自选股列表 (Watchlist) 快速查看常用热门标的行情"}
-                      {effectiveLang === "zh-TW" && "點擊左側自選股列表 (Watchlist) 快速查看常用熱門標的行情"}
-                      {effectiveLang === "en" && "Or click items in the left Watchlist sidebar for a quick view"}
-                      {effectiveLang === "ja" && "または、左側のお気に入りリスト（Watchlist）をクリックしてすばやく切り替えます"}
-                    </span>
-                  </div>
-                  <div style={styles.guideStepItem}>
-                    <span style={styles.guideStepNumber}>3</span>
-                    <span>
-                      {effectiveLang === "zh-CN" && "点击右上角“大模型配置”输入您的 API 密钥，启用 AI 强力研报分析"}
-                      {effectiveLang === "zh-TW" && "點擊右上角“大模型配置”輸入您的 API 密鑰，啟用 AI 強力研報分析"}
-                      {effectiveLang === "en" && "Configure LLM provider & API Key in the top right Settings to enable AI analyst"}
-                      {effectiveLang === "ja" && "右上の「AIモデル設定」からAPIキーを入力し、AI分析レポートを有効にします"}
-                    </span>
-                  </div>
-                  <div style={styles.guideStepItem}>
-                    <span style={styles.guideStepNumber}>4</span>
-                    <span>
-                      {effectiveLang === "zh-CN" && (
-                        <>
-                          还没有大模型 API Key？推荐前往{" "}
-                          <a
-                            href="https://apimax.io"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ color: "#60a5fa", fontWeight: "bold", textDecoration: "underline" }}
-                          >
-                            APIMax.io
-                          </a>{" "}
-                          一键购买多合一 API 和 Token，极速启用 AI 研报分析。
-                        </>
-                      )}
-                      {effectiveLang === "zh-TW" && (
-                        <>
-                          還沒有大模型 API Key？推薦前往{" "}
-                          <a
-                            href="https://apimax.io"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ color: "#60a5fa", fontWeight: "bold", textDecoration: "underline" }}
-                          >
-                            APIMax.io
-                          </a>{" "}
-                          一鍵購買多合一 API 和 Token，極速啟用 AI 研報分析。
-                        </>
-                      )}
-                      {effectiveLang === "en" && (
-                        <>
-                          No API Key? Visit{" "}
-                          <a
-                            href="https://apimax.io"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ color: "#60a5fa", fontWeight: "bold", textDecoration: "underline" }}
-                          >
-                            APIMax.io
-                          </a>{" "}
-                          to purchase a multi-model API key and token to unlock AI report features.
-                        </>
-                      )}
-                      {effectiveLang === "ja" && (
-                        <>
-                          APIキーをお持ちでないですか？{" "}
-                          <a
-                            href="https://apimax.io"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ color: "#60a5fa", fontWeight: "bold", textDecoration: "underline" }}
-                          >
-                            APIMax.io
-                          </a>{" "}
-                          でマルチモデルのAPIキーとトークンを購入し、AI分析レポートを有効にします。
-                        </>
-                      )}
-                    </span>
-                  </div>
-                </div>
-              </div>
 
-              {/* Quick Tickers Experiencing */}
-              <div className="welcome-quick-start" style={styles.welcomeQuickStart}>
-                <h4 style={styles.quickStartTitle}>
-                  {effectiveLang === "zh-CN" && "🚀 一键快捷体验特色股票"}
-                  {effectiveLang === "zh-TW" && "🚀 一鍵快捷體驗特色股票"}
-                  {effectiveLang === "en" && "🚀 Quick Click Stock Demos"}
-                  {effectiveLang === "ja" && "🚀 デモ銘柄をワンクリックでロード"}
-                </h4>
-                <div style={styles.quickStartBadges}>
-                  <button onClick={() => handleSelectSymbol("AAPL")} className="quick-badge-btn" style={styles.quickBadgeBtn}>
-                    🇺🇸 苹果 (AAPL)
-                  </button>
-                  <button onClick={() => handleSelectSymbol("0700.HK")} className="quick-badge-btn" style={styles.quickBadgeBtn}>
-                    🇭🇰 腾讯控股 (0700.HK)
-                  </button>
-                  <button onClick={() => handleSelectSymbol("600519.SS")} className="quick-badge-btn" style={styles.quickBadgeBtn}>
-                    🇨🇳 贵州茅台 (600519.SS)
-                  </button>
-                  <button onClick={() => handleSelectSymbol("9984.T")} className="quick-badge-btn" style={styles.quickBadgeBtn}>
-                    🇯🇵 软银集团 (9984.T)
-                  </button>
+                  <div className="welcome-mode-grid" style={styles.welcomeModeGrid}>
+                    {([
+                      {
+                        mode: "rule-ai" as const,
+                        icon: ListChecks,
+                        title: t.ruleAiMode,
+                        summary: t.ruleAiSummary,
+                        points: [t.ruleAiPoint1, t.ruleAiPoint2],
+                        bestFor: t.ruleAiBestFor,
+                        accent: "#2dd4bf",
+                        accentSoft: "rgba(45, 212, 191, 0.10)",
+                        border: "rgba(45, 212, 191, 0.58)",
+                      },
+                      {
+                        mode: "ai-native" as const,
+                        icon: BrainCircuit,
+                        title: t.aiNativeMode,
+                        summary: t.aiNativeSummary,
+                        points: [t.aiNativePoint1, t.aiNativePoint2],
+                        bestFor: t.aiNativeBestFor,
+                        accent: "#fbbf24",
+                        accentSoft: "rgba(251, 191, 36, 0.10)",
+                        border: "rgba(251, 191, 36, 0.58)",
+                      },
+                    ]).map((option) => {
+                      const selected = analysisMode === option.mode;
+                      const ModeIcon = option.icon;
+                      return (
+                        <button
+                          key={option.mode}
+                          type="button"
+                          className="mode-card"
+                          aria-pressed={selected}
+                          onClick={() => setAnalysisMode(option.mode)}
+                          style={{
+                            ...styles.welcomeModeCard,
+                            backgroundColor: selected ? option.accentSoft : "#111822",
+                            borderColor: selected ? option.border : "#263244",
+                            boxShadow: selected ? `inset 0 3px 0 ${option.accent}, 0 12px 30px rgba(0,0,0,0.22)` : "none",
+                          }}
+                        >
+                          <span style={styles.modeCardTop}>
+                            <span style={{ ...styles.modeIcon, color: option.accent, backgroundColor: option.accentSoft }}>
+                              <ModeIcon size={23} />
+                            </span>
+                            <span style={{ ...styles.modeSelectionState, color: selected ? option.accent : "#8b98aa" }}>
+                              {selected && <Check size={14} />}
+                              {selected ? t.selectedMode : t.selectMode}
+                            </span>
+                          </span>
+                          <strong style={styles.modeTitle}>{option.title}</strong>
+                          <span style={styles.modeSummary}>{option.summary}</span>
+                          <span style={styles.modePoints}>
+                            {option.points.map((point: string) => (
+                              <span key={point} style={styles.modePoint}><Check size={14} color={option.accent} /> {point}</span>
+                            ))}
+                          </span>
+                          <span style={{ ...styles.modeBestFor, borderColor: option.border }}>{option.bestFor}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <div className="welcome-info-grid" style={styles.welcomeInfoGrid}>
+                  <section style={styles.objectivePanel}>
+                    <Database size={20} color="#2dd4bf" />
+                    <div>
+                      <h2 style={styles.infoPanelTitle}>{t.objectiveTitle}</h2>
+                      <p style={styles.infoPanelText}>{t.objectiveDesc}</p>
+                    </div>
+                  </section>
+                  <section style={styles.riskPanel} role="note">
+                    <ShieldAlert size={20} color="#fbbf24" />
+                    <div>
+                      <h2 style={styles.infoPanelTitle}>{t.riskNoticeTitle}</h2>
+                      <p style={styles.infoPanelText}>{t.riskNoticeDesc}</p>
+                    </div>
+                  </section>
                 </div>
+
+                <section className="welcome-quick-start" style={styles.welcomeQuickStart}>
+                  <div>
+                    <h2 style={styles.quickStartTitle}>{t.quickStartTitle}</h2>
+                    <p style={styles.quickStartDesc}>{t.quickStartDesc}</p>
+                  </div>
+                  <div style={styles.quickStartBadges}>
+                    <button onClick={() => handleSelectSymbol("AAPL")} className="quick-badge-btn" style={styles.quickBadgeBtn}>
+                      AAPL
+                    </button>
+                    <button onClick={() => handleSelectSymbol("0700.HK")} className="quick-badge-btn" style={styles.quickBadgeBtn}>
+                      0700.HK
+                    </button>
+                    <button onClick={() => handleSelectSymbol("600519.SS")} className="quick-badge-btn" style={styles.quickBadgeBtn}>
+                      600519.SS
+                    </button>
+                    <button onClick={() => handleSelectSymbol("9984.T")} className="quick-badge-btn" style={styles.quickBadgeBtn}>
+                      9984.T
+                    </button>
+                  </div>
+                </section>
               </div>
             </div>
           )}
@@ -2036,8 +1964,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   header: {
     height: "56px",
-    backgroundColor: "#1c2030",
-    borderBottom: "1px solid #2a2e39",
+    backgroundColor: "#111822",
+    borderBottom: "1px solid #263244",
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
@@ -2047,27 +1975,40 @@ const styles: Record<string, React.CSSProperties> = {
   analysisModeSwitch: {
     display: "flex",
     alignItems: "center",
-    height: "34px",
-    padding: "3px",
-    backgroundColor: "#131722",
-    border: "1px solid #363c4e",
-    borderRadius: "6px",
+    height: "40px",
+    padding: "4px",
+    gap: "4px",
+    backgroundColor: "#0b1018",
+    border: "1px solid #334155",
+    borderRadius: "7px",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
   },
   analysisModeButton: {
-    height: "26px",
-    padding: "0 10px",
-    border: 0,
-    borderRadius: "4px",
+    height: "30px",
+    padding: "0 12px",
+    border: "1px solid transparent",
+    borderRadius: "5px",
     backgroundColor: "transparent",
-    color: "#787b86",
+    color: "#9aa7b8",
     fontSize: "12px",
-    fontWeight: 600,
+    fontWeight: 700,
     whiteSpace: "nowrap",
     cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "7px",
+    transition: "background-color 160ms ease, color 160ms ease, border-color 160ms ease",
   },
-  analysisModeButtonActive: {
-    backgroundColor: "#2962ff",
-    color: "#ffffff",
+  ruleModeButtonActive: {
+    backgroundColor: "rgba(45, 212, 191, 0.16)",
+    borderColor: "rgba(45, 212, 191, 0.58)",
+    color: "#5eead4",
+  },
+  aiModeButtonActive: {
+    backgroundColor: "rgba(251, 191, 36, 0.14)",
+    borderColor: "rgba(251, 191, 36, 0.58)",
+    color: "#fcd34d",
   },
   brand: {
     display: "flex",
@@ -2302,9 +2243,9 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "flex-start",
     height: "100%",
-    backgroundColor: "#131722",
+    backgroundColor: "#0b1018",
   },
   dashboardGrid: {
     display: "flex",
@@ -2710,112 +2651,222 @@ const styles: Record<string, React.CSSProperties> = {
     marginLeft: "8px",
     display: "inline-block",
   },
+  welcomeContent: {
+    width: "min(100%, 980px)",
+    margin: "0 auto",
+    display: "flex",
+    flexDirection: "column",
+    gap: "24px",
+  },
   welcomeHero: {
     display: "flex",
     flexDirection: "column",
-    alignItems: "center",
-    textAlign: "center",
-    maxWidth: "700px",
-    marginBottom: "32px",
-  },
-  welcomeFeatures: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: "16px",
-    width: "100%",
+    alignItems: "flex-start",
+    textAlign: "left",
     maxWidth: "760px",
-    marginBottom: "32px",
+    gap: "8px",
+    paddingTop: "4px",
   },
-  featureCard: {
-    backgroundColor: "#171b26",
-    border: "1px solid #2a2e39",
-    borderRadius: "8px",
-    padding: "16px",
+  welcomeEyebrow: {
+    color: "#5eead4",
+    fontSize: "12px",
+    fontWeight: 800,
+    textTransform: "uppercase",
+  },
+  welcomeTitle: {
+    color: "#f8fafc",
+    fontSize: "34px",
+    lineHeight: 1.2,
+    fontWeight: 780,
+  },
+  welcomeSubtitle: {
+    color: "#9aa7b8",
+    fontSize: "15px",
+    lineHeight: 1.65,
+    maxWidth: "720px",
+  },
+  welcomeModeSection: {
     display: "flex",
     flexDirection: "column",
-    gap: "8px",
-    transition: "border-color 0.2s, transform 0.2s",
+    gap: "16px",
   },
-  featureIcon: {
-    fontSize: "24px",
+  welcomeSectionHeading: {
+    display: "flex",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: "16px",
   },
-  featureTitle: {
-    fontSize: "15px",
-    fontWeight: "bold",
-    color: "#ffffff",
+  welcomeSectionTitle: {
+    color: "#f8fafc",
+    fontSize: "18px",
+    lineHeight: 1.35,
+    fontWeight: 750,
   },
-  featureDesc: {
+  welcomeSectionSubtitle: {
+    color: "#8b98aa",
     fontSize: "13px",
-    color: "#787b86",
-    lineHeight: "1.5",
+    lineHeight: 1.55,
+    marginTop: "5px",
   },
-  welcomeGuide: {
-    backgroundColor: "#1c2030",
-    border: "1px solid #2a2e39",
-    borderRadius: "8px",
-    padding: "20px 24px",
+  sharedDataBadge: {
+    display: "flex",
+    alignItems: "center",
+    gap: "7px",
+    color: "#b8c4d3",
+    border: "1px solid #334155",
+    backgroundColor: "#111822",
+    borderRadius: "6px",
+    padding: "7px 10px",
+    fontSize: "12px",
+    fontWeight: 650,
+    whiteSpace: "nowrap",
+  },
+  welcomeModeGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: "14px",
+  },
+  welcomeModeCard: {
     width: "100%",
-    maxWidth: "760px",
-    marginBottom: "32px",
+    minHeight: "250px",
+    border: "1px solid",
+    borderRadius: "8px",
+    padding: "20px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    textAlign: "left",
+    color: "#d8e1ea",
+    cursor: "pointer",
+    transition: "background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease",
   },
-  guideTitle: {
-    fontSize: "15px",
-    fontWeight: "bold",
-    color: "#ffffff",
+  modeCardTop: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "12px",
     marginBottom: "16px",
   },
-  guideSteps: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "12px",
-  },
-  guideStepItem: {
-    display: "flex",
-    alignItems: "center",
-    gap: "12px",
-    fontSize: "13.5px",
-    color: "#d1d4dc",
-  },
-  guideStepNumber: {
-    width: "20px",
-    height: "20px",
-    borderRadius: "50%",
-    backgroundColor: "#2a2e39",
+  modeIcon: {
+    width: "42px",
+    height: "42px",
+    borderRadius: "7px",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontSize: "12px",
-    fontWeight: "bold",
-    color: "#2962ff",
     flexShrink: 0,
+  },
+  modeSelectionState: {
+    display: "flex",
+    alignItems: "center",
+    gap: "5px",
+    fontSize: "12px",
+    fontWeight: 750,
+  },
+  modeTitle: {
+    color: "#f8fafc",
+    fontSize: "17px",
+    lineHeight: 1.35,
+    marginBottom: "7px",
+  },
+  modeSummary: {
+    color: "#a6b1c1",
+    fontSize: "13px",
+    lineHeight: 1.55,
+    minHeight: "41px",
+  },
+  modePoints: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+    marginTop: "15px",
+  },
+  modePoint: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "8px",
+    color: "#cbd5e1",
+    fontSize: "12.5px",
+    lineHeight: 1.45,
+  },
+  modeBestFor: {
+    marginTop: "auto",
+    paddingTop: "14px",
+    borderTop: "1px solid",
+    width: "100%",
+    color: "#94a3b8",
+    fontSize: "12px",
+    lineHeight: 1.45,
+  },
+  welcomeInfoGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: "14px",
+  },
+  objectivePanel: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "12px",
+    padding: "16px 18px",
+    border: "1px solid #263244",
+    borderRadius: "8px",
+    backgroundColor: "#101720",
+  },
+  riskPanel: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "12px",
+    padding: "16px 18px",
+    border: "1px solid rgba(251, 191, 36, 0.32)",
+    borderRadius: "8px",
+    backgroundColor: "rgba(251, 191, 36, 0.055)",
+  },
+  infoPanelTitle: {
+    color: "#e5edf5",
+    fontSize: "13.5px",
+    lineHeight: 1.35,
+    fontWeight: 750,
+    marginBottom: "5px",
+  },
+  infoPanelText: {
+    color: "#94a3b8",
+    fontSize: "12.5px",
+    lineHeight: 1.55,
   },
   welcomeQuickStart: {
     display: "flex",
-    flexDirection: "column",
     alignItems: "center",
-    gap: "16px",
+    justifyContent: "space-between",
+    gap: "20px",
+    paddingTop: "4px",
   },
   quickStartTitle: {
     fontSize: "14px",
-    color: "#787b86",
-    fontWeight: 600,
+    color: "#e5edf5",
+    fontWeight: 750,
+  },
+  quickStartDesc: {
+    fontSize: "12px",
+    color: "#768499",
+    lineHeight: 1.45,
+    marginTop: "4px",
   },
   quickStartBadges: {
     display: "flex",
     gap: "12px",
     flexWrap: "wrap",
-    justifyContent: "center",
+    justifyContent: "flex-end",
   },
   quickBadgeBtn: {
-    backgroundColor: "#2962ff",
-    border: "none",
-    color: "#ffffff",
-    padding: "8px 16px",
-    fontSize: "13.5px",
+    backgroundColor: "#172230",
+    border: "1px solid #334155",
+    color: "#d9e4ee",
+    padding: "8px 14px",
+    fontSize: "12.5px",
     fontWeight: "bold",
-    borderRadius: "20px",
+    borderRadius: "6px",
     cursor: "pointer",
-    boxShadow: "0 4px 10px rgba(41, 98, 255, 0.25)",
-    transition: "transform 0.2s, background-color 0.2s",
+    transition: "background-color 160ms ease, border-color 160ms ease",
   },
 };

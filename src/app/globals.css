@@ -1,12 +1,12 @@
 /* TradingView Dark Theme CSS Custom Variables */
 :root {
-  --background-bg: #131722;
-  --panel-bg: #1c2030;
-  --panel-hover: #2a2e39;
-  --border-color: #2a2e39;
+  --background-bg: #0b1018;
+  --panel-bg: #111822;
+  --panel-hover: #182231;
+  --border-color: #263244;
   
-  --text-primary: #d1d4dc;
-  --text-secondary: #787b86;
+  --text-primary: #d8e1ea;
+  --text-secondary: #8b98aa;
   --text-bright: #ffffff;
   
   --color-up: #089981;
@@ -14,9 +14,9 @@
   --color-up-bg: rgba(8, 153, 129, 0.12);
   --color-down-bg: rgba(242, 54, 69, 0.12);
   
-  --primary-blue: #2962ff;
-  --primary-blue-hover: #1e4bd8;
-  --primary-blue-bg: rgba(41, 98, 255, 0.1);
+  --primary-blue: #2dd4bf;
+  --primary-blue-hover: #14b8a6;
+  --primary-blue-bg: rgba(45, 212, 191, 0.1);
   --primary-gold: #fbbf24;
 }
 
@@ -194,6 +194,7 @@ button {
     grid-column: 1 / -1;
     grid-row: 3;
     justify-self: stretch;
+    height: 42px !important;
   }
 
   .analysis-mode-switch button {
@@ -310,18 +311,29 @@ button {
     line-height: 1.25;
   }
 
-  .welcome-features {
-    grid-template-columns: minmax(0, 1fr) !important;
-    margin-bottom: 20px !important;
+  .welcome-content {
+    width: 100% !important;
   }
 
-  .guide-step-card {
-    padding: 16px !important;
-    margin-bottom: 20px !important;
+  .welcome-mode-grid,
+  .welcome-info-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .welcome-section-heading {
+    align-items: flex-start !important;
+    flex-direction: column;
+  }
+
+  .welcome-mode-card {
+    min-height: auto !important;
+    padding: 18px !important;
   }
 
   .welcome-quick-start {
     width: 100%;
+    align-items: flex-start !important;
+    flex-direction: column;
   }
 
   .apimax-footer {
