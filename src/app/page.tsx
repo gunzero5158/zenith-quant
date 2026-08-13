@@ -31,10 +31,6 @@ import { mergeAnalysisQuoteIntoWatchlist, WatchQuote } from "@/lib/analysis/watc
 // Keep lightweight-charts out of the initial bundle
 const StockChart = dynamic(() => import("@/components/StockChart"), { ssr: false });
 
-const isAShareDisplaySymbol = (symbol: string): boolean => (
-  /^\d{6}(?:\.(?:SS|SH|SZ))?$/.test(symbol.trim().toUpperCase())
-);
-
 interface SearchSuggestion {
   symbol: string;
   name: string;
@@ -1538,20 +1534,29 @@ export default function Home() {
                   <div style={{ display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" }}>
                     <h1 style={styles.tickerName}>{renderStockName()}</h1>
                     <span style={styles.tickerSymbol}>{stockData.symbol}</span>
-                    {isAShareDisplaySymbol(stockData.symbol) && stockData.dataSource === "eastmoney" && (
+                    {stockData.dataSource === "eastmoney" && (
                       <span style={styles.eastMoneyBadge}>⚡ 东方财富</span>
                     )}
-                    {isAShareDisplaySymbol(stockData.symbol) && stockData.dataSource === "tonghuashun" && (
+                    {stockData.dataSource === "tonghuashun" && (
                       <span style={styles.tonghuashunBadge}>⚡ 同花顺</span>
                     )}
-                    {isAShareDisplaySymbol(stockData.symbol) && (stockData.dataSource === "yahoo" || stockData.dataSource === "yahoo-chart") && (
+                    {(stockData.dataSource === "yahoo" || stockData.dataSource === "yahoo-chart") && (
                       <span style={styles.yahooBadge}>🌐 雅虎财经</span>
                     )}
-                    {isAShareDisplaySymbol(stockData.symbol) && stockData.dataSource === "twelve-data" && (
+                    {stockData.dataSource === "tencent" && (
+                      <span style={styles.providerBadge}>⚡ 腾讯行情</span>
+                    )}
+                    {stockData.dataSource === "kabutan" && (
+                      <span style={styles.providerBadge}>🌐 株探</span>
+                    )}
+                    {stockData.dataSource === "twelve-data" && (
                       <span style={styles.providerBadge}>🌐 Twelve Data</span>
                     )}
-                    {isAShareDisplaySymbol(stockData.symbol) && stockData.dataSource === "fmp" && (
+                    {stockData.dataSource === "fmp" && (
                       <span style={styles.providerBadge}>🌐 FMP</span>
+                    )}
+                    {stockData.dataSource === "provider" && (
+                      <span style={styles.providerBadge}>🌐 Market Data API</span>
                     )}
                     {scorePresentation?.dataStatus && (
                       <span style={styles.dataStatus}>{scorePresentation.dataStatus}</span>
