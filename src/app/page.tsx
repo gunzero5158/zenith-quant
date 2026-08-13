@@ -182,6 +182,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     queryFailed: "查询失败",
     queryError: "查询出错",
     loadingText: "加载中...",
+    noSearchResults: "未找到匹配的股票",
     noSupport: "无",
     noResistance: "无",
     customEndpointOption: "Custom Endpoint (apimax等中转站)",
@@ -266,6 +267,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     queryFailed: "查詢失敗",
     queryError: "查詢出錯",
     loadingText: "加載中...",
+    noSearchResults: "未找到符合的股票",
     noSupport: "無",
     noResistance: "無",
     customEndpointOption: "Custom Endpoint (apimax等中轉站)",
@@ -350,6 +352,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     queryFailed: "Query Failed",
     queryError: "Query Error",
     loadingText: "Loading...",
+    noSearchResults: "No matching stocks found",
     noSupport: "None",
     noResistance: "None",
     customEndpointOption: "Custom Endpoint (apimax & other relays)",
@@ -434,6 +437,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     queryFailed: "取得失敗",
     queryError: "エラー発生",
     loadingText: "読込中...",
+    noSearchResults: "一致する銘柄が見つかりません",
     noSupport: "なし",
     noResistance: "なし",
     customEndpointOption: "Custom Endpoint (apimax等の代理サーバー)",
@@ -727,6 +731,7 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [searchingSuggestions, setSearchingSuggestions] = useState(false);
   
   const [loading, setLoading] = useState(false);
   const [stockData, setStockData] = useState<StockAnalysisData | null>(null);
@@ -737,6 +742,12 @@ export default function Home() {
   const analyzeAbortRef = useRef<AbortController | null>(null);
   const currentRequestSymbolRef = useRef("");
   const watchlistHydratedRef = useRef(false);
+  const suggestionQueryRef = useRef("");
+  const searchRequestRef = useRef<{
+    query: string;
+    promise: Promise<SearchSuggestion[]>;
+  } | null>(null);
+  const searchSubmittingRef = useRef(false);
 
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [watchlistQuotes, setWatchlistQuotes] = useState<Record<string, WatchQuote>>({});
@@ -1178,6 +1189,26 @@ export default function Home() {
     });
   }, [activeSymbol]);
 
+  const requestSearchSuggestions = useCallback((query: string): Promise<SearchSuggestion[]> => {
+    const normalizedQuery = query.trim();
+    if (searchRequestRef.current?.query === normalizedQuery) {
+      return searchRequestRef.current.promise;
+    }
+
+    const promise = fetch(`/api/search?q=${encodeURIComponent(normalizedQuery)}`)
+      .then(async (response) => {
+        if (!response.ok) return [];
+        const data = await response.json() as SearchResponse;
+        return data.quotes || [];
+      })
+      .catch((error: unknown) => {
+        console.error("Fetch autocomplete suggestions failed:", error);
+        return [];
+      });
+    searchRequestRef.current = { query: normalizedQuery, promise };
+    return promise;
+  }, []);
+
   // Autocomplete suggestion fetcher
   useEffect(() => {
     const query = searchQuery.trim();
@@ -1185,29 +1216,21 @@ export default function Home() {
       return;
     }
 
-    const controller = new AbortController();
+    let cancelled = false;
     const delayDebounceFn = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
-          signal: controller.signal,
-        });
-        if (res.ok) {
-          const data = await res.json() as SearchResponse;
-          setSuggestions(data.quotes || []);
-          setShowSuggestions(true);
-        }
-      } catch (e) {
-        if ((e as Error).name !== "AbortError") {
-          console.error("Fetch autocomplete suggestions failed:", e);
-        }
-      }
-    }, 300);
+      const results = await requestSearchSuggestions(query);
+      if (cancelled) return;
+      suggestionQueryRef.current = query;
+      setSuggestions(results);
+      setShowSuggestions(true);
+      setSearchingSuggestions(false);
+    }, 180);
 
     return () => {
-      controller.abort();
+      cancelled = true;
       clearTimeout(delayDebounceFn);
     };
-  }, [searchQuery]);
+  }, [requestSearchSuggestions, searchQuery]);
 
   const handleSelectSymbol = (sym: string) => {
     setActiveSymbol(normalizeManualSymbolInput(sym));
@@ -1217,24 +1240,29 @@ export default function Home() {
 
   const handleSearchSubmit = async () => {
     const query = searchQuery.trim();
-    if (!query) return;
-    if (suggestions[0]?.symbol) {
+    if (!query || searchSubmittingRef.current) return;
+    searchSubmittingRef.current = true;
+    if (suggestionQueryRef.current === query && suggestions[0]?.symbol) {
       handleSelectSymbol(suggestions[0].symbol);
+      searchSubmittingRef.current = false;
       return;
     }
-    try {
-      const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-      if (response.ok) {
-        const data = await response.json() as SearchResponse;
-        if (data.quotes?.[0]?.symbol) {
-          handleSelectSymbol(data.quotes[0].symbol);
-          return;
-        }
-      }
-    } catch (error: unknown) {
-      console.warn("Resolve submitted search query failed:", error);
+
+    const isExplicitTicker = (
+      /^[A-Z]{1,5}$/i.test(query) ||
+      /^\d{6}(?:\.(?:SS|SH|SZ))?$/i.test(query) ||
+      /^\d{1,5}\.HK$/i.test(query) ||
+      /^\d{3}[0-9A-Z]\.T$/i.test(query)
+    );
+    if (isExplicitTicker) {
+      handleSelectSymbol(query.toUpperCase());
+      searchSubmittingRef.current = false;
+      return;
     }
-    handleSelectSymbol(query.toUpperCase());
+
+    const results = await requestSearchSuggestions(query);
+    handleSelectSymbol(results[0]?.symbol || query.toUpperCase());
+    searchSubmittingRef.current = false;
   };
 
   const handleHistorySelect = (symbol: string) => {
@@ -1362,9 +1390,14 @@ export default function Home() {
             onChange={(e) => {
               const value = e.target.value;
               setSearchQuery(value);
+              setSuggestions([]);
+              suggestionQueryRef.current = "";
               if (value.trim().length === 0) {
-                setSuggestions([]);
                 setShowSuggestions(false);
+                setSearchingSuggestions(false);
+              } else {
+                setShowSuggestions(true);
+                setSearchingSuggestions(true);
               }
             }}
             onFocus={() => {
@@ -1392,6 +1425,16 @@ export default function Home() {
                   <span style={styles.sExchange}>{s.exchDisp}</span>
                 </div>
               ))}
+            </div>
+          )}
+          {showSuggestions && searchingSuggestions && suggestions.length === 0 && (
+            <div style={styles.suggestionsDropdown}>
+              <div style={styles.suggestionItem}>{t.loadingText}</div>
+            </div>
+          )}
+          {showSuggestions && !searchingSuggestions && searchQuery.trim() && suggestions.length === 0 && (
+            <div style={styles.suggestionsDropdown}>
+              <div style={styles.suggestionItem}>{t.noSearchResults}</div>
             </div>
           )}
         </div>

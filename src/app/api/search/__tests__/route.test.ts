@@ -9,6 +9,10 @@ const { providerSearchMock } = vi.hoisted(() => ({
   providerSearchMock: vi.fn(),
 }));
 
+const { windowsYahooSearchMock } = vi.hoisted(() => ({
+  windowsYahooSearchMock: vi.fn(),
+}));
+
 vi.mock("yahoo-finance2", () => ({
   default: vi.fn(function YahooFinanceMock() {
     return {
@@ -26,19 +30,25 @@ vi.mock("@/lib/analysis/marketDataProviders", () => ({
   fetchProviderSearchSuggestions: providerSearchMock,
 }));
 
+vi.mock("@/lib/analysis/windowsHttpFallback", () => ({
+  fetchYahooJsonViaWindows: windowsYahooSearchMock,
+}));
+
 describe("/api/search", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     searchMock.mockReset();
     providerSearchMock.mockReset();
     providerSearchMock.mockResolvedValue([]);
+    windowsYahooSearchMock.mockReset();
+    windowsYahooSearchMock.mockResolvedValue({ quotes: [] });
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("returns Yahoo suggestions and does not call fallback providers when Yahoo works", async () => {
+  it("returns the first valid remote suggestions without waiting for slower sources", async () => {
     searchMock.mockResolvedValue({
       quotes: [
         {
@@ -65,11 +75,11 @@ describe("/api/search", () => {
       ],
     });
 
-    const response = await GET(new Request("http://localhost/api/search?q=kioxia"));
+    const response = await GET(new Request("http://localhost/api/search?q=tesla"));
     const body = await response.json();
 
-    expect(searchMock).toHaveBeenCalledWith("kioxia", { newsCount: 0 });
-    expect(providerSearchMock).not.toHaveBeenCalled();
+    expect(searchMock).toHaveBeenCalledWith("tesla", { newsCount: 0 });
+    expect(providerSearchMock).toHaveBeenCalledWith("tesla");
     expect(body.quotes).toEqual([
       {
         symbol: "285A.T",
@@ -86,7 +96,7 @@ describe("/api/search", () => {
     ]);
   });
 
-  it("uses configured provider search before EastMoney when Yahoo search fails", async () => {
+  it("uses a configured provider result when Yahoo search fails", async () => {
     searchMock.mockRejectedValue(new Error("Yahoo blocked"));
     providerSearchMock.mockResolvedValue([
       {
@@ -115,17 +125,17 @@ describe("/api/search", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const response = await GET(new Request("http://localhost/api/search?q=huayou"));
+    const response = await GET(new Request("http://localhost/api/search?q=cobalt"));
     const body = await response.json();
 
-    expect(providerSearchMock).toHaveBeenCalledWith("huayou");
+    expect(providerSearchMock).toHaveBeenCalledWith("cobalt");
     expect(body.quotes[0]).toEqual({
       symbol: "603799.SS",
       name: "ZHEJIANG HUAYOU COBALT CO LTD",
       exchDisp: "Shanghai",
       typeDisp: "Stock",
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(body.quotes).toHaveLength(1);
   });
 
@@ -190,5 +200,63 @@ describe("/api/search", () => {
     const body = await response.json();
 
     expect(body.quotes[0]).toMatchObject({ symbol: "9984.T" });
+  });
+
+  it("keeps a four-digit Hong Kong result instead of forcing a Japan suffix", async () => {
+    searchMock.mockResolvedValue({ quotes: [] });
+    windowsYahooSearchMock.mockResolvedValue({
+      quotes: [{
+        symbol: "9988.HK",
+        quoteType: "EQUITY",
+        shortname: "BABA-W",
+        exchDisp: "Hong Kong",
+        typeDisp: "Equity",
+      }],
+    });
+
+    const response = await GET(new Request("http://localhost/api/search?q=9988"));
+    const body = await response.json();
+
+    expect(body.quotes[0].symbol).toBe("9988.HK");
+  });
+
+  it("normalizes EastMoney five-digit Hong Kong codes to the app display format", async () => {
+    searchMock.mockResolvedValue({ quotes: [] });
+    windowsYahooSearchMock.mockResolvedValue({ quotes: [] });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        QuotationCodeTable: {
+          Data: [{
+            Code: "09988",
+            Name: "Alibaba Group",
+            QuoteID: "116.09988",
+            SecurityTypeName: "HK Stock",
+            Classify: "HKStock",
+            JYS: "HKSE",
+          }],
+        },
+      }),
+    }));
+
+    const response = await GET(new Request("http://localhost/api/search?q=9988"));
+    const body = await response.json();
+
+    expect(body.quotes[0].symbol).toBe("9988.HK");
+  });
+
+  it("ranks a primary exchange listing ahead of an OTC receipt for a company name", async () => {
+    searchMock.mockResolvedValue({ quotes: [] });
+    windowsYahooSearchMock.mockResolvedValue({
+      quotes: [
+        { symbol: "NTDOY", quoteType: "EQUITY", shortname: "Nintendo Co., Ltd.", exchDisp: "OTC Markets" },
+        { symbol: "7974.T", quoteType: "EQUITY", shortname: "NINTENDO CO LTD", exchDisp: "Tokyo Stock Exchange" },
+      ],
+    });
+
+    const response = await GET(new Request("http://localhost/api/search?q=Nintendo"));
+    const body = await response.json();
+
+    expect(body.quotes.map((quote: { symbol: string }) => quote.symbol)).toEqual(["7974.T", "NTDOY"]);
   });
 });

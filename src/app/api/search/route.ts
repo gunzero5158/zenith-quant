@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import YahooFinance from "yahoo-finance2";
 import { fetchProviderSearchSuggestions } from "@/lib/analysis/marketDataProviders";
+import { fetchYahooJsonViaWindows } from "@/lib/analysis/windowsHttpFallback";
 
 const yahooFinance = new YahooFinance();
 
@@ -141,48 +142,61 @@ export async function GET(request: Request) {
 
   const cleanQuery = q.trim();
   const staticSuggestions = findStaticFallbackSuggestions(cleanQuery);
-  if (staticSuggestions.length > 0 && (/[^\x00-\x7F]/.test(cleanQuery) || /^\d{3}[0-9A-Z](?:\.T)?$/i.test(cleanQuery))) {
+  if (staticSuggestions.length > 0) {
     return NextResponse.json({ quotes: staticSuggestions });
   }
 
-  let yahooQuotes: SearchSuggestion[] = [];
-  try {
-    const searchResult = await yahooFinance.search(cleanQuery, {
-      newsCount: 0, // We only need quotes, not news
-    }) as YahooSearchResult;
-
-    yahooQuotes = mapYahooSuggestions(searchResult.quotes || []);
-  } catch (error: unknown) {
-    console.warn("Yahoo search API failed, using lightweight fallback:", error);
-  }
-
-  if (yahooQuotes.length > 0) {
-    const quotes = /[^\x00-\x7F]/.test(cleanQuery)
-      ? mergeSuggestions(staticSuggestions, yahooQuotes)
-      : mergeSuggestions(yahooQuotes, staticSuggestions);
-    return NextResponse.json({ quotes });
-  }
-
-  const fallbackQuotes = await fetchFallbackSuggestions(cleanQuery);
-  return NextResponse.json({ quotes: fallbackQuotes });
-}
-
-async function fetchFallbackSuggestions(query: string): Promise<SearchSuggestion[]> {
-  const [yahooHttpSuggestions, providerSuggestions, eastMoneySuggestions] = await Promise.all([
-    fetchYahooHttpSuggestions(query),
-    fetchProviderSearchSuggestions(query),
-    fetchEastMoneySuggestions(query),
+  const quotes = await firstNonEmptySuggestions([
+    fetchYahooSdkSuggestions(cleanQuery),
+    fetchYahooHttpSuggestions(cleanQuery),
+    fetchProviderSearchSuggestions(cleanQuery),
+    fetchEastMoneySuggestions(cleanQuery),
   ]);
-  const staticSuggestions = findStaticFallbackSuggestions(query);
-  const remoteSuggestions = mergeSuggestions(providerSuggestions, yahooHttpSuggestions, eastMoneySuggestions);
-  return /[^\x00-\x7F]/.test(query)
-    ? mergeSuggestions(staticSuggestions, remoteSuggestions)
-    : mergeSuggestions(remoteSuggestions, staticSuggestions);
+  return NextResponse.json({ quotes });
 }
 
-function mapYahooSuggestions(items: YahooSearchQuote[]): SearchSuggestion[] {
+async function fetchYahooSdkSuggestions(query: string): Promise<SearchSuggestion[]> {
+  try {
+    const result = await yahooFinance.search(query, { newsCount: 0 }) as YahooSearchResult;
+    return mapYahooSuggestions(result.quotes || [], query);
+  } catch (error: unknown) {
+    console.warn("Yahoo search API failed:", error);
+    return [];
+  }
+}
+
+async function firstNonEmptySuggestions(
+  sources: Array<Promise<SearchSuggestion[]>>
+): Promise<SearchSuggestion[]> {
+  if (sources.length === 0) return [];
+  try {
+    return await Promise.any(sources.map(async (source) => {
+      const suggestions = await source;
+      if (suggestions.length === 0) throw new Error("Empty search source");
+      return suggestions;
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function mapYahooSuggestions(items: YahooSearchQuote[], query: string): SearchSuggestion[] {
+  const normalizedQuery = query.trim().toUpperCase();
   return items
     .filter((item) => item.symbol && (item.quoteType === "EQUITY" || item.quoteType === "ETF" || item.quoteType === "INDEX"))
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const rank = ({ item, index }: { item: YahooSearchQuote; index: number }) => {
+        const symbol = item.symbol?.toUpperCase() || "";
+        const exchange = item.exchDisp?.toLowerCase() || "";
+        if (symbol === normalizedQuery) return -100;
+        if (/\.(?:T|HK|SS|SZ)$/.test(symbol)) return -50 + index;
+        if (exchange.includes("otc")) return 100 + index;
+        return index;
+      };
+      return rank(left) - rank(right);
+    })
+    .map(({ item }) => item)
     .map((item) => ({
       symbol: item.symbol || "",
       name: item.shortname || item.longname || item.symbol || "",
@@ -193,24 +207,27 @@ function mapYahooSuggestions(items: YahooSearchQuote[]): SearchSuggestion[] {
 }
 
 async function fetchYahooHttpSuggestions(query: string): Promise<SearchSuggestion[]> {
-  const tickerQuery = /^\d{3}[0-9A-Z](?:\.T)?$/i.test(query.trim())
-    ? query.trim().toUpperCase().replace(/\.T$/, "") + ".T"
-    : query.trim();
+  const tickerQuery = query.trim();
   try {
     const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(tickerQuery)}&quotesCount=8&newsCount=0`;
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(3500),
-      headers: {
-        "Accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-      },
-    });
-    if (!response.ok) return [];
-    const data = await response.json() as YahooHttpSearchResult;
+    let data: YahooHttpSearchResult;
+    if (process.platform === "win32") {
+      data = await fetchYahooJsonViaWindows<YahooHttpSearchResult>(url, 4000);
+    } else {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(3500),
+        headers: {
+          "Accept": "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+        },
+      });
+      if (!response.ok) return [];
+      data = await response.json() as YahooHttpSearchResult;
+    }
     return mapYahooSuggestions((data.quotes || []).map((item) => ({
       ...item,
       exchDisp: item.exchDisp || item.exchange,
-    })));
+    })), query);
   } catch (error: unknown) {
     console.warn("Yahoo HTTP search fallback failed:", error);
     return [];
@@ -291,7 +308,8 @@ function normalizeEastMoneySymbol(item: EastMoneySuggestItem): string {
   const classify = item.Classify || "";
 
   if (classify === "HKStock" || quoteId.startsWith("116.")) {
-    return `${code.padStart(4, "0")}.HK`;
+    const normalizedCode = /^\d+$/.test(code) ? String(Number(code)).padStart(4, "0") : code;
+    return `${normalizedCode}.HK`;
   }
   if (classify === "JPX" || quoteId.startsWith("176.")) {
     return /^\d{3}[0-9A-Z]$/i.test(code) ? `${code.toUpperCase()}.T` : code;
@@ -302,23 +320,6 @@ function normalizeEastMoneySymbol(item: EastMoneySuggestItem): string {
     }
   }
   return code;
-}
-
-function mergeSuggestions(...groups: SearchSuggestion[][]): SearchSuggestion[] {
-  const seen = new Set<string>();
-  const merged: SearchSuggestion[] = [];
-
-  for (const group of groups) {
-    for (const suggestion of group) {
-      const key = suggestion.symbol.toUpperCase();
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      merged.push(suggestion);
-      if (merged.length >= 8) return merged;
-    }
-  }
-
-  return merged;
 }
 
 function normalizeAlias(value: string): string {
