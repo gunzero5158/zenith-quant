@@ -199,6 +199,16 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     objectiveDesc: "两种模式共享真实行情、日周 K 线、EMA、MACD、KDJ、RSI、成交量、支撑压力、形态与结构证据。",
     riskNoticeTitle: "分析边界与风险提示",
     riskNoticeDesc: "本工具提供基于公开行情和技术指标的客观分析，不构成投资建议、收益承诺或买卖指令。AI 与规则模型均可能出错，投资决策请独立判断并自行承担风险。",
+    guideTitle: "新手快速入门",
+    guideSubtitle: "完成一次分析只需四步，配置会保存在当前浏览器中。",
+    guideStep1Title: "配置 AI 模型",
+    guideStep1Desc: "在右上角打开大模型配置，填写提供商、模型与 API Key。",
+    guideStep2Title: "选择分析模式",
+    guideStep2Desc: "按需求选择规则评分 + AI，或由 AI 独立判断。",
+    guideStep3Title: "输入股票代码",
+    guideStep3Desc: "使用顶部搜索框，也可从分析历史或示例标的进入。",
+    guideStep4Title: "查看分析结论",
+    guideStep4Desc: "结合趋势、证据、入场条件和风险方案独立决策。",
     quickStartTitle: "选择标的开始分析",
     quickStartDesc: "先选择分析模式，再搜索股票代码或从下方示例开始。"
   },
@@ -266,6 +276,16 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     objectiveDesc: "兩種模式共享真實行情、日週 K 線、EMA、MACD、KDJ、RSI、成交量、支撐壓力、形態與結構證據。",
     riskNoticeTitle: "分析邊界與風險提示",
     riskNoticeDesc: "本工具提供基於公開行情和技術指標的客觀分析，不構成投資建議、收益承諾或買賣指令。AI 與規則模型均可能出錯，投資決策請獨立判斷並自行承擔風險。",
+    guideTitle: "新手快速入門",
+    guideSubtitle: "完成一次分析只需四步，設定會保存在目前瀏覽器中。",
+    guideStep1Title: "設定 AI 模型",
+    guideStep1Desc: "在右上角開啟大模型設定，填寫供應商、模型與 API Key。",
+    guideStep2Title: "選擇分析模式",
+    guideStep2Desc: "按需求選擇規則評分 + AI，或由 AI 獨立判斷。",
+    guideStep3Title: "輸入股票代碼",
+    guideStep3Desc: "使用頂部搜尋框，也可從分析歷史或範例標的進入。",
+    guideStep4Title: "查看分析結論",
+    guideStep4Desc: "結合趨勢、證據、入場條件和風險方案獨立決策。",
     quickStartTitle: "選擇標的開始分析",
     quickStartDesc: "先選擇分析模式，再搜尋股票代碼或從下方範例開始。"
   },
@@ -333,6 +353,16 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     objectiveDesc: "Both modes share live quotes, daily and weekly candles, EMA, MACD, KDJ, RSI, volume, levels, patterns, and structural evidence.",
     riskNoticeTitle: "Analysis boundary and risk notice",
     riskNoticeDesc: "This tool provides objective analysis based on public market data and technical indicators. It is not investment advice, a return guarantee, or a trading instruction. AI and rule models can be wrong; make independent decisions and bear your own risk.",
+    guideTitle: "Quick start",
+    guideSubtitle: "Complete an analysis in four steps. Your model settings stay in this browser.",
+    guideStep1Title: "Configure an AI model",
+    guideStep1Desc: "Open Model Settings at the top right and enter the provider, model, and API key.",
+    guideStep2Title: "Choose an analysis mode",
+    guideStep2Desc: "Use Rules + AI for governed scoring, or AI Native for independent judgment.",
+    guideStep3Title: "Enter a stock ticker",
+    guideStep3Desc: "Use the top search bar, analysis history, or one of the example symbols.",
+    guideStep4Title: "Review the conclusion",
+    guideStep4Desc: "Use the trend, evidence, entry conditions, and risk plan to make your own decision.",
     quickStartTitle: "Choose a symbol to begin",
     quickStartDesc: "Select an analysis mode, then search a ticker or start with an example below."
   },
@@ -400,6 +430,16 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     objectiveDesc: "両モードは実際の株価、日足・週足、EMA、MACD、KDJ、RSI、出来高、支持抵抗、パターン、構造根拠を共有します。",
     riskNoticeTitle: "分析範囲とリスク注意",
     riskNoticeDesc: "本ツールは公開市場データとテクニカル指標に基づく客観的分析を提供します。投資助言、収益保証、売買指示ではありません。AI とルールモデルは誤る可能性があり、投資判断はご自身の責任で行ってください。",
+    guideTitle: "クイックスタート",
+    guideSubtitle: "4つの手順で分析を開始できます。モデル設定はこのブラウザに保存されます。",
+    guideStep1Title: "AIモデルを設定",
+    guideStep1Desc: "右上のモデル設定を開き、プロバイダー、モデル、APIキーを入力します。",
+    guideStep2Title: "分析モードを選択",
+    guideStep2Desc: "ルール + AI、または AI による独自判断を選びます。",
+    guideStep3Title: "銘柄コードを入力",
+    guideStep3Desc: "上部の検索欄、分析履歴、または例示銘柄から開始します。",
+    guideStep4Title: "分析結果を確認",
+    guideStep4Desc: "トレンド、根拠、エントリー条件、リスク計画から独自に判断します。",
     quickStartTitle: "銘柄を選んで分析開始",
     quickStartDesc: "分析モードを選択し、銘柄コードを検索するか、下の例から開始してください。"
   }
@@ -1246,23 +1286,17 @@ export default function Home() {
             height="20"
             viewBox="0 0 24 24"
             fill="none"
-            stroke="url(#logoGrad)"
+            stroke="#2dd4bf"
             strokeWidth="3"
             strokeLinecap="round"
             strokeLinejoin="round"
             style={{
-              filter: "drop-shadow(0 0 6px rgba(0, 245, 212, 0.75))",
+              filter: "drop-shadow(0 0 5px rgba(45, 212, 191, 0.38))",
               marginRight: "4px"
             }}
           >
             <path d="M3 3v18h18" />
             <path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3" />
-            <defs>
-              <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#00f5d4" />
-                <stop offset="100%" stopColor="#2962ff" />
-              </linearGradient>
-            </defs>
           </svg>
           <span className="app-logo-text" style={styles.logoText}>{t.logo}</span>
         </div>
@@ -1813,6 +1847,33 @@ export default function Home() {
                   </section>
                 </div>
 
+                <section className="welcome-guide" style={styles.welcomeGuide} aria-labelledby="guide-title">
+                  <div className="guide-heading" style={styles.guideHeading}>
+                    <h2 id="guide-title" style={styles.welcomeSectionTitle}>{t.guideTitle}</h2>
+                    <p style={styles.welcomeSectionSubtitle}>{t.guideSubtitle}</p>
+                  </div>
+                  <div className="guide-steps" style={styles.guideSteps}>
+                    {[
+                      { icon: Settings, title: t.guideStep1Title, desc: t.guideStep1Desc },
+                      { icon: ListChecks, title: t.guideStep2Title, desc: t.guideStep2Desc },
+                      { icon: Search, title: t.guideStep3Title, desc: t.guideStep3Desc },
+                      { icon: TrendingUp, title: t.guideStep4Title, desc: t.guideStep4Desc },
+                    ].map((step, index) => {
+                      const StepIcon = step.icon;
+                      return (
+                        <div className="guide-step" style={styles.guideStep} key={step.title}>
+                          <div style={styles.guideStepMarker}>
+                            <span style={styles.guideStepNumber}>{index + 1}</span>
+                            <StepIcon size={17} color="#5eead4" />
+                          </div>
+                          <strong style={styles.guideStepTitle}>{step.title}</strong>
+                          <p style={styles.guideStepDesc}>{step.desc}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
                 <section className="welcome-quick-start" style={styles.welcomeQuickStart}>
                   <div>
                     <h2 style={styles.quickStartTitle}>{t.quickStartTitle}</h2>
@@ -1847,22 +1908,20 @@ export default function Home() {
 
       {/* 4. APIMax.io Bottom Banner Ad - tri-language - Always Constant */}
       <div className="apimax-footer" style={{
-        background: "linear-gradient(90deg, rgba(10, 14, 26, 0.95) 0%, rgba(20, 36, 78, 0.95) 40%, rgba(32, 20, 78, 0.95) 70%, rgba(10, 14, 26, 0.95) 100%)",
-        borderTop: "1px solid rgba(41, 98, 255, 0.4)",
+        backgroundColor: "#111822",
+        borderTop: "1px solid #263244",
         padding: "10px 24px",
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
         gap: "16px",
         fontSize: "13.5px",
-        color: "#d1d4dc",
+        color: "#aab6c5",
         zIndex: 99,
-        backdropFilter: "blur(16px)",
-        boxShadow: "0 -4px 20px rgba(0, 0, 0, 0.5), 0 0 15px rgba(41, 98, 255, 0.1)",
-        transition: "all 0.3s ease",
+        boxShadow: "0 -6px 20px rgba(0, 0, 0, 0.24)",
       }}>
-        <Zap size={15} style={{ color: "#fbbf24", fill: "#fbbf24", filter: "drop-shadow(0 0 4px #fbbf24)", flexShrink: 0 }} />
-        <span className="apimax-footer-copy" style={{ letterSpacing: "0.3px", flexGrow: 1, textAlign: "center" }}>
+        <Zap size={15} style={{ color: "#fbbf24", fill: "rgba(251,191,36,0.22)", flexShrink: 0 }} />
+        <span className="apimax-footer-copy" style={{ flexGrow: 1, textAlign: "center" }}>
           {effectiveLang === "en" && (
             <>
               No API Key yet? Get all-in-one API access at{" "}
@@ -1870,7 +1929,7 @@ export default function Home() {
                 href="https://apimax.io"
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ color: "#60a5fa", fontWeight: "bold", textDecoration: "underline" }}
+                style={{ color: "#5eead4", fontWeight: "bold", textDecoration: "underline" }}
               >
                 APIMax.io
               </a>{" "}
@@ -1884,25 +1943,39 @@ export default function Home() {
                 href="https://apimax.io"
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ color: "#60a5fa", fontWeight: "bold", textDecoration: "underline" }}
+                style={{ color: "#5eead4", fontWeight: "bold", textDecoration: "underline" }}
               >
                 APIMax.io
               </a>{" "}
               — GPT / Claude / Gemini / DeepSeek などのマルチモデルAPIキーとトークンを一撃で購入。
             </>
           )}
-          {(effectiveLang === "zh-CN" || effectiveLang === "zh-TW") && (
+          {effectiveLang === "zh-CN" && (
             <>
               还没有 API Key？前往{" "}
               <a
                 href="https://apimax.io"
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ color: "#60a5fa", fontWeight: "bold", textDecoration: "underline" }}
+                style={{ color: "#5eead4", fontWeight: "bold", textDecoration: "underline" }}
               >
                 APIMax.io
               </a>{" "}
               一键购买多合一大模型 API 和 Token（支持 GPT / Claude / Gemini / DeepSeek 等主流模型）
+            </>
+          )}
+          {effectiveLang === "zh-TW" && (
+            <>
+              還沒有 API Key？前往{" "}
+              <a
+                href="https://apimax.io"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: "#5eead4", fontWeight: "bold", textDecoration: "underline" }}
+              >
+                APIMax.io
+              </a>{" "}
+              一鍵購買多合一大模型 API 和 Token（支援 GPT / Claude / Gemini / DeepSeek 等主流模型）
             </>
           )}
         </span>
@@ -1912,20 +1985,20 @@ export default function Home() {
           rel="noopener noreferrer"
           className="quick-badge-btn apimax-footer-cta"
           style={{
-            backgroundColor: "#2962ff",
-            color: "#fff",
-            padding: "6px 16px",
-            borderRadius: "20px",
+            backgroundColor: "rgba(45, 212, 191, 0.12)",
+            border: "1px solid rgba(45, 212, 191, 0.48)",
+            color: "#5eead4",
+            padding: "7px 14px",
+            borderRadius: "6px",
             fontSize: "12px",
             fontWeight: "bold",
             textDecoration: "none",
             whiteSpace: "nowrap",
             flexShrink: 0,
-            boxShadow: "0 0 10px rgba(41, 98, 255, 0.4)",
-            transition: "transform 0.2s, background-color 0.2s",
+            transition: "background-color 160ms ease, border-color 160ms ease",
           }}
         >
-          {effectiveLang === "en" ? "Buy API Key & Token" : effectiveLang === "ja" ? "APIトークンを購入" : "购买 API 和 Token"}
+          {effectiveLang === "en" ? "Buy API Key & Token" : effectiveLang === "ja" ? "APIトークンを購入" : effectiveLang === "zh-TW" ? "購買 API 和 Token" : "购买 API 和 Token"}
         </a>
       </div>
 
@@ -2832,6 +2905,65 @@ const styles: Record<string, React.CSSProperties> = {
   infoPanelText: {
     color: "#94a3b8",
     fontSize: "12.5px",
+    lineHeight: 1.55,
+  },
+  welcomeGuide: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "16px",
+    paddingTop: "4px",
+  },
+  guideHeading: {
+    display: "flex",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: "20px",
+  },
+  guideSteps: {
+    display: "grid",
+    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+    gap: "1px",
+    overflow: "hidden",
+    border: "1px solid #263244",
+    borderRadius: "7px",
+    backgroundColor: "#263244",
+  },
+  guideStep: {
+    minHeight: "152px",
+    padding: "16px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    backgroundColor: "#111822",
+  },
+  guideStepMarker: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: "16px",
+  },
+  guideStepNumber: {
+    color: "#0b1018",
+    backgroundColor: "#2dd4bf",
+    width: "24px",
+    height: "24px",
+    borderRadius: "50%",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "12px",
+    fontWeight: 800,
+  },
+  guideStepTitle: {
+    color: "#e5edf5",
+    fontSize: "13.5px",
+    lineHeight: 1.4,
+    marginBottom: "7px",
+  },
+  guideStepDesc: {
+    color: "#8b98aa",
+    fontSize: "12px",
     lineHeight: 1.55,
   },
   welcomeQuickStart: {

@@ -320,6 +320,16 @@ button {
     grid-template-columns: minmax(0, 1fr) !important;
   }
 
+  .guide-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .guide-heading {
+    align-items: flex-start !important;
+    flex-direction: column;
+    gap: 4px !important;
+  }
+
   .welcome-section-heading {
     align-items: flex-start !important;
     flex-direction: column;
@@ -354,6 +364,14 @@ button {
 }
 
 @media (max-width: 420px) {
+  .guide-steps {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .guide-step {
+    min-height: 0 !important;
+  }
+
   .stats-grid {
     grid-template-columns: minmax(0, 1fr);
   }
