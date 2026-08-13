@@ -103,13 +103,31 @@ function addTechnicalFrame(items: EvidenceItem[], frame: TechnicalFrameEvidence 
 
   if (frame.ema?.available) {
     items.push(item("ema", timeframe, `${timeframe}.ema.${frame.ema.order}`, frame.ema.order === "mixed" || frame.ema.order === "unknown" ? "neutral" : frame.ema.order, frame.ema.order, `EMA order is ${frame.ema.order}; price is ${frame.ema.pricePosition}.`, provisional, {
-      values: { order: frame.ema.order, pricePosition: frame.ema.pricePosition },
+      values: {
+        order: frame.ema.order,
+        pricePosition: frame.ema.pricePosition,
+        ema5: frame.ema.values.ema5 ?? 0,
+        ema10: frame.ema.values.ema10 ?? 0,
+        ema20: frame.ema.values.ema20 ?? 0,
+        ema60: frame.ema.values.ema60 ?? 0,
+        ema5Slope: frame.ema.slopes.ema5,
+        ema10Slope: frame.ema.slopes.ema10,
+        ema20Slope: frame.ema.slopes.ema20,
+        ema60Slope: frame.ema.slopes.ema60,
+      },
     }));
   }
   if (frame.boll?.available) {
     const direction: EvidenceDirection = frame.boll.position === "above_upper" ? "bullish" : frame.boll.position === "below_lower" ? "bearish" : "neutral";
     items.push(item("boll", timeframe, `${timeframe}.boll.${frame.boll.position}`, direction, frame.boll.position, `BOLL position ${frame.boll.position}, bandwidth ${frame.boll.bandwidthTrend}.`, provisional, {
-      values: { percentB: frame.boll.percentB ?? 0, bandwidth: frame.boll.bandwidth ?? 0, bandwidthTrend: frame.boll.bandwidthTrend },
+      values: {
+        middle: frame.boll.middle ?? 0,
+        upper: frame.boll.upper ?? 0,
+        lower: frame.boll.lower ?? 0,
+        percentB: frame.boll.percentB ?? 0,
+        bandwidth: frame.boll.bandwidth ?? 0,
+        bandwidthTrend: frame.boll.bandwidthTrend,
+      },
     }));
   }
   if (frame.ichimoku?.available) {
@@ -121,21 +139,42 @@ function addTechnicalFrame(items: EvidenceItem[], frame: TechnicalFrameEvidence 
     const state = frame.ichimoku.cross !== "none" ? `${frame.ichimoku.cross}_cross` : frame.ichimoku.priceVsCloud;
     items.push(item("ichimoku", timeframe, `${timeframe}.ichimoku.${state}`, direction, state, `Price is ${frame.ichimoku.priceVsCloud} the cloud; lines are ${frame.ichimoku.lineRelation}.`, provisional, {
       barsSince: frame.ichimoku.barsSinceCross,
-      values: { cloudBias: frame.ichimoku.cloudBias, lineRelation: frame.ichimoku.lineRelation },
+      values: {
+        cloudBias: frame.ichimoku.cloudBias,
+        lineRelation: frame.ichimoku.lineRelation,
+        tenkan: frame.ichimoku.tenkan ?? 0,
+        kijun: frame.ichimoku.kijun ?? 0,
+        spanA: frame.ichimoku.spanA ?? 0,
+        spanB: frame.ichimoku.spanB ?? 0,
+        cloudTop: frame.ichimoku.cloudTop ?? 0,
+        cloudBottom: frame.ichimoku.cloudBottom ?? 0,
+      },
     }));
   }
   if (frame.macd?.available) {
     const state = frame.macd.cross !== "none" ? `${frame.macd.cross}_cross` : frame.macd.relation;
     items.push(item("macd", timeframe, `${timeframe}.macd.${state}`, directionFromRelation(frame.macd.relation), state, `MACD is ${frame.macd.relation} in ${frame.macd.zone}; histogram is ${frame.macd.histogramTrend}.`, provisional, {
       barsSince: frame.macd.barsSinceCross,
-      values: { zone: frame.macd.zone, histogramTrend: frame.macd.histogramTrend },
+      values: {
+        zone: frame.macd.zone,
+        histogramTrend: frame.macd.histogramTrend,
+        dif: frame.macd.dif ?? 0,
+        dea: frame.macd.dea ?? 0,
+        histogram: frame.macd.histogram ?? 0,
+      },
     }));
   }
   if (frame.kdj?.available) {
     const state = frame.kdj.cross !== "none" ? `${frame.kdj.cross}_cross` : frame.kdj.relation;
     items.push(item("kdj", timeframe, `${timeframe}.kdj.${state}`, directionFromRelation(frame.kdj.relation), state, `KDJ is ${frame.kdj.relation} in the ${frame.kdj.zone} zone.`, provisional, {
       barsSince: frame.kdj.barsSinceCross,
-      values: { zone: frame.kdj.zone, jState: frame.kdj.jState },
+      values: {
+        zone: frame.kdj.zone,
+        jState: frame.kdj.jState,
+        k: frame.kdj.k ?? 0,
+        d: frame.kdj.d ?? 0,
+        j: frame.kdj.j ?? 0,
+      },
     }));
   }
   if (frame.rsi?.available) {
@@ -174,7 +213,10 @@ function addTechnicalFrame(items: EvidenceItem[], frame: TechnicalFrameEvidence 
       values: { value: cmfValue ?? 0, trend: volume.cmfTrend ?? "flat" },
     }));
     const obvDirection: EvidenceDirection = volume.obvTrend === "rising" ? "bullish" : volume.obvTrend === "falling" ? "bearish" : "neutral";
-    items.push(item("obv", timeframe, `${timeframe}.obv.${volume.obvTrend ?? "flat"}`, obvDirection, volume.obvTrend ?? "flat", `OBV trend is ${volume.obvTrend ?? "flat"}.`, provisional));
+    const obvValue = [...volume.obv].reverse().find(Number.isFinite);
+    items.push(item("obv", timeframe, `${timeframe}.obv.${volume.obvTrend ?? "flat"}`, obvDirection, volume.obvTrend ?? "flat", `OBV is ${obvValue ?? "unavailable"}; trend ${volume.obvTrend ?? "flat"}.`, provisional, {
+      values: { value: obvValue ?? 0, trend: volume.obvTrend ?? "flat" },
+    }));
   }
 }
 

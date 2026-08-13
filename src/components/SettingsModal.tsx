@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { ExternalLink } from "lucide-react";
 import { LLMConfig } from "@/lib/analysis/llmProxy";
+import { AnalysisMode } from "@/lib/analysis/analysisMode";
 
 type AppLanguage = "auto" | "zh-CN" | "zh-TW" | "en" | "ja";
 type EffectiveLanguage = Exclude<AppLanguage, "auto">;
@@ -16,6 +17,7 @@ interface SettingsModalProps {
   initialConfig: LLMConfig;
   appLanguage: AppLanguage;
   onLanguageChange: (lang: AppLanguage) => void;
+  analysisMode: AnalysisMode;
   useFallback: boolean;
   onToggleFallback: () => void;
   effectiveLang: EffectiveLanguage;
@@ -29,6 +31,7 @@ export default function SettingsModal({
   initialConfig,
   appLanguage,
   onLanguageChange,
+  analysisMode,
   useFallback,
   onToggleFallback,
   effectiveLang,
@@ -146,50 +149,26 @@ export default function SettingsModal({
             </select>
           </div>
 
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            backgroundColor: "rgba(41, 98, 255, 0.05)",
-            border: "1px dashed rgba(41, 98, 255, 0.25)",
-            borderRadius: "6px",
-            padding: "10px 12px",
-            marginTop: "6px"
-          }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1, paddingRight: "12px" }}>
-              <span style={{ fontSize: "13px", fontWeight: "bold", color: "#ffffff" }}>
-                {t.fallbackLabel}
-              </span>
-              <span style={{ fontSize: "11px", color: "#787b86", lineHeight: "1.4" }}>
-                {t.fallbackDesc}
-              </span>
+          {analysisMode === "rule-ai" && <div style={styles.fallbackRow}>
+            <div style={styles.fallbackCopy}>
+              <span style={styles.fallbackTitle}>{t.fallbackLabel}</span>
+              <span style={styles.fallbackDescription}>{t.fallbackDesc}</span>
             </div>
-            <div
+            <button
+              type="button"
+              role="switch"
+              aria-checked={useFallback}
+              aria-label={t.fallbackLabel}
               onClick={onToggleFallback}
               style={{
-                width: "44px",
-                height: "22px",
-                borderRadius: "11px",
+                ...styles.switch,
                 backgroundColor: useFallback ? "#2962ff" : "#2a2e39",
-                position: "relative",
-                cursor: "pointer",
-                transition: "background-color 0.2s",
-                border: "1px solid " + (useFallback ? "#2962ff" : "#363c4e")
+                borderColor: useFallback ? "#2962ff" : "#363c4e",
               }}
             >
-              <div style={{
-                width: "18px",
-                height: "18px",
-                borderRadius: "50%",
-                backgroundColor: "#ffffff",
-                position: "absolute",
-                top: "1px",
-                left: useFallback ? "23px" : "2px",
-                transition: "left 0.2s",
-                boxShadow: "0 1px 3px rgba(0,0,0,0.4)"
-              }} />
-            </div>
-          </div>
+              <span style={{ ...styles.switchThumb, transform: `translateX(${useFallback ? 22 : 1}px)` }} />
+            </button>
+          </div>}
 
           <div style={styles.modalActions}>
             <button
@@ -251,6 +230,36 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: "6px",
+  },
+  fallbackRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "12px",
+    backgroundColor: "rgba(41, 98, 255, 0.05)",
+    border: "1px dashed rgba(41, 98, 255, 0.25)",
+    borderRadius: "6px",
+    padding: "10px 12px",
+  },
+  fallbackCopy: { display: "flex", flexDirection: "column", gap: "2px", flex: 1 },
+  fallbackTitle: { fontSize: "13px", fontWeight: 700, color: "#ffffff" },
+  fallbackDescription: { fontSize: "11px", color: "#787b86", lineHeight: 1.4 },
+  switch: {
+    width: "44px",
+    height: "24px",
+    borderRadius: "12px",
+    border: "1px solid",
+    padding: 0,
+    flex: "0 0 auto",
+    cursor: "pointer",
+  },
+  switchThumb: {
+    display: "block",
+    width: "18px",
+    height: "18px",
+    borderRadius: "50%",
+    backgroundColor: "#ffffff",
+    transition: "transform 0.2s",
   },
   label: {
     fontSize: "13px",

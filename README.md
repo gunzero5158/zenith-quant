@@ -2,12 +2,13 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md)
 
-Rooftop Quant (天台分析 / 屋上クオンツ) is a self-hosted stock technical-analysis workspace for US, Hong Kong, mainland China A-share, and Japanese markets. It combines multi-timeframe market data, deterministic technical evidence, an entry-attractiveness score, interactive charts, and optional LLM-generated reports in one responsive dashboard.
+Rooftop Quant (天台分析 / 屋上クオンツ) is a self-hosted stock technical-analysis workspace for US, Hong Kong, mainland China A-share, and Japanese markets. It combines multi-timeframe market data, structured technical evidence, interactive charts, and two selectable scoring and analysis modes in one responsive dashboard.
 
 AI analysis is based on public market data and standard technical indicators. It is not investment advice or trading guidance. Markets involve risk; decide independently and at your own risk.
 
 ## Recent Updates (August 2026)
 
+- Added an analysis-mode selector: use **Rules + AI** for deterministic scoring with an AI review, or **AI Native** to let the model independently judge outlook, entry quality, confidence, and strategy from objective evidence.
 - Rebranded the product as **Rooftop Quant**, with localized names **天台分析** and **屋上クオンツ**, and added a multilingual investment-risk notice to the application.
 - Reworked entry assessment into separate left-side reversal and right-side confirmation paths. Their numeric path scores remain internal; the interface shows one final score and clear scenario states instead.
 - Made TD Sequential stages 6-9 progressively affect setup maturity, so an unfinished sequence can contribute evidence without being treated as a completed signal.
@@ -20,8 +21,8 @@ AI analysis is based on public market data and standard technical indicators. It
 - Searches stocks across supported markets and keeps a browser-side analysis history with quote snapshots.
 - Builds daily and weekly technical-analysis snapshots from real market data when a provider is available.
 - Displays synchronized price and indicator panes with daily/weekly switching and regional red-up or green-up color modes.
-- Produces a 0-5 entry-attractiveness score from explicit rule-based evidence and data-quality constraints.
-- Lets a configured LLM review the evidence and adjust the rule score by at most `+/-0.5`.
+- Supports both deterministic rule scoring with AI review and independent AI-native scoring from the same objective evidence snapshot.
+- Keeps cached results separate by analysis mode so switching modes cannot reuse the other mode's conclusion.
 - Shows left-side and right-side scenario states as **Not formed**, **Watch**, **Intraday provisional**, **Confirmed**, or **Too late**, while keeping their numeric path scores internal.
 - Generates separate overview, strategy, and technical-detail report sections.
 - Falls back to a built-in local report when LLM generation fails and fallback is enabled.
@@ -56,11 +57,16 @@ Realtime quotes are merged into analysis snapshots where supported so the displa
 
 ## AI Reports and Scoring
 
-The analysis engine first builds an immutable evidence snapshot and calculates left-side reversal and right-side confirmation paths independently. It selects the strongest eligible path for the deterministic 0-5 entry-attractiveness score. The score incorporates trend, momentum, support/resistance, volatility, volume, VPVR, Fibonacci, pattern context, payoff quality, and data quality.
+Every request first builds the same immutable, objective evidence snapshot. The dashboard then offers two modes:
+
+- **Rules + AI** (default): the local engine calculates left-side reversal and right-side confirmation paths and a deterministic 0-5 score. A configured LLM reviews the evidence and may adjust that score by at most `+/-0.5`.
+- **AI Native**: the model receives the objective indicator values, evidence, price levels, and recent candles without the local rule score, score cap, or predetermined regime. It independently returns the outlook, 0-5 entry score, confidence, left/right state, risk plan, and report in one model request.
+
+AI Native requires a configured LLM and does not silently fall back to rule scoring. Stops and targets must match supplied support/resistance levels; unsafe or incomplete actionable plans are downgraded to waiting without replacing the AI's score.
 
 The two paths use explicit scenario states: **Not formed**, **Watch**, **Intraday provisional**, **Confirmed**, and **Too late**. Their numeric scores are internal implementation details rather than additional headline ratings. TD Sequential starts contributing capped exhaustion evidence from stage 6, with progressively higher weight through stage 9; an unfinished sequence is evidence, not confirmation by itself.
 
-When an LLM is configured, the model receives the structured evidence rather than being asked to invent or recalculate indicators. It may challenge the rule score only within `+/-0.5` and is instructed to cite the supplied evidence. The final report is split into:
+In both modes, the model receives structured evidence rather than being asked to invent or recalculate indicators, and visible claims must be grounded in supplied evidence. The final report is split into:
 
 - market and setup overview;
 - strategy, conditions, and risk controls;

@@ -158,7 +158,7 @@ button {
     display: grid !important;
     grid-template-columns: minmax(0, 1fr) auto;
     height: auto !important;
-    min-height: 96px;
+    min-height: 134px;
     padding: 8px 10px !important;
     gap: 8px 10px;
   }
@@ -188,6 +188,16 @@ button {
 
   .app-header-actions {
     gap: 4px !important;
+  }
+
+  .analysis-mode-switch {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    justify-self: stretch;
+  }
+
+  .analysis-mode-switch button {
+    flex: 1;
   }
 
   .app-settings,

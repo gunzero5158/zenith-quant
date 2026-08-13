@@ -9,6 +9,8 @@ import { LLMConfig } from "@/lib/analysis/llmProxy";
 import { formatMarketPrice, getMarketCurrencySymbol, normalizeManualSymbolInput } from "@/lib/analysis/market";
 import { Candle, IchimokuResult } from "@/lib/analysis/indicators";
 import { EntryAssessment, ScoreDetail } from "@/lib/analysis/scoring";
+import { AiEntryAssessment } from "@/lib/analysis/aiAnalysisResult";
+import { AnalysisMode, DEFAULT_ANALYSIS_MODE, isAnalysisMode } from "@/lib/analysis/analysisMode";
 import { PatternResult } from "@/lib/analysis/patterns";
 import { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
 import { ChanLunResult } from "@/lib/analysis/chanlun";
@@ -65,7 +67,8 @@ interface StockAnalysisData {
   price: number;
   changePercent: number;
   score: ScoreDetail;
-  entryAssessment?: EntryAssessment;
+  entryAssessment?: EntryAssessment | AiEntryAssessment;
+  analysisMode?: AnalysisMode;
   dataQuality?: DataQuality;
   dailyCandles: Candle[];
   weeklyCandles: Candle[];
@@ -176,7 +179,8 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     noResistance: "无",
     customEndpointOption: "Custom Endpoint (apimax等中转站)",
     fallbackLabel: "启用本地非AI指标兜底分析",
-    fallbackDesc: "若大模型因额度不足/网络异常等原因生成失败，允许自动降级并启用内置技术指标算法计算评分与报表。"
+    fallbackDesc: "若大模型因额度不足/网络异常等原因生成失败，允许自动降级并启用内置技术指标算法计算评分与报表。",
+    analysisModeLabel: "分析模式", ruleAiMode: "规则评分 + AI", aiNativeMode: "纯 AI 分析"
   },
   "zh-TW": {
     title: "天台分析",
@@ -222,7 +226,8 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     noResistance: "無",
     customEndpointOption: "Custom Endpoint (apimax等中轉站)",
     fallbackLabel: "啟用本地非AI指標兜底分析",
-    fallbackDesc: "若大模型因額度不足/網絡異常等原因生成失敗，允許自動降級並啟用內置技術指標算法計算評分與報表。"
+    fallbackDesc: "若大模型因額度不足/網絡異常等原因生成失敗，允許自動降級並啟用內置技術指標算法計算評分與報表。",
+    analysisModeLabel: "分析模式", ruleAiMode: "規則評分 + AI", aiNativeMode: "純 AI 分析"
   },
   "en": {
     title: "Rooftop Quant",
@@ -268,7 +273,8 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     noResistance: "None",
     customEndpointOption: "Custom Endpoint (apimax & other relays)",
     fallbackLabel: "Enable Local Non-AI Fallback Analysis",
-    fallbackDesc: "If LLM generation fails due to network/quota limits, allow automatic fallback to built-in technical indicators scoring & report."
+    fallbackDesc: "If LLM generation fails due to network/quota limits, allow automatic fallback to built-in technical indicators scoring & report.",
+    analysisModeLabel: "Analysis mode", ruleAiMode: "Rules + AI", aiNativeMode: "AI Native"
   },
   "ja": {
     title: "屋上クオンツ",
@@ -314,7 +320,8 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
     noResistance: "なし",
     customEndpointOption: "Custom Endpoint (apimax等の代理サーバー)",
     fallbackLabel: "ローカルの非AIバックアップ分析を有効にする",
-    fallbackDesc: "大モデルの生成がネットワークエラーやクォータ不足で失敗した場合、組み込みのテクニカル分析アルゴリズムによるスコアとレポートへの自动切り替えを許可します。"
+    fallbackDesc: "大モデルの生成がネットワークエラーやクォータ不足で失敗した場合、組み込みのテクニカル分析アルゴリズムによるスコアとレポートへの自动切り替えを許可します。",
+    analysisModeLabel: "分析モード", ruleAiMode: "ルール + AI", aiNativeMode: "AI判断"
   }
 };
 
@@ -342,7 +349,8 @@ const setCookie = (name: string, value: string, days = 365) => {
 const ANALYSIS_CACHE_LIMIT = 6;
 const ANALYSIS_CACHE_INDEX_KEY = "zenith_analysis_index";
 const ANALYSIS_TIMESTAMPS_KEY = "zenith_analysis_timestamps";
-const analysisCacheKey = (symbol: string) => `zenith_analysis_${symbol}`;
+const analysisCacheId = (symbol: string, mode: AnalysisMode) => `${mode}:${symbol}`;
+const analysisCacheKey = (id: string) => `zenith_analysis_${id}`;
 
 const readAnalysisCacheIndex = (): string[] => {
   try {
@@ -359,9 +367,10 @@ const readAnalysisCacheIndex = (): string[] => {
 };
 
 // Move `symbol` to the front of the recency index and evict overflow entries
-const touchAnalysisCache = (symbol: string) => {
+const touchAnalysisCache = (symbol: string, mode: AnalysisMode) => {
   try {
-    const updated = [symbol, ...readAnalysisCacheIndex().filter((item) => item !== symbol)];
+    const id = analysisCacheId(symbol, mode);
+    const updated = [id, ...readAnalysisCacheIndex().filter((item) => item !== id)];
     for (const evicted of updated.slice(ANALYSIS_CACHE_LIMIT)) {
       localStorage.removeItem(analysisCacheKey(evicted));
     }
@@ -371,9 +380,9 @@ const touchAnalysisCache = (symbol: string) => {
   }
 };
 
-const readAnalysisCache = (symbol: string): AnalysisCacheEntry | null => {
+const readAnalysisCache = (symbol: string, mode: AnalysisMode): AnalysisCacheEntry | null => {
   try {
-    const cachedStr = localStorage.getItem(analysisCacheKey(symbol));
+    const cachedStr = localStorage.getItem(analysisCacheKey(analysisCacheId(symbol, mode)));
     if (!cachedStr) return null;
     return JSON.parse(cachedStr) as AnalysisCacheEntry;
   } catch (e) {
@@ -382,21 +391,22 @@ const readAnalysisCache = (symbol: string): AnalysisCacheEntry | null => {
   }
 };
 
-const writeAnalysisCache = (symbol: string, entry: AnalysisCacheEntry) => {
+const writeAnalysisCache = (symbol: string, mode: AnalysisMode, entry: AnalysisCacheEntry) => {
   try {
-    localStorage.setItem(analysisCacheKey(symbol), JSON.stringify(entry));
-    touchAnalysisCache(symbol);
+    localStorage.setItem(analysisCacheKey(analysisCacheId(symbol, mode)), JSON.stringify(entry));
+    touchAnalysisCache(symbol, mode);
   } catch (e) {
     console.error("Failed to save cache", e);
   }
 };
 
-const removeAnalysisCache = (symbol: string) => {
+const removeAnalysisCache = (symbol: string, mode: AnalysisMode) => {
   try {
-    localStorage.removeItem(analysisCacheKey(symbol));
+    const id = analysisCacheId(symbol, mode);
+    localStorage.removeItem(analysisCacheKey(id));
     localStorage.setItem(
       ANALYSIS_CACHE_INDEX_KEY,
-      JSON.stringify(readAnalysisCacheIndex().filter((item) => item !== symbol))
+      JSON.stringify(readAnalysisCacheIndex().filter((item) => item !== id))
     );
   } catch (e) {
     console.error("Failed to remove cache", e);
@@ -619,6 +629,7 @@ export default function Home() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [appLanguage, setAppLanguage] = useState<AppLanguage>("auto");
   const [useFallback, setUseFallback] = useState(true);
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>(DEFAULT_ANALYSIS_MODE);
 
   const getEffectiveLang = (): EffectiveLanguage => {
     if (!mounted) return "zh-CN"; // SSR and first hydration render must be identical to avoid mismatch
@@ -723,6 +734,11 @@ export default function Home() {
       if (savedFallback === "false") {
         setUseFallback(false);
       }
+
+      const savedAnalysisMode = localStorage.getItem("zenith_analysis_mode");
+      if (isAnalysisMode(savedAnalysisMode)) {
+        setAnalysisMode(savedAnalysisMode);
+      }
     });
 
     // Load APIMax banner - default always visible
@@ -761,7 +777,8 @@ export default function Home() {
       let changed = false;
       for (const symbol of symbols) {
         if (timestamps[symbol]) continue;
-        const cached = readAnalysisCache(symbol);
+        const cached = readAnalysisCache(symbol, analysisMode)
+          ?? readAnalysisCache(symbol, DEFAULT_ANALYSIS_MODE);
         if (cached?.timestamp && Number.isFinite(cached.timestamp)) {
           timestamps[symbol] = cached.timestamp;
           changed = true;
@@ -774,7 +791,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [watchlistKey]);
+  }, [analysisMode, watchlistKey]);
 
   useEffect(() => {
     if (!watchlistKey) return;
@@ -800,9 +817,9 @@ export default function Home() {
     currentRequestSymbolRef.current = requestedSymbol;
 
     if (!isForce) {
-      let cachedObj = readAnalysisCache(requestedSymbol);
+      let cachedObj = readAnalysisCache(requestedSymbol, analysisMode);
       if (cachedObj && !isAnalysisCacheCompatible(cachedObj.version, cachedObj.language, requestLang)) {
-        removeAnalysisCache(requestedSymbol);
+        removeAnalysisCache(requestedSymbol, analysisMode);
         cachedObj = null;
       }
       if (cachedObj) {
@@ -812,7 +829,7 @@ export default function Home() {
           const marketTrading = isMarketTrading(requestedSymbol, nowTimestamp);
 
           if (cachedData.isMock) {
-            removeAnalysisCache(requestedSymbol);
+            removeAnalysisCache(requestedSymbol, analysisMode);
           } else {
             let canReuseCache = isAnalysisCacheReusableByTime(
               requestedSymbol,
@@ -851,10 +868,10 @@ export default function Home() {
             }
 
             if (!canReuseCache) {
-              removeAnalysisCache(requestedSymbol);
+              removeAnalysisCache(requestedSymbol, analysisMode);
             } else {
               console.log("[CACHE] Using cached analysis for", requestedSymbol);
-              touchAnalysisCache(requestedSymbol);
+              touchAnalysisCache(requestedSymbol, analysisMode);
               const resolvedSymbol = cachedData.symbol || requestedSymbol;
               // A cache hit supersedes any in-flight analysis request
               analyzeAbortRef.current?.abort();
@@ -886,6 +903,7 @@ export default function Home() {
     analyzeAbortRef.current = controller;
     currentRequestSymbolRef.current = requestedSymbol;
 
+    setStockData(null);
     setLoading(true);
 
     const requestT = TRANSLATIONS[requestLang];
@@ -920,6 +938,7 @@ export default function Home() {
           language: requestLang,
           useFallback,
           quoteSnapshot,
+          analysisMode,
         }),
         signal: controller.signal,
       });
@@ -949,7 +968,7 @@ export default function Home() {
       recordAnalysisTimestamp(resolvedSymbol, analyzedAt);
 
       if (!data.isMock) {
-        writeAnalysisCache(resolvedSymbol, {
+        writeAnalysisCache(resolvedSymbol, analysisMode, {
           version: ANALYSIS_CACHE_VERSION,
           timestamp: analyzedAt,
           language: requestLang,
@@ -972,7 +991,7 @@ export default function Home() {
         setLoading(false);
       }
     }
-  }, [activeSymbol, appLanguage, llmConfig, recordAnalysisTimestamp, syncAnalysisQuoteToWatchlist, useFallback]);
+  }, [activeSymbol, analysisMode, appLanguage, llmConfig, recordAnalysisTimestamp, syncAnalysisQuoteToWatchlist, useFallback]);
 
   const fetchActiveStockDataRef = useRef(fetchActiveStockData);
   useEffect(() => {
@@ -984,9 +1003,20 @@ export default function Home() {
     if (previousLanguageSelectionRef.current === appLanguage) return;
     previousLanguageSelectionRef.current = appLanguage;
     if (!activeSymbol) return;
-    removeAnalysisCache(activeSymbol);
+    removeAnalysisCache(activeSymbol, analysisMode);
     queueMicrotask(() => fetchActiveStockDataRef.current(true));
-  }, [activeSymbol, appLanguage]);
+  }, [activeSymbol, analysisMode, appLanguage]);
+
+  const previousAnalysisModeRef = useRef<AnalysisMode>(analysisMode);
+  useEffect(() => {
+    if (previousAnalysisModeRef.current === analysisMode) return;
+    previousAnalysisModeRef.current = analysisMode;
+    localStorage.setItem("zenith_analysis_mode", analysisMode);
+    analyzeAbortRef.current?.abort();
+    analyzeAbortRef.current = null;
+    setStockData(null);
+    if (activeSymbol) queueMicrotask(() => fetchActiveStockDataRef.current());
+  }, [activeSymbol, analysisMode]);
 
   // Main fetch call for active stock data
   useEffect(() => {
@@ -1201,6 +1231,23 @@ export default function Home() {
           )}
         </div>
 
+        <div className="analysis-mode-switch" role="group" aria-label={t.analysisModeLabel} style={styles.analysisModeSwitch}>
+          {(["rule-ai", "ai-native"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              aria-pressed={analysisMode === mode}
+              onClick={() => setAnalysisMode(mode)}
+              style={{
+                ...styles.analysisModeButton,
+                ...(analysisMode === mode ? styles.analysisModeButtonActive : {}),
+              }}
+            >
+              {mode === "rule-ai" ? t.ruleAiMode : t.aiNativeMode}
+            </button>
+          ))}
+        </div>
+
         {/* Toolbar Settings */}
         <div className="app-header-actions" style={styles.headerRight}>
           <div className="app-language" style={styles.langSelectContainer}>
@@ -1397,10 +1444,19 @@ export default function Home() {
                     {scorePresentation && stockData.entryAssessment && (
                       <>
                         <div style={styles.scoreBreakdownRow}>
-                          <span>{scorePresentation.ruleLabel} {scorePresentation.ruleText}</span>
-                          <span style={{ color: stockData.entryAssessment.aiAdjustment < 0 ? "#f23645" : stockData.entryAssessment.aiAdjustment > 0 ? "#089981" : "#787b86" }}>
-                            {scorePresentation.adjustmentLabel} {scorePresentation.adjustmentText}
-                          </span>
+                          {scorePresentation.mode === "ai-native" ? (
+                            <>
+                              <span>{scorePresentation.confidenceLabel} {scorePresentation.confidenceText}</span>
+                              <span>{scorePresentation.outlookLabel} {scorePresentation.outlookText}</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>{scorePresentation.ruleLabel} {scorePresentation.ruleText}</span>
+                              <span style={{ color: "aiAdjustment" in stockData.entryAssessment && stockData.entryAssessment.aiAdjustment < 0 ? "#f23645" : "aiAdjustment" in stockData.entryAssessment && stockData.entryAssessment.aiAdjustment > 0 ? "#089981" : "#787b86" }}>
+                                {scorePresentation.adjustmentLabel} {scorePresentation.adjustmentText}
+                              </span>
+                            </>
+                          )}
                         </div>
                         <div style={styles.scenarioRow}>
                           <span style={{ ...styles.scenarioBadge, ...scenarioTone(stockData.entryAssessment.leftStatus) }}>
@@ -1953,6 +2009,7 @@ export default function Home() {
           initialConfig={llmConfig}
           appLanguage={appLanguage}
           onLanguageChange={setAppLanguage}
+          analysisMode={analysisMode}
           useFallback={useFallback}
           onToggleFallback={() => setUseFallback(!useFallback)}
           effectiveLang={effectiveLang}
@@ -1986,6 +2043,31 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     padding: "0 16px",
     zIndex: 10,
+  },
+  analysisModeSwitch: {
+    display: "flex",
+    alignItems: "center",
+    height: "34px",
+    padding: "3px",
+    backgroundColor: "#131722",
+    border: "1px solid #363c4e",
+    borderRadius: "6px",
+  },
+  analysisModeButton: {
+    height: "26px",
+    padding: "0 10px",
+    border: 0,
+    borderRadius: "4px",
+    backgroundColor: "transparent",
+    color: "#787b86",
+    fontSize: "12px",
+    fontWeight: 600,
+    whiteSpace: "nowrap",
+    cursor: "pointer",
+  },
+  analysisModeButtonActive: {
+    backgroundColor: "#2962ff",
+    color: "#ffffff",
   },
   brand: {
     display: "flex",

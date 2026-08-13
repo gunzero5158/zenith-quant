@@ -32,6 +32,7 @@ yarn-error.log*
 .codex/
 .next-dev.log
 .next-dev.err.log
+.next-dev-*.log
 .next-start-*.log
 
 # local-only project documentation

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildEntryScorePresentation } from "../presentation";
 import { EntryAssessment } from "../scoring";
+import { AiEntryAssessment } from "../aiAnalysisResult";
 
 function assessment(overrides: Partial<EntryAssessment> = {}): EntryAssessment {
   return {
@@ -48,5 +49,30 @@ describe("entry score presentation", () => {
 
   it("labels an intraday trigger as provisional instead of confirmed", () => {
     expect(buildEntryScorePresentation(assessment({ leftStatus: "provisional" }), "zh-CN").leftText).toBe("盘中暂定");
+  });
+
+  it("presents AI-native confidence and outlook without a rule breakdown", () => {
+    const aiAssessment: AiEntryAssessment = {
+      source: "ai",
+      outlook: "bullish",
+      finalScore: 3.8,
+      confidence: 0.78,
+      confidenceReason: "Independent evidence agrees.",
+      leftStatus: "watch",
+      rightStatus: "triggered",
+      activeSetup: "right",
+      riskPlan: {},
+      reasons: [],
+    };
+
+    expect(buildEntryScorePresentation(aiAssessment, "zh-CN")).toMatchObject({
+      mode: "ai-native",
+      finalLabel: "AI 评分",
+      finalText: "3.8",
+      confidenceText: "78%",
+      outlookText: "看多",
+      ruleText: "",
+      adjustmentText: "",
+    });
   });
 });

@@ -45,6 +45,10 @@ import {
 } from "@/lib/analysis/analysisCache";
 import { marketDataCircuitBreaker } from "@/lib/analysis/providerCircuitBreaker";
 import { getMarketDataPriority, MarketDataProvider } from "@/lib/analysis/marketDataPriority";
+import { DEFAULT_ANALYSIS_MODE, isAnalysisMode } from "@/lib/analysis/analysisMode";
+import { buildAiNativeAnalystPrompt } from "@/lib/analysis/aiNativeAnalysisPrompt";
+import { validateAiAnalysisResult, toLegacyAiScoreDetail } from "@/lib/analysis/aiAnalysisResult";
+import { composeAiNativeReport } from "@/lib/analysis/aiNativeReportComposition";
 
 export const maxDuration = 300;
 
@@ -586,12 +590,13 @@ async function improveCompanyName(symbol: string, currentName: string, englishNa
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { symbol, llmConfig, language, useFallback, quoteSnapshot } = body as {
+    const { symbol, llmConfig, language, useFallback, quoteSnapshot, analysisMode: requestedAnalysisMode } = body as {
       symbol: string;
       llmConfig?: LLMConfig;
       language?: string;
       useFallback?: boolean;
       quoteSnapshot?: unknown;
+      analysisMode?: unknown;
     };
 
     if (!symbol) {
@@ -603,8 +608,20 @@ export async function POST(request: Request) {
     if (llmConfig !== undefined && llmConfig !== null && (typeof llmConfig !== "object" || Array.isArray(llmConfig))) {
       return NextResponse.json({ error: "Invalid llmConfig: expected an object" }, { status: 400 });
     }
+    if (requestedAnalysisMode !== undefined && !isAnalysisMode(requestedAnalysisMode)) {
+      return NextResponse.json({ error: "Invalid analysisMode" }, { status: 400 });
+    }
 
     const effectiveLang = typeof language === "string" && SUPPORTED_LANGUAGES.includes(language) ? language : "zh-CN";
+    const analysisMode = requestedAnalysisMode ?? DEFAULT_ANALYSIS_MODE;
+    if (analysisMode === "ai-native" && !llmConfig?.apiKey) {
+      const message = effectiveLang === "en"
+        ? "AI Native mode requires an API key. Configure a model in Settings."
+        : effectiveLang === "ja"
+          ? "AI判断モードにはAPIキーが必要です。設定でモデルを構成してください。"
+          : "纯 AI 分析需要 API Key，请先在大模型配置中完成设置。";
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
 
     const requestedSymbol = symbol.trim().toUpperCase();
     const cleanSymbol = await resolveInputSymbol(requestedSymbol);
@@ -760,6 +777,71 @@ export async function POST(request: Request) {
       }
     }
 
+    if (analysisMode === "ai-native") {
+      if (techData.isMock) {
+        const message = effectiveLang === "en"
+          ? "AI Native analysis was stopped because live market data is unavailable."
+          : effectiveLang === "ja"
+            ? "実データを取得できないため、AI判断を停止しました。"
+            : "真实行情不可用，已停止纯 AI 分析，避免基于模拟数据给出结论。";
+        return NextResponse.json({ error: message }, { status: 503 });
+      }
+
+      try {
+        const prompt = buildAiNativeAnalystPrompt({
+          snapshot: techData.snapshot,
+          dailyCandles: techData.dailyCandles,
+          weeklyCandles: techData.weeklyCandles,
+          language: effectiveLang,
+          currencySymbol,
+        });
+        const reportText = await generateLLMReport(prompt, llmConfig!);
+        const parsed = parseLLMJsonResponse<unknown>(reportText);
+        const aiResult = validateAiAnalysisResult(
+          parsed,
+          techData.snapshot,
+          effectiveLang as "zh-CN" | "zh-TW" | "en" | "ja"
+        );
+        const report = composeAiNativeReport(aiResult, effectiveLang);
+
+        return NextResponse.json({
+          symbol: cleanSymbol,
+          companyName: techData.companyName,
+          companyNameEn: techData.companyNameEn,
+          price: techData.price,
+          changePercent: techData.changePercent,
+          score: toLegacyAiScoreDetail(aiResult.scoreAssessment),
+          entryAssessment: aiResult.scoreAssessment,
+          strategyAdvice: aiResult.strategyAdvice,
+          dataQuality: techData.snapshot.dataQuality,
+          dailyCandles: techData.dailyCandles,
+          weeklyCandles: techData.weeklyCandles,
+          indicators: techData.indicators,
+          patterns: techData.patterns,
+          wave: techData.wave,
+          chanlun: techData.chanlun,
+          sr: techData.sr,
+          volumeAnalysis: techData.volumeAnalysis,
+          reportOverview: replaceDollarPriceSymbols(report.overview, currencySymbol),
+          reportRecommendation: replaceDollarPriceSymbols(report.recommendation, currencySymbol),
+          reportTechnical: replaceDollarPriceSymbols(report.technicalAnalysis, currencySymbol),
+          isLLMUsed: true,
+          isMock: false,
+          dataSource: techData.dataSource,
+          currencySymbol,
+          analysisMode,
+        });
+      } catch (err: unknown) {
+        console.error("AI Native analysis failed:", err);
+        const prefix = effectiveLang === "en"
+          ? "AI Native analysis failed"
+          : effectiveLang === "ja"
+            ? "AI判断に失敗しました"
+            : "纯 AI 分析失败";
+        return NextResponse.json({ error: `${prefix}: ${summarizeLLMError(err)}` }, { status: 502 });
+      }
+    }
+
     // Localized prose is request-specific even when the technical snapshot came from cache.
     const localizedStrategyAdvice = buildStrategyAdvice(
       techData.snapshot,
@@ -892,6 +974,7 @@ export async function POST(request: Request) {
       isMock: techData.isMock,
       dataSource: techData.dataSource,
       currencySymbol,
+      analysisMode,
     });
   } catch (error: unknown) {
     console.error("API Analyze main thread error:", error);
