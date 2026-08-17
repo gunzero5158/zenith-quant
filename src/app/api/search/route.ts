@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import YahooFinance from "yahoo-finance2";
 import { fetchProviderSearchSuggestions } from "@/lib/analysis/marketDataProviders";
 import { fetchYahooJsonViaWindows } from "@/lib/analysis/windowsHttpFallback";
+import {
+  fetchEastMoneySymbolSuggestions,
+  isSupportedEastMoneySuggestion,
+  normalizeEastMoneySymbol,
+} from "@/lib/analysis/symbolResolver";
 
 const yahooFinance = new YahooFinance();
 
@@ -31,21 +36,6 @@ interface SearchSuggestion {
   name: string;
   exchDisp: string;
   typeDisp: string;
-}
-
-interface EastMoneySuggestItem {
-  Code?: string;
-  Name?: string;
-  QuoteID?: string;
-  SecurityTypeName?: string;
-  Classify?: string;
-  JYS?: string;
-}
-
-interface EastMoneySuggestResponse {
-  QuotationCodeTable?: {
-    Data?: EastMoneySuggestItem[];
-  };
 }
 
 interface StaticSearchSuggestion extends SearchSuggestion {
@@ -260,66 +250,16 @@ function findStaticFallbackSuggestions(query: string): SearchSuggestion[] {
 }
 
 async function fetchEastMoneySuggestions(query: string): Promise<SearchSuggestion[]> {
-  try {
-    const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(query)}&type=14&token=D43BF722C8E33EFC408CAFD32D7DAD7C`;
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(2500),
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      },
-    });
-    if (!res.ok) return [];
-
-    const data = await res.json() as EastMoneySuggestResponse;
-    return (data.QuotationCodeTable?.Data || [])
-      .filter((item) => item.Code && isSupportedEastMoneySuggestion(item))
-      .map((item) => ({
-        symbol: normalizeEastMoneySymbol(item),
-        name: item.Name || item.Code || "",
-        exchDisp: item.JYS || item.Classify || "GLOBAL",
-        typeDisp: item.SecurityTypeName || "Stock",
-      }))
-      .filter((item) => item.symbol)
-      .slice(0, 8);
-  } catch (error: unknown) {
-    console.warn("EastMoney search fallback failed:", error);
-    return [];
-  }
-}
-
-function isSupportedEastMoneySuggestion(item: EastMoneySuggestItem): boolean {
-  const classify = item.Classify || "";
-  const type = item.SecurityTypeName || "";
-  return (
-    classify === "UsStock" ||
-    classify === "HKStock" ||
-    classify === "AStock" ||
-    classify === "JPX" ||
-    item.QuoteID?.startsWith("176.") ||
-    type.includes("美股") ||
-    type.includes("港股") ||
-    type.includes("A股")
-  );
-}
-
-function normalizeEastMoneySymbol(item: EastMoneySuggestItem): string {
-  const code = item.Code || "";
-  const quoteId = item.QuoteID || "";
-  const classify = item.Classify || "";
-
-  if (classify === "HKStock" || quoteId.startsWith("116.")) {
-    const normalizedCode = /^\d+$/.test(code) ? String(Number(code)).padStart(4, "0") : code;
-    return `${normalizedCode}.HK`;
-  }
-  if (classify === "JPX" || quoteId.startsWith("176.")) {
-    return /^\d{3}[0-9A-Z]$/i.test(code) ? `${code.toUpperCase()}.T` : code;
-  }
-  if (classify === "AStock" || quoteId.startsWith("1.") || quoteId.startsWith("0.")) {
-    if (/^\d{6}$/.test(code)) {
-      return code.startsWith("6") ? `${code}.SS` : `${code}.SZ`;
-    }
-  }
-  return code;
+  return (await fetchEastMoneySymbolSuggestions(query))
+    .filter((item) => item.Code && isSupportedEastMoneySuggestion(item))
+    .map((item) => ({
+      symbol: normalizeEastMoneySymbol(item),
+      name: item.Name || item.Code || "",
+      exchDisp: item.JYS || item.Classify || "GLOBAL",
+      typeDisp: item.SecurityTypeName || "Stock",
+    }))
+    .filter((item) => item.symbol)
+    .slice(0, 8);
 }
 
 function normalizeAlias(value: string): string {

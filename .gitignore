@@ -37,6 +37,7 @@ yarn-error.log*
 
 # local-only project documentation
 /docs/
+/scratch/
 
 # env files (can opt-in for committing if needed)
 .env*

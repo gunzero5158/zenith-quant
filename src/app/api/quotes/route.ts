@@ -4,6 +4,7 @@ import { generateMockCandles } from "@/lib/analysis/mockData";
 import { fetchKabutanQuote, getKabutanCode } from "@/lib/analysis/kabutan";
 import { fetchProviderQuote } from "@/lib/analysis/marketDataProviders";
 import { getRealtimeQuotePriority, type MarketDataProvider } from "@/lib/analysis/marketDataPriority";
+import { runSequentialProviderChain } from "@/lib/analysis/providerCircuitBreaker";
 import { fetchTencentQuote } from "@/lib/analysis/tencent";
 import { fetchEastMoneyJson } from "@/lib/analysis/eastmoneyHttp";
 import {
@@ -11,7 +12,8 @@ import {
   fetchEastMoneyAShareRealtimeQuote,
 } from "@/lib/analysis/ashareRealtime";
 import { fetchTonghuashunQuote } from "@/lib/analysis/tonghuashun";
-import { aShareCodeToSuffixedSymbol, getEastMoneySecidCandidates } from "@/lib/analysis/symbolConversion";
+import { getEastMoneySecidCandidates } from "@/lib/analysis/symbolConversion";
+import { resolveInputSymbol } from "@/lib/analysis/symbolResolver";
 import { fetchYahooJsonViaWindows } from "@/lib/analysis/windowsHttpFallback";
 
 const yahooFinance = new YahooFinance();
@@ -54,19 +56,6 @@ interface YahooChartQuoteResponse {
 
 interface EastMoneyKline {
   close: number;
-}
-
-interface EastMoneySuggestItem {
-  Code?: string;
-  QuoteID?: string;
-  SecurityTypeName?: string;
-  Classify?: string;
-}
-
-interface EastMoneySuggestResponse {
-  QuotationCodeTable?: {
-    Data?: EastMoneySuggestItem[];
-  };
 }
 
 interface QuoteResult {
@@ -144,11 +133,11 @@ async function fetchSingleQuote(inputSymbol: string): Promise<QuoteResult> {
     };
   }
 
-  let res: QuoteResult | null = null;
-  for (const provider of getRealtimeQuotePriority(symbol)) {
-    res = await fetchQuoteFromProvider(provider, symbol);
-    if (res) break;
-  }
+  const providerResult = await runSequentialProviderChain(
+    getRealtimeQuotePriority(symbol),
+    (provider) => fetchQuoteFromProvider(provider, symbol),
+  );
+  const res = providerResult?.value ?? null;
   if (!res) {
     throw new Error("Invalid quote from all real data providers");
   }
@@ -278,79 +267,6 @@ function setQuoteCacheEntry(key: string, entry: QuoteCacheEntry): void {
     }
   }
   quoteCache[key] = entry;
-}
-
-async function resolveInputSymbol(input: string): Promise<string> {
-  const clean = input.trim().toUpperCase();
-  if (isTickerLike(clean)) {
-    return clean;
-  }
-
-  const resolved = await resolveSymbolFromEastMoney(clean);
-  return resolved || clean;
-}
-
-function isTickerLike(symbol: string): boolean {
-  return (
-    /^[A-Z]{1,5}$/.test(symbol) ||
-    /^\d{3}[0-9A-Z](?:\.T)?$/.test(symbol) ||
-    /^\d{4,5}(?:\.HK)?$/.test(symbol) ||
-    /^\d{6}(?:\.(?:SS|SH|SZ))?$/.test(symbol)
-  );
-}
-
-async function resolveSymbolFromEastMoney(query: string): Promise<string | null> {
-  try {
-    const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(query)}&type=14&token=D43BF722C8E33EFC408CAFD32D7DAD7C`;
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(2500),
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      },
-    });
-    if (!res.ok) {
-      return null;
-    }
-
-    const data = await res.json() as EastMoneySuggestResponse;
-    const match = (data.QuotationCodeTable?.Data || []).find((item) =>
-      item.Code && isSupportedEastMoneySuggestion(item)
-    );
-
-    return match ? normalizeEastMoneySymbol(match) : null;
-  } catch (error: unknown) {
-    console.warn("EastMoney quote symbol resolution failed:", error);
-    return null;
-  }
-}
-
-function isSupportedEastMoneySuggestion(item: EastMoneySuggestItem): boolean {
-  const classify = item.Classify || "";
-  const type = item.SecurityTypeName || "";
-  return (
-    classify === "UsStock" ||
-    classify === "HKStock" ||
-    classify === "AStock" ||
-    type.includes("美股") ||
-    type.includes("港股") ||
-    type.includes("A股")
-  );
-}
-
-function normalizeEastMoneySymbol(item: EastMoneySuggestItem): string {
-  const code = item.Code || "";
-  const quoteId = item.QuoteID || "";
-  const classify = item.Classify || "";
-
-  if (classify === "HKStock" || quoteId.startsWith("116.")) {
-    return `${code.padStart(4, "0")}.HK`;
-  }
-  if (classify === "AStock" || quoteId.startsWith("1.") || quoteId.startsWith("0.")) {
-    if (/^\d{6}$/.test(code)) {
-      return aShareCodeToSuffixedSymbol(code);
-    }
-  }
-  return code;
 }
 
 async function fetchReliableEastMoneyKlinesLmt2(secid: string): Promise<EastMoneyKline[]> {

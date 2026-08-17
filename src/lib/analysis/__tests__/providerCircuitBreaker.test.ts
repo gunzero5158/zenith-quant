@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { ProviderCircuitBreaker } from "../providerCircuitBreaker";
+import { describe, expect, it, vi } from "vitest";
+import { ProviderCircuitBreaker, runSequentialProviderChain } from "../providerCircuitBreaker";
 
 describe("ProviderCircuitBreaker", () => {
   it("opens after consecutive failures and retries after the cooldown", () => {
@@ -27,5 +27,40 @@ describe("ProviderCircuitBreaker", () => {
   it("never attempts another provider after data has already succeeded", () => {
     const breaker = new ProviderCircuitBreaker();
     expect(breaker.shouldAttempt("tonghuashun", true, 1_000)).toBe(false);
+  });
+
+  it("treats an empty provider response as a failure and tries the next provider", async () => {
+    const breaker = new ProviderCircuitBreaker(1, 5_000);
+    const attempt = vi.fn(async (provider: "yahoo" | "tencent") =>
+      provider === "yahoo" ? null : { source: provider },
+    );
+
+    const result = await runSequentialProviderChain(
+      ["yahoo", "tencent"],
+      attempt,
+      { circuitBreaker: breaker },
+    );
+
+    expect(result).toEqual({ provider: "tencent", value: { source: "tencent" } });
+    expect(attempt).toHaveBeenCalledTimes(2);
+    expect(breaker.shouldAttempt("yahoo", false)).toBe(false);
+  });
+
+  it("records thrown failures and continues through the provider chain", async () => {
+    const breaker = new ProviderCircuitBreaker(1, 5_000);
+    const failure = new Error("provider unavailable");
+    const onFailure = vi.fn();
+
+    const result = await runSequentialProviderChain(
+      ["eastmoney", "tonghuashun"],
+      async (provider) => {
+        if (provider === "eastmoney") throw failure;
+        return "ok";
+      },
+      { circuitBreaker: breaker, onFailure },
+    );
+
+    expect(result).toEqual({ provider: "tonghuashun", value: "ok" });
+    expect(onFailure).toHaveBeenCalledWith("eastmoney", failure);
   });
 });

@@ -20,6 +20,9 @@ import {
   WhitespaceData,
 } from "lightweight-charts";
 import { Candle } from "@/lib/analysis/indicators";
+import type { PatternResult } from "@/lib/analysis/patterns";
+import type { SupportResistanceResult } from "@/lib/analysis/supportResistance";
+import type { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
 
 interface StockChartProps {
   candles: Candle[];
@@ -38,52 +41,14 @@ interface StockChartProps {
     kdjD: number[];
     kdjJ: number[];
     rsi: number[];
-    atr: number[];
-    ichimoku?: {
-      tenkanSen: number[];
-      kijunSen: number[];
-      senkouSpanA: number[];
-      senkouSpanB: number[];
-      chikouSpan: number[];
-      cloudSignal: "bullish" | "bearish" | "neutral";
-      cloudDescription: string;
-    };
   };
-  patterns: {
-    tdSequential: number[];
-    tdSignal: string;
-    fibonacciLevels: { label: string; price: number }[];
-    activePatterns?: { key: string; name: string; bias: "bullish" | "bearish" | "neutral"; confidence: number; description: string }[];
-    isDoubleBottom: boolean;
-    isDoubleTop?: boolean;
-    isTripleBottom?: boolean;
-    isTripleTop?: boolean;
-    isHeadAndShoulders: boolean;
-    isCupAndHandle: boolean;
-    isRoundingTop: boolean;
-    isBullFlag?: boolean;
-    isBearFlag?: boolean;
-    isRectangle?: boolean;
-    isTrianglePennant?: boolean;
-    isRisingWedge?: boolean;
-    isFallingWedge?: boolean;
-  };
-  sr: {
-    horizontalSupports: number[];
-    horizontalResistances: number[];
-    volumePOC: number;
-    volumeSupportNodes?: number[];
-    volumeResistanceNodes?: number[];
-    volumeProfile?: {
-      poc: number;
-      valueAreaHigh: number;
-      valueAreaLow: number;
-      nodes: { price: number; volume: number; volumeShare: number }[];
-    };
-  };
-  wave: {
-    wavePoints: { index: number; price: number; type: "high" | "low"; label: string }[];
-  };
+  patterns: Pick<PatternResult,
+    "tdSequential" | "fibonacciLevels" | "activePatterns" | "isDoubleBottom" | "isCupAndHandle"
+  >;
+  sr: Pick<SupportResistanceResult,
+    "horizontalSupports" | "horizontalResistances" | "volumePOC" | "volumeProfile"
+  >;
+  wave: Pick<WaveAnalysisResult, "wavePoints">;
   isRedUp: boolean;
 }
 

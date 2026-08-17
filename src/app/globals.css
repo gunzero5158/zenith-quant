@@ -11,9 +11,6 @@
   
   --color-up: #089981;
   --color-down: #f23645;
-  --color-up-bg: rgba(8, 153, 129, 0.12);
-  --color-down-bg: rgba(242, 54, 69, 0.12);
-  
   --primary-blue: #2dd4bf;
   --primary-blue-hover: #14b8a6;
   --primary-blue-bg: rgba(45, 212, 191, 0.1);
@@ -62,18 +59,41 @@ button {
   background: #4c5265;
 }
 
-/* Utilities */
-.up-color {
-  color: var(--color-up) !important;
+.welcome-container .quick-badge-btn {
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.25s cubic-bezier(0.25, 0.8, 0.25, 1),
+    background-color 0.25s ease,
+    box-shadow 0.25s ease !important;
 }
-.down-color {
-  color: var(--color-down) !important;
+
+.welcome-container .quick-badge-btn:hover {
+  transform: translateY(-2px) scale(1.03);
+  background-color: #1a52f5 !important;
+  box-shadow: 0 6px 20px rgba(41, 98, 255, 0.45) !important;
 }
-.up-bg {
-  background-color: var(--color-up-bg) !important;
+
+.welcome-container .quick-badge-btn::after {
+  content: "";
+  position: absolute;
+  top: -50%;
+  left: -60%;
+  width: 20%;
+  height: 200%;
+  background: rgba(255, 255, 255, 0.13);
+  transform: rotate(30deg);
 }
-.down-bg {
-  background-color: var(--color-down-bg) !important;
+
+.welcome-container .quick-badge-btn:hover::after {
+  left: 150%;
+  transition: left 0.6s ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-container .quick-badge-btn,
+  .welcome-container .quick-badge-btn::after {
+    transition: none !important;
+  }
 }
 
 /* The dashboard uses inline component styles; these classes provide the
@@ -145,6 +165,52 @@ button {
 
   .report-area {
     overflow: visible !important;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1100px) {
+  .app-header {
+    gap: 8px;
+    padding: 0 8px !important;
+  }
+
+  .app-brand,
+  .app-header-actions,
+  .analysis-mode-switch {
+    flex: 0 0 auto;
+  }
+
+  .app-logo-text,
+  .app-language,
+  .app-settings-label {
+    display: none !important;
+  }
+
+  .app-search {
+    width: min(260px, 32vw) !important;
+    min-width: 160px;
+  }
+
+  .analysis-mode-switch button {
+    gap: 4px !important;
+    padding: 0 8px !important;
+  }
+
+  .app-header-actions {
+    gap: 4px !important;
+  }
+
+  .app-settings,
+  .app-refresh {
+    width: 32px;
+    height: 32px;
+    padding: 0 !important;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .app-settings svg {
+    margin-right: 0 !important;
   }
 }
 

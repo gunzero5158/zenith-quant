@@ -4,13 +4,12 @@ import React, { useState } from "react";
 import { ExternalLink } from "lucide-react";
 import { LLMConfig } from "@/lib/analysis/llmProxy";
 import { AnalysisMode } from "@/lib/analysis/analysisMode";
-
-type AppLanguage = "auto" | "zh-CN" | "zh-TW" | "en" | "ja";
-type EffectiveLanguage = Exclude<AppLanguage, "auto">;
-
-const APP_LANGUAGES: AppLanguage[] = ["auto", "zh-CN", "zh-TW", "en", "ja"];
-
-const isAppLanguage = (value: string): value is AppLanguage => APP_LANGUAGES.includes(value as AppLanguage);
+import {
+  AppLanguage,
+  EffectiveLanguage,
+  TranslationStrings,
+  isAppLanguage,
+} from "@/lib/i18n/translations";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -21,7 +20,7 @@ interface SettingsModalProps {
   useFallback: boolean;
   onToggleFallback: () => void;
   effectiveLang: EffectiveLanguage;
-  t: Record<string, string>;
+  t: TranslationStrings;
   onSave: (config: LLMConfig) => void;
   onClose: () => void;
 }

@@ -68,6 +68,7 @@ Evidence boundary:
 
 Decision consistency:
 - leftStatus/rightStatus: not_formed, watch, triggered, too_late.
+- Use triggered only when the setup is executable now with a grounded stop-target pair and the corresponding entry action. If the structure exists but execution conditions are incomplete, use watch.
 - activeSetup: left, right, none. Select left/right only when that setup is triggered and recommended for action.
 - holder.action: hold, hold_protect, reduce, exit.
 - leftEntry.action: wait, probe, not_applicable. Use probe only with activeSetup=left.

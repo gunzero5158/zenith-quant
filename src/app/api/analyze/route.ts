@@ -10,7 +10,7 @@ import { EntryAssessment, ScoreDetail, toLegacyScoreDetail } from "@/lib/analysi
 import { generateLocalReport } from "@/lib/analysis/fallbackReport";
 import { generateLLMReport, LLMConfig } from "@/lib/analysis/llmProxy";
 import { generateMockCandles } from "@/lib/analysis/mockData";
-import { getMarketCurrencySymbol, normalizeManualSymbolInput, replaceDollarPriceSymbols } from "@/lib/analysis/market";
+import { getMarketCurrencySymbol, replaceDollarPriceSymbols } from "@/lib/analysis/market";
 import { fetchKabutanMarketData, getKabutanCode } from "@/lib/analysis/kabutan";
 import { fetchProviderMarketData, hasConfiguredMarketDataProvider } from "@/lib/analysis/marketDataProviders";
 import { fetchTencentMarketData } from "@/lib/analysis/tencent";
@@ -21,11 +21,13 @@ import {
   fetchAShareRealtimeQuote,
   mergeRealtimeQuoteIntoDailyCandles,
 } from "@/lib/analysis/ashareRealtime";
+import { convertSymbolToEastMoneySecid, getEastMoneySecidCandidates } from "@/lib/analysis/symbolConversion";
 import {
-  aShareCodeToSuffixedSymbol,
-  convertSymbolToEastMoneySecid,
-  getEastMoneySecidCandidates,
-} from "@/lib/analysis/symbolConversion";
+  fetchEastMoneySymbolSuggestions,
+  isSupportedEastMoneySuggestion,
+  normalizeEastMoneySymbol,
+  resolveInputSymbol,
+} from "@/lib/analysis/symbolResolver";
 import { buildWeeklyCandles as buildWeeklyCandlesFromDaily } from "@/lib/analysis/weeklyCandles";
 import { runAnalysisEngine } from "@/lib/analysis/analysisEngine";
 import { EvidenceSnapshot } from "@/lib/analysis/evidence";
@@ -43,9 +45,9 @@ import {
   isMarketDataCacheReusable,
   MARKET_DATA_CACHE_MAX_RETENTION_MS,
 } from "@/lib/analysis/analysisCache";
-import { marketDataCircuitBreaker } from "@/lib/analysis/providerCircuitBreaker";
+import { runSequentialProviderChain } from "@/lib/analysis/providerCircuitBreaker";
 import { getMarketDataPriority, MarketDataProvider } from "@/lib/analysis/marketDataPriority";
-import { DEFAULT_ANALYSIS_MODE, isAnalysisMode } from "@/lib/analysis/analysisMode";
+import { canUseMockMarketData, DEFAULT_ANALYSIS_MODE, isAnalysisMode } from "@/lib/analysis/analysisMode";
 import { fetchYahooJsonViaWindows } from "@/lib/analysis/windowsHttpFallback";
 import { buildAiNativeAnalystPrompt } from "@/lib/analysis/aiNativeAnalysisPrompt";
 import { validateAiAnalysisResult, toLegacyAiScoreDetail } from "@/lib/analysis/aiAnalysisResult";
@@ -180,20 +182,6 @@ interface MarketDataResult {
   companyNameEn?: string;
   changePercent: number;
   dataSource: Exclude<AnalysisDataSource, "mock" | "provider">;
-}
-
-interface EastMoneySuggestItem {
-  Code?: string;
-  Name?: string;
-  QuoteID?: string;
-  SecurityTypeName?: string;
-  Classify?: string;
-}
-
-interface EastMoneySuggestResponse {
-  QuotationCodeTable?: {
-    Data?: EastMoneySuggestItem[];
-  };
 }
 
 interface YahooChartResponse {
@@ -349,98 +337,19 @@ async function fetchMarketDataFromProvider(provider: MarketDataProvider, symbol:
 }
 
 async function fetchMarketDataByPriority(symbol: string): Promise<MarketDataResult | null> {
-  for (const provider of getMarketDataPriority(symbol)) {
-    if (!marketDataCircuitBreaker.shouldAttempt(provider, false)) continue;
-    try {
-      const result = await fetchMarketDataFromProvider(provider, symbol);
-      if (!result) continue;
-      marketDataCircuitBreaker.recordSuccess(provider);
-      console.log(`Successfully loaded ${symbol} market data from ${result.dataSource}`);
-      return result;
-    } catch (error: unknown) {
-      marketDataCircuitBreaker.recordFailure(provider);
-      console.warn(`${provider} market data failed for ${symbol}:`, error);
-    }
-  }
-  return null;
-}
-
-async function resolveInputSymbol(input: string): Promise<string> {
-  const clean = input.trim().toUpperCase();
-  const normalized = normalizeManualSymbolInput(clean);
-  if (normalized !== clean) {
-    return normalized;
-  }
-
-  if (isTickerLike(clean)) {
-    return clean;
-  }
-
-  const resolved = await resolveSymbolFromEastMoney(clean);
-  return resolved || clean;
-}
-
-function isTickerLike(symbol: string): boolean {
-  return (
-    /^[A-Z]{1,5}$/.test(symbol) ||
-    /^\d{3}[0-9A-Z](?:\.T)?$/.test(symbol) ||
-    /^\d{4,5}(?:\.HK)?$/.test(symbol) ||
-    /^\d{6}(?:\.(?:SS|SH|SZ))?$/.test(symbol)
-  );
-}
-
-async function resolveSymbolFromEastMoney(query: string): Promise<string | null> {
-  try {
-    const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(query)}&type=14&token=D43BF722C8E33EFC408CAFD32D7DAD7C`;
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(2500),
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  const result = await runSequentialProviderChain(
+    getMarketDataPriority(symbol),
+    (provider) => fetchMarketDataFromProvider(provider, symbol),
+    {
+      onFailure: (provider, error) => {
+        if (error) console.warn(`${provider} market data failed for ${symbol}:`, error);
       },
-    });
-    if (!res.ok) {
-      return null;
-    }
-
-    const data = await res.json() as EastMoneySuggestResponse;
-    const match = (data.QuotationCodeTable?.Data || []).find((item) =>
-      item.Code && isSupportedEastMoneySuggestion(item)
-    );
-
-    return match ? normalizeEastMoneySymbol(match) : null;
-  } catch (error: unknown) {
-    console.warn("EastMoney symbol resolution failed:", error);
-    return null;
-  }
-}
-
-function isSupportedEastMoneySuggestion(item: EastMoneySuggestItem): boolean {
-  const classify = item.Classify || "";
-  const type = item.SecurityTypeName || "";
-  return (
-    classify === "UsStock" ||
-    classify === "HKStock" ||
-    classify === "AStock" ||
-    type.includes("美股") ||
-    type.includes("港股") ||
-    type.includes("A股")
+    },
   );
-}
 
-function normalizeEastMoneySymbol(item: EastMoneySuggestItem): string {
-  const code = item.Code || "";
-  const quoteId = item.QuoteID || "";
-  const classify = item.Classify || "";
-
-  if (classify === "HKStock" || quoteId.startsWith("116.")) {
-    return `${code.padStart(4, "0")}.HK`;
-  }
-  if (classify === "AStock" || quoteId.startsWith("1.") || quoteId.startsWith("0.")) {
-    if (/^\d{6}$/.test(code)) {
-      return aShareCodeToSuffixedSymbol(code);
-    }
-  }
-  return code;
+  if (!result) return null;
+  console.log(`Successfully loaded ${symbol} market data from ${result.value.dataSource}`);
+  return result.value;
 }
 
 const KNOWN_COMPANY_NAMES: Record<string, string> = {
@@ -528,17 +437,7 @@ async function fetchEastMoneyCompanyName(symbol: string): Promise<string | null>
 
   for (const query of queries) {
     try {
-      const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(query)}&type=14&token=D43BF722C8E33EFC408CAFD32D7DAD7C`;
-      const res = await fetch(url, {
-        signal: AbortSignal.timeout(2500),
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        },
-      });
-      if (!res.ok) continue;
-
-      const data = await res.json() as EastMoneySuggestResponse;
-      const match = (data.QuotationCodeTable?.Data || []).find((item) =>
+      const match = (await fetchEastMoneySymbolSuggestions(query)).find((item) =>
         item.Name && isSupportedEastMoneySuggestion(item) && normalizeEastMoneySymbol(item) === clean
       );
       if (match?.Name) return match.Name.trim();
@@ -778,15 +677,16 @@ export async function POST(request: Request) {
       }
     }
 
+    if (techData.isMock && !canUseMockMarketData(analysisMode, useFallback)) {
+      const message = effectiveLang === "en"
+        ? "Analysis was stopped because live market data is unavailable. Mock candles are never sent to AI."
+        : effectiveLang === "ja"
+          ? "実データを取得できないため分析を停止しました。模擬データはAIに送信されません。"
+          : "真实行情不可用，已停止分析；模拟 K 线不会发送给 AI。";
+      return NextResponse.json({ error: message }, { status: 503 });
+    }
+
     if (analysisMode === "ai-native") {
-      if (techData.isMock) {
-        const message = effectiveLang === "en"
-          ? "AI Native analysis was stopped because live market data is unavailable."
-          : effectiveLang === "ja"
-            ? "実データを取得できないため、AI判断を停止しました。"
-            : "真实行情不可用，已停止纯 AI 分析，避免基于模拟数据给出结论。";
-        return NextResponse.json({ error: message }, { status: 503 });
-      }
 
       try {
         const prompt = buildAiNativeAnalystPrompt({
@@ -997,147 +897,6 @@ function summarizeLLMError(err: unknown): string {
   }
 
   return withoutHtml.slice(0, 240) || "LLM request failed. The local fallback report was generated instead.";
-}
-
-function latestValue(values: number[]): number | undefined {
-  for (let i = values.length - 1; i >= 0; i--) {
-    if (typeof values[i] === "number" && Number.isFinite(values[i])) return values[i];
-  }
-  return undefined;
-}
-
-function formatMaybe(value: number | undefined, digits: number = 2): string {
-  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "N/A";
-}
-
-function joinMoneyLevels(values: number[], currencySymbol: string): string {
-  return values.length > 0 ? values.map((p) => `${currencySymbol}${p}`).join(", ") : "None";
-}
-
-/** @deprecated Kept for compatibility with older route-adjacent integrations. */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function buildFallbackExtras(data: CacheEntry["data"]) {
-  const atr = latestValue(data.indicators.atr);
-  return {
-    atr,
-    atrPct: atr && data.price ? (atr / data.price) * 100 : undefined,
-    ichimoku: data.indicators.ichimoku,
-  };
-}
-
-function buildUnifiedAnalystPrompt(symbol: string, data: CacheEntry["data"], language: string, currencySymbol: string): string {
-  const score = data.score;
-  const sr = data.sr;
-  const wave = data.wave;
-  const chan = data.chanlun;
-  const ichimoku = data.indicators.ichimoku;
-  const money = (value: number) => `${currencySymbol}${value}`;
-  const moneyFixed = (value: number | undefined) => typeof value === "number" && Number.isFinite(value) ? `${currencySymbol}${value.toFixed(2)}` : "N/A";
-  const atr = latestValue(data.indicators.atr);
-  const atrPct = atr && data.price ? (atr / data.price) * 100 : undefined;
-  const activePatterns = data.patterns.activePatterns.length > 0
-    ? data.patterns.activePatterns.map((p) => `${p.name} (${p.bias}, confidence ${Math.round(p.confidence * 100)}%): ${p.description}`).join("\n")
-    : "No confirmed actionable classical pattern. Do not force a pattern interpretation.";
-  const fibLevels = data.patterns.fibonacciLevels.map((level) => `${level.label}: ${money(level.price)}`).join(", ");
-  const vpvrNodes = sr.volumeProfile.nodes.map((node) => `${money(node.price)} (${(node.volumeShare * 100).toFixed(1)}%)`).join(", ") || "None";
-  const targetLanguage = language === "en"
-    ? "English"
-    : language === "ja"
-      ? "Japanese"
-      : language === "zh-TW"
-        ? "Traditional Chinese"
-        : "Simplified Chinese";
-  const scoreLabel = language === "zh-CN"
-    ? "买点魅力分"
-    : language === "zh-TW"
-      ? "買點魅力分"
-      : language === "ja"
-        ? "買い場魅力度"
-        : "Entry Appeal Score";
-
-  return `You are a senior quantitative technical analyst. Produce a detailed TradingView-style stock analysis report with clear trading logic.
-
-Output language: ${targetLanguage}.
-Output format: valid JSON only, no markdown code fence. The JSON keys must be exactly "overview", "recommendation", and "technicalAnalysis".
-
-Stock: ${data.companyName} (${symbol})
-Current price: ${moneyFixed(data.price)}
-Daily change: ${data.changePercent.toFixed(2)}%
-
-Scoring semantics:
-- The 0-5 ${scoreLabel} means current buy/accumulate attractiveness, not recent heat.
-- Reward/risk odds are the primary gate; active trading heat alone must not raise the score if upside/downside is poor.
-- Setup confirmation is evaluated through left-side reversal, trend pullback, and right-side breakout paths.
-- Higher score means better current entry expectancy: higher win-rate, better reward/risk, acceptable stop distance, and stronger confirmation.
-- Lower score means avoid buying now, reduce exposure, or wait.
-
-### 1. ${scoreLabel}
-- ${scoreLabel}: ${score.totalScore.toFixed(1)} / 5.0
-- Reasons:
-${score.scoreReasons.map((r) => `  * ${r}`).join("\n")}
-
-### 2. Trend, Volatility, and Ichimoku
-- EMA5/10/20/60: ${moneyFixed(latestValue(data.indicators.ema5))}, ${moneyFixed(latestValue(data.indicators.ema10))}, ${moneyFixed(latestValue(data.indicators.ema20))}, ${moneyFixed(latestValue(data.indicators.ema60))}
-- Bollinger upper/middle/lower: ${moneyFixed(latestValue(data.indicators.bollUpper))}, ${moneyFixed(latestValue(data.indicators.bollMiddle))}, ${moneyFixed(latestValue(data.indicators.bollLower))}
-- ATR14: ${formatMaybe(atr)} (${formatMaybe(atrPct)}% of price)
-- Ichimoku signal: ${ichimoku.cloudSignal}
-- Ichimoku lines: Tenkan=${moneyFixed(latestValue(ichimoku.tenkanSen))}, Kijun=${moneyFixed(latestValue(ichimoku.kijunSen))}, SpanA=${moneyFixed(latestValue(ichimoku.senkouSpanA))}, SpanB=${moneyFixed(latestValue(ichimoku.senkouSpanB))}
-- Ichimoku description: ${ichimoku.cloudDescription}
-
-### 3. Support, Resistance, Fibonacci, and VPVR
-- Horizontal supports: ${joinMoneyLevels(sr.horizontalSupports, currencySymbol)}
-- Horizontal resistances: ${joinMoneyLevels(sr.horizontalResistances, currencySymbol)}
-- Dynamic supports/resistance: EMA20=${money(sr.dynamicSupportEMA20)}, EMA60=${money(sr.dynamicSupportEMA60)}, BOLL upper=${money(sr.dynamicBOLLUpper)}, BOLL lower=${money(sr.dynamicBOLLLower)}
-- Fibonacci levels: ${fibLevels}
-- VPVR POC: ${money(sr.volumeProfile.poc)}
-- VPVR value area: ${money(sr.volumeProfile.valueAreaLow)} - ${money(sr.volumeProfile.valueAreaHigh)}
-- VPVR high-volume nodes: ${vpvrNodes}
-- Volume support nodes: ${joinMoneyLevels(sr.volumeSupportNodes, currencySymbol)}
-- Volume resistance nodes: ${joinMoneyLevels(sr.volumeResistanceNodes, currencySymbol)}
-
-### 4. Momentum and Smart Money
-- MACD: DIF=${formatMaybe(latestValue(data.indicators.macdDif))}, DEA=${formatMaybe(latestValue(data.indicators.macdDea))}, Hist=${formatMaybe(latestValue(data.indicators.macdHist))}
-- RSI14: ${formatMaybe(latestValue(data.indicators.rsi))}
-- KDJ: K=${formatMaybe(latestValue(data.indicators.kdjK))}, D=${formatMaybe(latestValue(data.indicators.kdjD))}, J=${formatMaybe(latestValue(data.indicators.kdjJ))}
-- CMF: ${formatMaybe(latestValue(data.volumeAnalysis.cmf), 4)}
-- OBV: ${formatMaybe(latestValue(data.volumeAnalysis.obv), 0)}
-- Volume 20SMA: ${formatMaybe(latestValue(data.volumeAnalysis.volume20SMA), 0)}
-- Volume expanding: ${data.volumeAnalysis.isVolumeExpanding ? "Yes" : "No"}
-- Volume breakout: ${data.volumeAnalysis.hasVolumeBreakout ? "Yes" : "No"}
-- Price-volume divergence: ${data.volumeAnalysis.hasPriceVolumeDivergence ? "Yes" : "No"}
-- Volume description: ${data.volumeAnalysis.volumeDescription}
-
-### 5. Patterns, TD, Wave, and Chanlun
-- Active classical patterns:
-${activePatterns}
-- Pattern summary: ${data.patterns.patternDescription}
-- TD signal: ${data.patterns.tdSignal || "None"}
-- Elliott wave: ${wave.currentWave}; ${wave.waveDescription}
-- Wave points: ${wave.wavePoints.length > 0 ? wave.wavePoints.map((p) => `${p.label}@${money(p.price)}`).join(", ") : "None"}
-- Chanlun stroke direction: ${chan.currentStrokeDirection}
-- Chanlun structure: ${chan.chanlunDescription}
-
-Writing requirements:
-- Use only the provided metrics. Do not invent fundamentals, news, targets, or unseen price levels.
-- If a pattern or indicator has no actionable meaning, say it is not actionable and do not overemphasize it.
-- The overview must be rich: write 3-4 short paragraphs covering the bull/bear state, trend quality, position of the current price, main risk, and market outlook. Do not just repeat the score reasons.
-- The recommendation must use a structured markdown list and cover four dimensions: existing holders, new/left-side entry, add-on/right-side breakout, and risk exit/stop. Cite concrete price levels from EMA/SR/Fibonacci/VPVR/ATR where relevant.
-- Clearly distinguish momentum indicators (MACD/KDJ/RSI) from smart-money/volume indicators (CMF/OBV/VPVR).
-- The technicalAnalysis field must be detailed and cover these modules in order: 1. MA trend and multi-period resonance, 2. support/resistance, Fibonacci, VPVR and ATR risk unit, 3. momentum indicators (MACD/KDJ/RSI), 4. volume and smart-money flow (CMF/OBV/volume), 5. Ichimoku Cloud, 6. classical chart patterns and divergences, 7. TD Sequential, 8. Elliott Wave, 9. Chanlun structure.
-- Keep inactive or non-significant indicators brief, but do not omit the modules above. The final text should read like a full analyst report, not a short summary.
-
-Return JSON only:
-{
-  "overview": "(3-4 short paragraphs, separated by double newlines.)",
-  "recommendation": "(Structured markdown list covering existing holders, left-side entry, right-side/add-on entry, and risk exit/stop.)",
-  "technicalAnalysis": "(Detailed module-by-module technical analysis covering all required modules.)"
-}`;
-}
-
-/** @deprecated New analysis requests use buildEvidenceAnalystPrompt. */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function buildAnalystPrompt(symbol: string, data: CacheEntry["data"], language: string = "zh-CN", currencySymbol = "$"): string {
-  return buildUnifiedAnalystPrompt(symbol, data, language, currencySymbol);
 }
 
 async function fetchYahooChartCandles(symbol: string): Promise<{

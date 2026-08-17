@@ -1,8 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-
-type EffectiveLanguage = "zh-CN" | "zh-TW" | "en" | "ja";
+import type { EffectiveLanguage } from "@/lib/i18n/translations";
 
 interface LoadingOverlayProps {
   symbol: string;
@@ -194,10 +193,6 @@ export default function LoadingOverlay({ symbol, effectiveLang }: LoadingOverlay
           50% { background-position: 100% 50%; }
           100% { background-position: 0% 50%; }
         }
-        @keyframes scan-line {
-          0% { transform: translateY(-100%); }
-          100% { transform: translateY(100%); }
-        }
         @keyframes floating-bg {
           0% { transform: translateY(0px) rotate(0deg); opacity: 0.015; }
           50% { transform: translateY(-30px) rotate(180deg); opacity: 0.05; }
@@ -218,48 +213,6 @@ export default function LoadingOverlay({ symbol, effectiveLang }: LoadingOverlay
         @keyframes pulse-badge {
           0%, 100% { opacity: 0.8; }
           50% { opacity: 1; filter: drop-shadow(0 0 4px #2962ff); }
-        }
-        .feature-card {
-          background: linear-gradient(135deg, rgba(23, 27, 38, 0.75) 0%, rgba(15, 18, 26, 0.9) 100%) !important;
-          border: 1px solid rgba(255, 255, 255, 0.06) !important;
-          backdrop-filter: blur(16px);
-          transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
-        }
-        .feature-card:hover {
-          transform: translateY(-6px);
-          border-color: rgba(41, 98, 255, 0.6) !important;
-          box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65), 0 0 25px rgba(41, 98, 255, 0.25) !important;
-        }
-        .quick-badge-btn {
-          transition: all 0.25s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
-          position: relative;
-          overflow: hidden;
-        }
-        .quick-badge-btn:hover {
-          transform: translateY(-2px) scale(1.03);
-          background-color: #1a52f5 !important;
-          box-shadow: 0 6px 20px rgba(41, 98, 255, 0.45) !important;
-        }
-        .quick-badge-btn::after {
-          content: '';
-          position: absolute;
-          top: -50%;
-          left: -60%;
-          width: 20%;
-          height: 200%;
-          background: rgba(255,255,255,0.13);
-          transform: rotate(30deg);
-          transition: none;
-        }
-        .quick-badge-btn:hover::after {
-          left: 150%;
-          transition: all 0.6s ease-in-out;
-        }
-        .guide-step-card {
-          transition: border-color 0.2s;
-        }
-        .guide-step-card:hover {
-          border-color: rgba(41, 98, 255, 0.3) !important;
         }
         .glow-border-container {
           background: linear-gradient(90deg, #2962ff, #089981, #fbbf24, #2962ff);

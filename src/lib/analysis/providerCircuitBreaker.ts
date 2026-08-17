@@ -50,6 +50,16 @@ export class ProviderCircuitBreaker {
   }
 }
 
+export interface ProviderChainResult<T, P extends MarketDataProviderId = MarketDataProviderId> {
+  provider: P;
+  value: T;
+}
+
+interface ProviderChainOptions<P extends MarketDataProviderId> {
+  circuitBreaker?: ProviderCircuitBreaker;
+  onFailure?: (provider: P, error?: unknown) => void;
+}
+
 const globalCircuitStore = globalThis as typeof globalThis & {
   zenithMarketDataCircuitBreaker?: ProviderCircuitBreaker;
 };
@@ -58,3 +68,32 @@ export const marketDataCircuitBreaker =
   globalCircuitStore.zenithMarketDataCircuitBreaker ?? new ProviderCircuitBreaker();
 
 globalCircuitStore.zenithMarketDataCircuitBreaker = marketDataCircuitBreaker;
+
+export async function runSequentialProviderChain<T, P extends MarketDataProviderId>(
+  providers: readonly P[],
+  attempt: (provider: P) => Promise<T | null>,
+  options: ProviderChainOptions<P> = {},
+): Promise<ProviderChainResult<T, P> | null> {
+  const circuitBreaker = options.circuitBreaker ?? marketDataCircuitBreaker;
+
+  for (const provider of providers) {
+    if (!circuitBreaker.shouldAttempt(provider, false)) continue;
+
+    try {
+      const value = await attempt(provider);
+      if (value === null) {
+        circuitBreaker.recordFailure(provider);
+        options.onFailure?.(provider);
+        continue;
+      }
+
+      circuitBreaker.recordSuccess(provider);
+      return { provider, value };
+    } catch (error: unknown) {
+      circuitBreaker.recordFailure(provider);
+      options.onFailure?.(provider, error);
+    }
+  }
+
+  return null;
+}

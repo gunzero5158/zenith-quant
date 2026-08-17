@@ -310,6 +310,13 @@ function normalizeUnsafeActions(
     && assessment.rightStatus === "triggered"
     && strategy.rightAdd.action === "add_on_retest";
 
+  if (assessment.leftStatus === "triggered" && !leftActionable) {
+    assessment.leftStatus = "watch";
+  }
+  if (assessment.rightStatus === "triggered" && !rightActionable) {
+    assessment.rightStatus = "watch";
+  }
+
   if (!leftActionable && (assessment.activeSetup === "left" || strategy.leftEntry.action === "probe")) {
     if (assessment.activeSetup === "left") assessment.activeSetup = "none";
     if (strategy.leftEntry.action === "probe") {

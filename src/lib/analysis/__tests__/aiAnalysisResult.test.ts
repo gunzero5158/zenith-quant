@@ -170,6 +170,7 @@ describe("AI-native analysis result validation", () => {
 
     expect(result.strategyAdvice.leftEntry.action).toBe("wait");
     expect(result.scoreAssessment.activeSetup).toBe("none");
+    expect(result.scoreAssessment.leftStatus).toBe("watch");
     expect(result.scoreAssessment.riskPlan.target).toBeUndefined();
     expect(result.scoreAssessment.finalScore).toBe(3.75);
   });
@@ -180,6 +181,7 @@ describe("AI-native analysis result validation", () => {
     const result = validateAiAnalysisResult(value, snapshot, "en");
 
     expect(result.scoreAssessment.activeSetup).toBe("none");
+    expect(result.scoreAssessment.leftStatus).toBe("watch");
     expect(result.strategyAdvice.leftEntry.action).toBe("wait");
     expect(result.strategyAdvice.leftEntry.text).toMatch(/No validated stop-target pair/);
     expect(result.scoreAssessment.finalScore).toBe(3.75);
@@ -204,6 +206,22 @@ describe("AI-native analysis result validation", () => {
 
     expect(result.scoreAssessment.activeSetup).toBe("none");
     expect(result.strategyAdvice.leftEntry.action).toBe("wait");
+  });
+
+  it("downgrades a confirmed right-side setup when it is not executable", () => {
+    const value = validResult();
+    value.scoreAssessment.leftStatus = "not_formed";
+    value.scoreAssessment.rightStatus = "triggered";
+    value.scoreAssessment.activeSetup = "right";
+    value.scoreAssessment.riskPlan = { stop: 95 } as { stop: number; target: number };
+    value.strategyAdvice.leftEntry.action = "not_applicable";
+    value.strategyAdvice.rightAdd.action = "add_on_retest";
+
+    const result = validateAiAnalysisResult(value, snapshot, "zh-CN");
+
+    expect(result.scoreAssessment.activeSetup).toBe("none");
+    expect(result.scoreAssessment.rightStatus).toBe("watch");
+    expect(result.strategyAdvice.rightAdd.action).toBe("wait_breakout");
   });
 
   it("removes internal evidence IDs from every user-visible string", () => {
