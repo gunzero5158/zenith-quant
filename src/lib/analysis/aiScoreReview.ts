@@ -1,4 +1,5 @@
 import { sanitizeUserVisibleAnalysisText } from "./publicAnalysisText";
+import type { AiMarketOutlook } from "./aiAnalysisResult";
 
 export type AiScoreAlignment = "agree" | "more_cautious" | "more_constructive";
 
@@ -11,6 +12,7 @@ export interface AiScoreReview {
   adjustment: number;
   confidence: number;
   alignment: AiScoreAlignment;
+  outlook: AiMarketOutlook;
   reasons: AiScoreReason[];
   conflicts: unknown[];
   changeConditions: unknown[];
@@ -87,6 +89,9 @@ export function validateAiScoreReview(
   const alignments: AiScoreAlignment[] = ["agree", "more_cautious", "more_constructive"];
   const alignmentValid = typeof value.alignment === "string" && alignments.includes(value.alignment as AiScoreAlignment);
   if (!alignmentValid) warnings.push("scoreReview.alignment is invalid");
+  const outlooks: AiMarketOutlook[] = ["bullish", "neutral", "bearish"];
+  const outlookValid = typeof value.outlook === "string" && outlooks.includes(value.outlook as AiMarketOutlook);
+  if (!outlookValid) warnings.push("scoreReview.outlook is invalid");
 
   const reasons = parseReasons(value.reasons, new Set(evidenceIds), warnings);
   const conflicts = Array.isArray(value.conflicts) ? value.conflicts : [];
@@ -94,11 +99,12 @@ export function validateAiScoreReview(
   if (!Array.isArray(value.conflicts)) warnings.push("scoreReview.conflicts must be an array");
   if (!Array.isArray(value.changeConditions)) warnings.push("scoreReview.changeConditions must be an array");
 
-  const review: AiScoreReview | undefined = confidenceValid && alignmentValid
+  const review: AiScoreReview | undefined = confidenceValid && alignmentValid && outlookValid
     ? {
         adjustment,
         confidence: confidence as number,
         alignment: value.alignment as AiScoreAlignment,
+        outlook: value.outlook as AiMarketOutlook,
         reasons,
         conflicts,
         changeConditions,

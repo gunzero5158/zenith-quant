@@ -6,55 +6,54 @@ type SupportedLanguage = "zh-CN" | "zh-TW" | "en" | "ja";
 
 interface PresentationLabels {
   ai: string;
+  aiTrend: string;
   confidence: string;
   outlook: string;
-  rule: string;
-  adjustment: string;
   final: string;
   left: string;
   right: string;
   statuses: Record<ScenarioStatus, string>;
   outlooks: Record<AiEntryAssessment["outlook"], string>;
+  outlookUnavailable: string;
   dailyProvisional: string;
   weeklyProvisional: string;
 }
 
 const LABELS: Record<SupportedLanguage, PresentationLabels> = {
   "zh-CN": {
-    ai: "AI 评分", confidence: "置信度", outlook: "走势", rule: "规则基础分", adjustment: "AI调整", final: "最终综合分", left: "左侧", right: "右侧",
+    ai: "AI 评分", aiTrend: "AI趋势", confidence: "置信度", outlook: "走势", final: "最终综合分", left: "左侧", right: "右侧",
     statuses: { not_formed: "未形成", watch: "观察", provisional: "盘中暂定", triggered: "确认", too_late: "过晚" },
-    outlooks: { bullish: "看多", neutral: "中性", bearish: "看空" },
+    outlooks: { bullish: "看多", neutral: "震荡", bearish: "看空" },
+    outlookUnavailable: "未判断",
     dailyProvisional: "日线暂定", weeklyProvisional: "周线暂定",
   },
   "zh-TW": {
-    ai: "AI 評分", confidence: "置信度", outlook: "走勢", rule: "規則基礎分", adjustment: "AI調整", final: "最終綜合分", left: "左側", right: "右側",
+    ai: "AI 評分", aiTrend: "AI趨勢", confidence: "置信度", outlook: "走勢", final: "最終綜合分", left: "左側", right: "右側",
     statuses: { not_formed: "未形成", watch: "觀察", provisional: "盤中暫定", triggered: "確認", too_late: "過晚" },
-    outlooks: { bullish: "看多", neutral: "中性", bearish: "看空" },
+    outlooks: { bullish: "看多", neutral: "震盪", bearish: "看空" },
+    outlookUnavailable: "未判斷",
     dailyProvisional: "日線暫定", weeklyProvisional: "週線暫定",
   },
   en: {
-    ai: "AI score", confidence: "Confidence", outlook: "Outlook", rule: "Rule score", adjustment: "AI adjustment", final: "Final score", left: "Left", right: "Right",
+    ai: "AI score", aiTrend: "AI trend", confidence: "Confidence", outlook: "Outlook", final: "Final score", left: "Left", right: "Right",
     statuses: { not_formed: "Not formed", watch: "Watch", provisional: "Intraday provisional", triggered: "Confirmed", too_late: "Too late" },
     outlooks: { bullish: "Bullish", neutral: "Neutral", bearish: "Bearish" },
+    outlookUnavailable: "Unavailable",
     dailyProvisional: "Daily provisional", weeklyProvisional: "Weekly provisional",
   },
   ja: {
-    ai: "AI スコア", confidence: "確信度", outlook: "見通し", rule: "ルールスコア", adjustment: "AI調整", final: "最終スコア", left: "左側", right: "右側",
+    ai: "AI スコア", aiTrend: "AIトレンド", confidence: "確信度", outlook: "見通し", final: "最終スコア", left: "左側", right: "右側",
     statuses: { not_formed: "未形成", watch: "監視", provisional: "日中暫定", triggered: "確認", too_late: "手遅れ" },
     outlooks: { bullish: "強気", neutral: "中立", bearish: "弱気" },
+    outlookUnavailable: "未判定",
     dailyProvisional: "日足暫定", weeklyProvisional: "週足暫定",
   },
 };
 
 export interface EntryScorePresentation {
-  mode: "rule-ai" | "ai-native";
-  ruleLabel: string;
-  adjustmentLabel: string;
   finalLabel: string;
   leftLabel: string;
   rightLabel: string;
-  ruleText: string;
-  adjustmentText: string;
   finalText: string;
   leftText: string;
   rightText: string;
@@ -87,14 +86,9 @@ export function buildEntryScorePresentation(
   }
   if (isAiEntryAssessment(assessment)) {
     return {
-      mode: "ai-native",
-      ruleLabel: "",
-      adjustmentLabel: "",
       finalLabel: labels.ai,
       leftLabel: labels.left,
       rightLabel: labels.right,
-      ruleText: "",
-      adjustmentText: "",
       finalText: assessment.finalScore.toFixed(1),
       leftText: labels.statuses[assessment.leftStatus],
       rightText: labels.statuses[assessment.rightStatus],
@@ -108,17 +102,14 @@ export function buildEntryScorePresentation(
   }
 
   return {
-    mode: "rule-ai",
-    ruleLabel: labels.rule,
-    adjustmentLabel: labels.adjustment,
     finalLabel: labels.final,
     leftLabel: labels.left,
     rightLabel: labels.right,
-    ruleText: assessment.ruleScore.toFixed(1),
-    adjustmentText: `${assessment.aiAdjustment >= 0 ? "+" : ""}${assessment.aiAdjustment.toFixed(1)}`,
     finalText: assessment.finalScore.toFixed(1),
     leftText: labels.statuses[assessment.leftStatus],
     rightText: labels.statuses[assessment.rightStatus],
     dataStatus: statusParts.join(" · "),
+    outlookLabel: labels.aiTrend,
+    outlookText: assessment.aiOutlook ? labels.outlooks[assessment.aiOutlook] : labels.outlookUnavailable,
   };
 }

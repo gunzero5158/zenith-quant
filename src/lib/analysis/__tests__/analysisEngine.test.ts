@@ -71,6 +71,7 @@ describe("pure analysis engine", () => {
     expect(prompt).toContain("plain-language meaning");
     expect(prompt).toContain("5-20 trading-day decision");
     expect(prompt).toContain("Evidence IDs may appear only in scoreReview.reasons[].evidenceIds");
+    expect(prompt).toContain('"outlook": "neutral"');
     expect(prompt).toContain("Never include evidence IDs in overview, technicalAnalysis, strategyCommentary");
 
     const languageNames = {

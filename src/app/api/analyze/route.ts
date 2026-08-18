@@ -801,6 +801,7 @@ export async function POST(request: Request) {
         finalAssessment = {
           ...techData.entryAssessment,
           aiAdjustment: aiScoreReview.appliedAdjustment,
+          aiOutlook: aiScoreReview.review?.outlook,
           finalScore: aiScoreReview.finalScore,
         };
         const composedReport = composeAiReport(parsed, localReport, effectiveLang, evidenceIds);

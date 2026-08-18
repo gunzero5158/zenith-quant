@@ -9,7 +9,7 @@ export interface LLMConfig {
 // response parsing, and local fallback generation.
 const LLM_PROVIDER_TIMEOUT_MS = 270_000;
 const MAX_UPSTREAM_ERROR_CHARS = 240;
-const ANALYSIS_SYSTEM_BOUNDARY = "You are reviewing an immutable technical-analysis evidence snapshot. Interpret the supplied facts and challenge the rule score only when cited evidence supports it. Do not recalculate indicators, invent market data, or introduce outside facts. Any score adjustment must stay within +/-0.5 and cite provided evidence IDs. Evidence IDs are machine-only and may appear only in scoreReview.reasons[].evidenceIds; never include them in user-visible prose.";
+const ANALYSIS_SYSTEM_BOUNDARY = "You are reviewing an immutable technical-analysis evidence snapshot. Interpret the supplied facts, independently classify the requested market outlook, and challenge the rule score only when cited evidence supports it. Do not recalculate indicators, invent market data, or introduce outside facts. Any score adjustment must stay within +/-0.5 and cite provided evidence IDs. Evidence IDs are machine-only and may appear only in scoreReview.reasons[].evidenceIds; never include them in user-visible prose.";
 
 // Hostnames/IP ranges that must never be reachable through a user-supplied baseUrl.
 // This blocks SSRF against cloud metadata endpoints and internal networks.

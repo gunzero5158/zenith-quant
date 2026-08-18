@@ -8,6 +8,7 @@ function review(adjustment: number, ids = ["weekly.macd.death_cross"]) {
     adjustment,
     confidence: 0.8,
     alignment: adjustment < 0 ? "more_cautious" : adjustment > 0 ? "more_constructive" : "agree",
+    outlook: "bearish",
     reasons: adjustment === 0 ? [] : [{ evidenceIds: ids, text: "周线动能与日线修复存在冲突" }],
     conflicts: [],
     changeConditions: [],
@@ -43,6 +44,7 @@ describe("bounded AI score review", () => {
 
   it("accepts a reasoned adjustment that references existing evidence", () => {
     const result = validateAiScoreReview(review(-0.3), evidenceIds, 4.1, 5);
+    expect(result.review?.outlook).toBe("bearish");
     expect(result.appliedAdjustment).toBe(-0.3);
     expect(result.finalScore).toBe(3.8);
   });
@@ -68,5 +70,11 @@ describe("bounded AI score review", () => {
   it("rejects malformed confidence and alignment", () => {
     const result = validateAiScoreReview({ ...review(0.3), confidence: 2, alignment: "optimistic" }, evidenceIds, 3.2, 5);
     expect(result.appliedAdjustment).toBe(0);
+  });
+
+  it("rejects an invalid market outlook", () => {
+    const result = validateAiScoreReview({ ...review(0), outlook: "uncertain" }, evidenceIds, 3.2, 5);
+    expect(result.review).toBeUndefined();
+    expect(result.validationWarnings).toContain("scoreReview.outlook is invalid");
   });
 });

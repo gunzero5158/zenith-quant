@@ -21,6 +21,7 @@ export interface EntryDimensions {
 export interface EntryAssessment {
   ruleScore: number;
   aiAdjustment: number;
+  aiOutlook?: "bullish" | "neutral" | "bearish";
   finalScore: number;
   hardCap: number;
   dimensions: EntryDimensions;

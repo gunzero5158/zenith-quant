@@ -1211,18 +1211,11 @@ export default function Home() {
                     {scorePresentation && stockData.entryAssessment && (
                       <>
                         <div style={styles.scoreBreakdownRow}>
-                          {scorePresentation.mode === "ai-native" ? (
-                            <>
-                              <span>{scorePresentation.confidenceLabel} {scorePresentation.confidenceText}</span>
-                              <span>{scorePresentation.outlookLabel} {scorePresentation.outlookText}</span>
-                            </>
-                          ) : (
-                            <>
-                              <span>{scorePresentation.ruleLabel} {scorePresentation.ruleText}</span>
-                              <span style={{ color: "aiAdjustment" in stockData.entryAssessment && stockData.entryAssessment.aiAdjustment < 0 ? "#f23645" : "aiAdjustment" in stockData.entryAssessment && stockData.entryAssessment.aiAdjustment > 0 ? "#089981" : "#787b86" }}>
-                                {scorePresentation.adjustmentLabel} {scorePresentation.adjustmentText}
-                              </span>
-                            </>
+                          {scorePresentation.confidenceLabel && scorePresentation.confidenceText && (
+                            <span>{scorePresentation.confidenceLabel} {scorePresentation.confidenceText}</span>
+                          )}
+                          {scorePresentation.outlookLabel && scorePresentation.outlookText && (
+                            <span>{scorePresentation.outlookLabel} {scorePresentation.outlookText}</span>
                           )}
                         </div>
                         <div style={styles.scenarioRow}>

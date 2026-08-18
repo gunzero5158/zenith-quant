@@ -1,6 +1,6 @@
 const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 
-export const ANALYSIS_CACHE_VERSION = 3;
+export const ANALYSIS_CACHE_VERSION = 4;
 export const ACTIVE_MARKET_ANALYSIS_MAX_AGE_MS = 10 * 60 * 1000;
 export const MARKET_DATA_CACHE_MAX_RETENTION_MS = 4 * 24 * 60 * 60 * 1000;
 

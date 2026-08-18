@@ -21,18 +21,18 @@ function assessment(overrides: Partial<EntryAssessment> = {}): EntryAssessment {
 }
 
 describe("entry score presentation", () => {
-  it("labels rule, AI adjustment, final score, and scenarios", () => {
-    expect(buildEntryScorePresentation(assessment(), "zh-CN")).toMatchObject({
-      ruleLabel: "规则基础分",
-      adjustmentText: "-0.2",
+  it("presents the AI trend instead of internal score details", () => {
+    expect(buildEntryScorePresentation(assessment({ aiOutlook: "bearish" }), "zh-CN")).toMatchObject({
+      outlookLabel: "AI趋势",
+      outlookText: "看空",
       finalLabel: "最终综合分",
       leftText: "确认",
       rightText: "观察",
     });
   });
 
-  it("formats positive adjustment and provisional data status", () => {
-    const view = buildEntryScorePresentation(assessment({ aiAdjustment: 0.3 }), "en", {
+  it("localizes a neutral trend and provisional data status", () => {
+    const view = buildEntryScorePresentation(assessment({ aiOutlook: "neutral" }), "en", {
       asOf: "2026-07-23T06:00:00.000Z",
       dailyBarComplete: false,
       weeklyBarComplete: false,
@@ -42,9 +42,16 @@ describe("entry score presentation", () => {
       scoreCap: 5,
       warnings: [],
     });
-    expect(view.adjustmentText).toBe("+0.3");
+    expect(view.outlookText).toBe("Neutral");
     expect(view.dataStatus).toContain("Daily provisional");
     expect(view.dataStatus).toContain("Weekly provisional");
+  });
+
+  it("does not invent an AI trend when no valid AI review is available", () => {
+    expect(buildEntryScorePresentation(assessment(), "zh-CN")).toMatchObject({
+      outlookLabel: "AI趋势",
+      outlookText: "未判断",
+    });
   });
 
   it("labels an intraday trigger as provisional instead of confirmed", () => {
@@ -66,13 +73,10 @@ describe("entry score presentation", () => {
     };
 
     expect(buildEntryScorePresentation(aiAssessment, "zh-CN")).toMatchObject({
-      mode: "ai-native",
       finalLabel: "AI 评分",
       finalText: "3.8",
       confidenceText: "78%",
       outlookText: "看多",
-      ruleText: "",
-      adjustmentText: "",
     });
   });
 });

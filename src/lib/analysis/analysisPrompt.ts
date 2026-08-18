@@ -51,6 +51,7 @@ Write every user-visible string in that language, including headings, explanatio
 Do not recalculate MACD, KDJ, RSI, EMA, BOLL, Ichimoku, ATR, Fibonacci, TD Sequential, classical patterns, candlesticks, volume, CMF, OBV, VPVR, Elliott Wave, or Chanlun. Use the supplied event timing and provisional daily/weekly status.
 The 0-5 rule score measures current new-entry attractiveness, not trend strength. Holder, left entry, right add, and exit/stop are separate strategies.
 You may adjust the rule score by at most +/-0.5. A nonzero adjustment must cite existing evidence IDs and cannot exceed hardCap.
+Independently classify the likely 5-20 trading-day price trend as bullish, neutral, or bearish. Use neutral for a range-bound or materially mixed outlook. This outlook is separate from entry attractiveness and score adjustment.
 Evidence IDs may appear only in scoreReview.reasons[].evidenceIds. They are machine-readable references, not analyst language.
 Never include evidence IDs in overview, technicalAnalysis, strategyCommentary, score-review reason text, conflicts, or change conditions. Refer to indicators and facts in plain language instead.
 
@@ -73,6 +74,7 @@ Return JSON only with this shape:
     "adjustment": 0,
     "confidence": 0,
     "alignment": "agree",
+    "outlook": "neutral",
     "reasons": [{ "evidenceIds": ["existing.id"], "text": "string" }],
     "conflicts": [],
     "changeConditions": []
