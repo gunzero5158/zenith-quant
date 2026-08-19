@@ -101,6 +101,65 @@ describe("unified evidence snapshot", () => {
     });
   });
 
+  it("publishes the full VPVR context as an evidence item", () => {
+    const snapshot = buildEvidenceSnapshot(fixture({
+      volumeProfile: {
+        available: true,
+        totalVolume: 10_000,
+        poc: 96,
+        valueAreaHigh: 99,
+        valueAreaLow: 92,
+        nodes: [{ price: 96, volume: 1_000, volumeShare: 0.35 }],
+        pricePosition: "above_value_area",
+        overheadSupply: "light",
+        volumeAbovePriceShare: 0.12,
+        volumeBelowPriceShare: 0.8,
+        volumeAtPriceShare: 0.08,
+        barsSinceValueAreaBreakout: 1,
+        breakoutRelativeVolume: 1.6,
+        breakoutVolumeConfirmed: true,
+      },
+    }));
+
+    expect(snapshot.items.find((item) => item.family === "vpvr")).toMatchObject({
+      id: "daily.vpvr.value_area_breakout_confirmed",
+      direction: "bullish",
+      barsSince: 1,
+      values: {
+        poc: 96,
+        valueAreaHigh: 99,
+        valueAreaLow: 92,
+        overheadSupply: "light",
+        volumeAbovePriceShare: 0.12,
+        breakoutVolumeConfirmed: true,
+      },
+    });
+    expect(snapshot.dailyPhase).toBe("breakout");
+  });
+
+  it("marks VPVR insufficient when the provider has no usable volume", () => {
+    const snapshot = buildEvidenceSnapshot(fixture({
+      volumeProfile: {
+        available: false,
+        totalVolume: 0,
+        poc: 100,
+        valueAreaHigh: 100,
+        valueAreaLow: 100,
+        nodes: [],
+        pricePosition: "inside_value_area",
+        overheadSupply: "balanced",
+        volumeAbovePriceShare: 0,
+        volumeBelowPriceShare: 0,
+        volumeAtPriceShare: 0,
+      },
+    }));
+
+    expect(snapshot.items.find((item) => item.family === "vpvr")).toMatchObject({
+      state: "insufficient",
+      reliability: 0,
+    });
+  });
+
   it("does not classify BOLL above-upper as extended without corroboration", () => {
     const snapshot = buildEvidenceSnapshot(fixture({
       daily: {

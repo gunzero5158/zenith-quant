@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyAnalysisQuoteSnapshot,
   parseAnalysisQuoteSnapshot,
+  shouldRefreshForQuoteSnapshot,
 } from "../analysisQuoteSnapshot";
 
 describe("analysis quote snapshot", () => {
@@ -29,7 +30,7 @@ describe("analysis quote snapshot", () => {
     }, "688048.SS")).toBeNull();
   });
 
-  it("overrides display fields while retaining full realtime candle metadata", () => {
+  it("keeps the server provider quote instead of trusting an untimestamped browser snapshot", () => {
     const quote = applyAnalysisQuoteSnapshot({
       source: "tonghuashun",
       price: 295.37,
@@ -48,8 +49,8 @@ describe("analysis quote snapshot", () => {
 
     expect(quote).toEqual({
       source: "tonghuashun",
-      price: 297.49,
-      changePercent: 1.52,
+      price: 295.37,
+      changePercent: 0.8,
       date: "2026-07-24",
       open: 290,
       high: 301,
@@ -70,5 +71,12 @@ describe("analysis quote snapshot", () => {
       changePercent: 1.52,
       date: "2026-07-24",
     });
+  });
+
+  it("invalidates cached analysis when the newly fetched quote price changed", () => {
+    const snapshot = { symbol: "002371.SZ", price: 723.5, change: -6.89 };
+    expect(shouldRefreshForQuoteSnapshot(777, snapshot)).toBe(true);
+    expect(shouldRefreshForQuoteSnapshot(723.5, snapshot)).toBe(false);
+    expect(shouldRefreshForQuoteSnapshot(777, null)).toBe(false);
   });
 });

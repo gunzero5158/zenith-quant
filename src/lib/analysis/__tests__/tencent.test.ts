@@ -135,4 +135,36 @@ describe("tencent market data provider", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toContain("qt.gtimg.cn/q=usAAPL");
   });
+
+  it("parses the full A-share realtime candle metadata", async () => {
+    const fields = Array.from({ length: 35 }, () => "");
+    fields[1] = "Northern Huachuang";
+    fields[2] = "002371";
+    fields[3] = "723.50";
+    fields[4] = "777.00";
+    fields[5] = "753.88";
+    fields[6] = "62568";
+    fields[30] = "20260819120239";
+    fields[32] = "-6.89";
+    fields[33] = "757.00";
+    fields[34] = "723.37";
+    const responseText = `v_sz002371="${fields.join("~")}";`;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: () => Promise.resolve(new TextEncoder().encode(responseText).buffer),
+    }));
+
+    await expect(fetchTencentQuote("002371.SZ")).resolves.toEqual({
+      price: 723.5,
+      changePercent: -6.89,
+      companyName: "Northern Huachuang",
+      source: "tencent",
+      date: "2026-08-19",
+      open: 753.88,
+      high: 757,
+      low: 723.37,
+      previousClose: 777,
+      volume: 6256800,
+    });
+  });
 });

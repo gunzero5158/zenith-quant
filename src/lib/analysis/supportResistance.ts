@@ -8,10 +8,23 @@ export interface VolumeProfileNode {
 }
 
 export interface VolumeProfileRange {
+  available: boolean;
+  totalVolume: number;
   poc: number;
   valueAreaHigh: number;
   valueAreaLow: number;
   nodes: VolumeProfileNode[];
+  pricePosition: "above_value_area" | "inside_value_area" | "below_value_area";
+  overheadSupply: "light" | "balanced" | "heavy";
+  volumeAbovePriceShare: number;
+  volumeBelowPriceShare: number;
+  volumeAtPriceShare: number;
+  barsSinceValueAreaBreakout?: number;
+  breakoutRelativeVolume?: number;
+  breakoutVolumeConfirmed?: boolean;
+  barsSinceValueAreaBreakdown?: number;
+  breakdownRelativeVolume?: number;
+  breakdownVolumeConfirmed?: boolean;
 }
 
 export interface SupportResistanceResult {
@@ -32,6 +45,35 @@ export interface SupportResistanceResult {
 interface PivotRecord {
   price: number;
   index: number;
+}
+
+function relativeVolumeAt(candles: Candle[], index: number): number {
+  const prior = candles.slice(Math.max(0, index - 20), index);
+  if (prior.length === 0) return 0;
+  const average = prior.reduce((sum, candle) => sum + candle.volume, 0) / prior.length;
+  return average > 0 ? Number((candles[index].volume / average).toFixed(2)) : 0;
+}
+
+function recentLevelCross(
+  candles: Candle[],
+  level: number,
+  direction: "up" | "down",
+  lookback = 5
+): { barsSince: number; relativeVolume: number; volumeConfirmed: boolean } | undefined {
+  const start = Math.max(1, candles.length - lookback);
+  for (let index = candles.length - 1; index >= start; index--) {
+    const crossed = direction === "up"
+      ? candles[index - 1].close <= level && candles[index].close > level
+      : candles[index - 1].close >= level && candles[index].close < level;
+    if (!crossed) continue;
+    const relativeVolume = relativeVolumeAt(candles, index);
+    return {
+      barsSince: candles.length - 1 - index,
+      relativeVolume,
+      volumeConfirmed: relativeVolume >= 1.3,
+    };
+  }
+  return undefined;
 }
 
 /**
@@ -174,16 +216,18 @@ export function calculateSupportResistance(
   }
 
   const numBins = 20;
-  const binSize = (maxPrice - minPrice) / numBins;
+  const rawRange = maxPrice - minPrice;
+  const binSize = rawRange > 0 ? rawRange / numBins : Math.max(Math.abs(currentPrice) * 0.001, 0.01);
+  const profileMin = rawRange > 0 ? minPrice : minPrice - binSize * (numBins / 2);
   const bins = Array(numBins).fill(0).map((_, i) => ({
-    min: minPrice + i * binSize,
-    max: minPrice + (i + 1) * binSize,
+    min: profileMin + i * binSize,
+    max: profileMin + (i + 1) * binSize,
     volume: 0,
   }));
 
   // Assign trading volume to price bins based on candle close
   for (const c of recentCandles) {
-    const binIdx = Math.min(Math.floor((c.close - minPrice) / binSize), numBins - 1);
+    const binIdx = Math.min(Math.floor((c.close - profileMin) / binSize), numBins - 1);
     if (binIdx >= 0 && binIdx < numBins) {
       bins[binIdx].volume += c.volume;
     }
@@ -229,11 +273,52 @@ export function calculateSupportResistance(
   }
 
   const volumeProfile: VolumeProfileRange = {
+    available: totalProfileVolume > 0,
+    totalVolume: totalProfileVolume,
     poc: volumePOC,
     valueAreaHigh: Number(bins[valueAreaHighIdx].max.toFixed(2)),
     valueAreaLow: Number(bins[valueAreaLowIdx].min.toFixed(2)),
     nodes: profileNodes,
+    pricePosition: "inside_value_area",
+    overheadSupply: "balanced",
+    volumeAbovePriceShare: 0,
+    volumeBelowPriceShare: 0,
+    volumeAtPriceShare: 0,
   };
+  const volumeAbovePrice = bins
+    .filter((bin) => bin.min >= currentPrice)
+    .reduce((sum, bin) => sum + bin.volume, 0);
+  const volumeBelowPrice = bins
+    .filter((bin) => bin.max <= currentPrice)
+    .reduce((sum, bin) => sum + bin.volume, 0);
+  const volumeAtPrice = Math.max(0, totalProfileVolume - volumeAbovePrice - volumeBelowPrice);
+  if (volumeProfile.available) {
+    volumeProfile.volumeAbovePriceShare = Number((volumeAbovePrice / totalProfileVolume).toFixed(4));
+    volumeProfile.volumeBelowPriceShare = Number((volumeBelowPrice / totalProfileVolume).toFixed(4));
+    volumeProfile.volumeAtPriceShare = Number((volumeAtPrice / totalProfileVolume).toFixed(4));
+    volumeProfile.pricePosition = currentPrice > volumeProfile.valueAreaHigh
+      ? "above_value_area"
+      : currentPrice < volumeProfile.valueAreaLow
+        ? "below_value_area"
+        : "inside_value_area";
+    volumeProfile.overheadSupply = volumeProfile.volumeAbovePriceShare <= 0.2
+      ? "light"
+      : volumeProfile.volumeAbovePriceShare >= 0.5
+        ? "heavy"
+        : "balanced";
+    const valueAreaBreakout = recentLevelCross(recentCandles, volumeProfile.valueAreaHigh, "up");
+    if (valueAreaBreakout) {
+      volumeProfile.barsSinceValueAreaBreakout = valueAreaBreakout.barsSince;
+      volumeProfile.breakoutRelativeVolume = valueAreaBreakout.relativeVolume;
+      volumeProfile.breakoutVolumeConfirmed = valueAreaBreakout.volumeConfirmed;
+    }
+    const valueAreaBreakdown = recentLevelCross(recentCandles, volumeProfile.valueAreaLow, "down");
+    if (valueAreaBreakdown) {
+      volumeProfile.barsSinceValueAreaBreakdown = valueAreaBreakdown.barsSince;
+      volumeProfile.breakdownRelativeVolume = valueAreaBreakdown.relativeVolume;
+      volumeProfile.breakdownVolumeConfirmed = valueAreaBreakdown.volumeConfirmed;
+    }
+  }
 
   // Find other high-volume nodes (e.g. volume > 70% of maxVolume) as additional S/R
   const volumeSupportNodes: number[] = [];
@@ -270,13 +355,21 @@ export function calculateSupportResistance(
     hits: cluster.hits,
     lastSeenIndex: candles.length - recentCandles.length + cluster.index,
   }));
-  for (const price of [volumePOC, ...volumeSupportNodes.slice(0, 2), ...volumeResistanceNodes.slice(0, 2)]) {
-    typedLevels.push({
-      price,
-      kind: price < currentPrice ? "support" : "resistance",
-      source: "vpvr",
-      strength: price === volumePOC ? 0.85 : 0.65,
-    });
+  if (volumeProfile.available) {
+    for (const [price, strength] of [
+      [volumePOC, 0.85],
+      [volumeProfile.valueAreaHigh, 0.75],
+      [volumeProfile.valueAreaLow, 0.75],
+      ...volumeSupportNodes.slice(0, 2).map((price) => [price, 0.65] as const),
+      ...volumeResistanceNodes.slice(0, 2).map((price) => [price, 0.65] as const),
+    ] as const) {
+      typedLevels.push({
+        price,
+        kind: price < currentPrice ? "support" : "resistance",
+        source: "vpvr",
+        strength,
+      });
+    }
   }
   for (const [rawPrice, source] of [
     [ema20Val, "ema"],
@@ -313,12 +406,17 @@ export function calculateSupportResistance(
     desc += `上方临近布林上轨压力位 $${dynamicBOLLUpper}。`;
   }
 
-  if (Math.abs(currentPrice - volumePOC) / currentPrice * 100 <= 2) {
+  if (!volumeProfile.available) {
+    desc += " 成交量数据不可用，未生成VPVR筹码分布。";
+  } else if (Math.abs(currentPrice - volumePOC) / currentPrice * 100 <= 2) {
     desc += ` 股票价格当前正处于筹码密集区峰值 (POC: $${volumePOC}) 附近，预计将有剧烈方向选择。`;
   } else if (currentPrice > volumePOC) {
     desc += ` 价格处于筹码密集峰值 $${volumePOC} 之上，筹码结构安全，POC转化为强底支撑。`;
   } else {
     desc += ` 价格处于筹码密集峰值 $${volumePOC} 之下，上方有较重筹码套牢盘压力。`;
+  }
+  if (volumeProfile.available) {
+    desc += ` VPVR价值区为 $${volumeProfile.valueAreaLow}-$${volumeProfile.valueAreaHigh}，当前价上方成交量占比约 ${(volumeProfile.volumeAbovePriceShare * 100).toFixed(1)}%。`;
   }
 
   return {

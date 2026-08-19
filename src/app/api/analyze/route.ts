@@ -40,6 +40,7 @@ import {
   applyAnalysisQuoteSnapshot,
   getShanghaiDateKey,
   parseAnalysisQuoteSnapshot,
+  shouldRefreshForQuoteSnapshot,
 } from "@/lib/analysis/analysisQuoteSnapshot";
 import {
   isMarketDataCacheReusable,
@@ -541,6 +542,12 @@ export async function POST(request: Request) {
 
     // Trading data expires after ten minutes during a session and at the next session boundary while closed.
     if (techCache[cacheKey] && !isMarketDataCacheReusable(cleanSymbol, techCache[cacheKey].timestamp, now)) {
+      delete techCache[cacheKey];
+    }
+    if (
+      techCache[cacheKey]
+      && shouldRefreshForQuoteSnapshot(techCache[cacheKey].data.price, analysisQuoteSnapshot)
+    ) {
       delete techCache[cacheKey];
     }
 

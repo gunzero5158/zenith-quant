@@ -11,6 +11,7 @@ import {
   TradeLevel,
 } from "./evidence";
 import { FibonacciAnalysis, PatternSignal } from "./patterns";
+import type { VolumeProfileRange } from "./supportResistance";
 import {
   AtrSignal,
   BollSignal,
@@ -62,6 +63,7 @@ export interface EvidenceBuilderInput {
   candlesticks?: CandlestickPatternSignal[];
   chanlun?: Partial<ChanLunResult>;
   elliottWave?: ElliottEvidenceInput;
+  volumeProfile?: VolumeProfileRange;
   levels?: TradeLevel[];
 }
 
@@ -282,6 +284,83 @@ function addPatternEvidence(items: EvidenceItem[], input: EvidenceBuilderInput):
   }
 }
 
+function addVpvrEvidence(items: EvidenceItem[], input: EvidenceBuilderInput): void {
+  const profile = input.volumeProfile;
+  if (!profile) return;
+  if (!profile.available) {
+    items.push({
+      id: "daily.vpvr.insufficient",
+      family: "vpvr",
+      timeframe: "daily",
+      direction: "neutral",
+      state: "insufficient",
+      label: "Insufficient volume data",
+      description: "Volume data is unavailable, so VPVR was not calculated.",
+      provisional: !input.dataQuality.dailyBarComplete,
+      reliability: 0,
+    });
+    return;
+  }
+  const confirmedBreakout = profile.breakoutVolumeConfirmed === true &&
+    typeof profile.barsSinceValueAreaBreakout === "number" &&
+    profile.barsSinceValueAreaBreakout <= 2;
+  const confirmedBreakdown = profile.breakdownVolumeConfirmed === true &&
+    typeof profile.barsSinceValueAreaBreakdown === "number" &&
+    profile.barsSinceValueAreaBreakdown <= 2;
+  const direction: EvidenceDirection = confirmedBreakout ||
+    (profile.pricePosition === "above_value_area" && profile.overheadSupply === "light")
+    ? "bullish"
+    : confirmedBreakdown ||
+        (profile.pricePosition === "below_value_area" && profile.overheadSupply === "heavy")
+      ? "bearish"
+      : "neutral";
+  const state = confirmedBreakout
+    ? "value_area_breakout_confirmed"
+    : confirmedBreakdown
+      ? "value_area_breakdown_confirmed"
+      : profile.pricePosition === "above_value_area" && profile.overheadSupply === "light"
+        ? "above_value_area_light_overhead"
+        : profile.pricePosition === "below_value_area" && profile.overheadSupply === "heavy"
+          ? "below_value_area_heavy_overhead"
+          : profile.pricePosition;
+  const barsSince = confirmedBreakout
+    ? profile.barsSinceValueAreaBreakout
+    : confirmedBreakdown
+      ? profile.barsSinceValueAreaBreakdown
+      : undefined;
+  const topNodes = profile.nodes.slice(0, 5).map((node) => `${node.price}:${node.volumeShare}`).join(",");
+  const provisional = !input.dataQuality.dailyBarComplete;
+  items.push(item(
+    "vpvr",
+    "daily",
+    `daily.vpvr.${state}`,
+    direction,
+    state,
+    `VPVR POC is ${profile.poc}; value area ${profile.valueAreaLow}-${profile.valueAreaHigh}; price is ${profile.pricePosition}; historical volume above price is ${(profile.volumeAbovePriceShare * 100).toFixed(1)}% (${profile.overheadSupply} overhead supply).`,
+    provisional,
+    {
+      barsSince,
+      values: {
+        poc: profile.poc,
+        valueAreaHigh: profile.valueAreaHigh,
+        valueAreaLow: profile.valueAreaLow,
+        pricePosition: profile.pricePosition,
+        overheadSupply: profile.overheadSupply,
+        volumeAbovePriceShare: profile.volumeAbovePriceShare,
+        volumeBelowPriceShare: profile.volumeBelowPriceShare,
+        volumeAtPriceShare: profile.volumeAtPriceShare,
+        topNodes,
+        breakoutVolumeConfirmed: profile.breakoutVolumeConfirmed === true,
+        breakoutRelativeVolume: profile.breakoutRelativeVolume ?? 0,
+        barsSinceValueAreaBreakout: profile.barsSinceValueAreaBreakout ?? -1,
+        breakdownVolumeConfirmed: profile.breakdownVolumeConfirmed === true,
+        breakdownRelativeVolume: profile.breakdownRelativeVolume ?? 0,
+        barsSinceValueAreaBreakdown: profile.barsSinceValueAreaBreakdown ?? -1,
+      },
+    }
+  ));
+}
+
 function addOtherEvidence(items: EvidenceItem[], input: EvidenceBuilderInput): void {
   const provisional = !input.dataQuality.dailyBarComplete;
   for (const signal of input.candlesticks ?? []) {
@@ -370,7 +449,15 @@ function dailyPhase(input: EvidenceBuilderInput, items: EvidenceItem[], levels: 
   ));
   const bullishVolumeBreakout = input.daily?.volume?.hasVolumeBreakout === true &&
     input.daily.volume.volumeDirection === "bullish";
-  const bullishBreakout = confirmedBullishPattern || (bullishVolumeBreakout && nearBrokenHorizontal);
+  const confirmedVpvrBreakout = items.some((candidate) => (
+    candidate.family === "vpvr" &&
+    candidate.direction === "bullish" &&
+    candidate.values?.breakoutVolumeConfirmed === true &&
+    typeof candidate.values?.barsSinceValueAreaBreakout === "number" &&
+    candidate.values.barsSinceValueAreaBreakout >= 0 &&
+    candidate.values.barsSinceValueAreaBreakout <= 2
+  ));
+  const bullishBreakout = confirmedBullishPattern || (bullishVolumeBreakout && nearBrokenHorizontal) || confirmedVpvrBreakout;
   const bearishBreakdown = ema?.pricePosition === "below_all" && (ema.order === "bearish" || input.daily?.macd?.relation === "bearish");
   const rsiOverbought = (input.daily?.rsi?.value ?? 0) >= 70;
   const sellTdStage = items
@@ -419,6 +506,7 @@ export function buildEvidenceSnapshot(input: EvidenceBuilderInput): EvidenceSnap
   const items: EvidenceItem[] = [];
   addTechnicalFrame(items, input.daily, "daily", !input.dataQuality.dailyBarComplete);
   addTechnicalFrame(items, input.weekly, "weekly", !input.dataQuality.weeklyBarComplete);
+  addVpvrEvidence(items, input);
   addPatternEvidence(items, input);
   addOtherEvidence(items, input);
   ensureFamilyCoverage(items, input);

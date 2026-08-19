@@ -15,6 +15,12 @@ export interface TencentQuote {
   changePercent: number;
   companyName?: string;
   source: "tencent";
+  date?: string;
+  open?: number;
+  high?: number;
+  low?: number;
+  previousClose?: number;
+  volume?: number;
 }
 
 interface TencentKlineResponse {
@@ -157,13 +163,31 @@ async function fetchTencentRealtimeQuote(tencentCode: string): Promise<TencentQu
   const prevClose = parseNumber(fields[4]);
   const changePercent = parseNumber(fields[32])
     ?? (prevClose ? ((price - prevClose) / prevClose) * 100 : 0);
-
-  return {
+  const result: TencentQuote = {
     price,
     changePercent,
     companyName: fields[1] || undefined,
     source: "tencent",
   };
+  if (!/^(?:sh|sz)/.test(tencentCode)) {
+    return result;
+  }
+  const open = parseNumber(fields[5]);
+  const high = parseNumber(fields[33]);
+  const low = parseNumber(fields[34]);
+  const rawVolume = parseNumber(fields[6]);
+  const date = String(fields[30] || "").replace(/\D/g, "").slice(0, 8);
+  if (prevClose !== null) result.previousClose = prevClose;
+  if (open !== null) result.open = open;
+  if (high !== null) result.high = high;
+  if (low !== null) result.low = low;
+  if (rawVolume !== null) {
+    result.volume = rawVolume * 100;
+  }
+  if (/^\d{8}$/.test(date)) {
+    result.date = `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`;
+  }
+  return result;
 }
 
 async function fetchTencentKlines(
@@ -231,7 +255,9 @@ function parseNumber(value: string | number | Record<string, unknown> | undefine
   if (typeof value !== "string") {
     return null;
   }
-  const parsed = Number(value.replace(/,/g, ""));
+  const normalized = value.replace(/,/g, "").trim();
+  if (!normalized) return null;
+  const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 }
 

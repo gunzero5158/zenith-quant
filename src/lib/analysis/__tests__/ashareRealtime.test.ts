@@ -198,6 +198,53 @@ describe("A-share realtime quote helpers", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("continues to Tencent instead of using yesterday's close when Tonghuashun today fails", async () => {
+    vi.mocked(fetchEastMoneyJson).mockRejectedValueOnce(new Error("EastMoney unavailable"));
+    const fields = Array.from({ length: 35 }, () => "");
+    fields[1] = "Northern Huachuang";
+    fields[2] = "002371";
+    fields[3] = "723.50";
+    fields[4] = "777.00";
+    fields[5] = "753.88";
+    fields[6] = "62568";
+    fields[30] = "20260819120239";
+    fields[32] = "-6.89";
+    fields[33] = "757.00";
+    fields[34] = "723.37";
+    const tencentText = `v_sz002371="${fields.join("~")}";`;
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("today.js")) return Promise.reject(new Error("today timeout"));
+      if (url.includes("last.js")) {
+        return Promise.resolve({
+          ok: true,
+          text: () => Promise.resolve(`last(${JSON.stringify({
+            name: "Northern Huachuang",
+            data: "20260818,770.00,785.90,757.25,777.00,8166634,0,0,,,0",
+          })});`),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new TextEncoder().encode(tencentText).buffer),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchAShareRealtimeQuote("002371.SZ")).resolves.toEqual({
+      source: "tencent",
+      name: "Northern Huachuang",
+      price: 723.5,
+      open: 753.88,
+      high: 757,
+      low: 723.37,
+      previousClose: 777,
+      volume: 6256800,
+      date: "2026-08-19",
+      changePercent: -6.89,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("reuses one short-lived A-share snapshot across watchlist and analysis requests", async () => {
     vi.mocked(fetchEastMoneyJson).mockRejectedValue(new Error("EastMoney unavailable"));
     const wrap = (callback: string, payload: unknown) => `${callback}(${JSON.stringify(payload)});`;

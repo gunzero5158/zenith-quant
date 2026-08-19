@@ -146,6 +146,21 @@ describe("Tonghuashun market data provider", () => {
     });
   });
 
+  it("does not return the previous close as a realtime quote when today.js fails", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error("today timeout"))
+      .mockResolvedValueOnce({
+        ok: true,
+        text: () => Promise.resolve(wrap("last", {
+          name: "Northern Huachuang",
+          data: "20260818,770.00,785.90,757.25,777.00,8166634,0,0,,,0",
+        })),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchTonghuashunQuote("002371.SZ")).resolves.toBeNull();
+  });
+
   it("ignores stale today.js quote data older than the latest history candle", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({
@@ -166,17 +181,6 @@ describe("Tonghuashun market data provider", () => {
       });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(fetchTonghuashunQuote("0700.HK")).resolves.toEqual({
-      price: 452,
-      changePercent: ((452 - 431.2) / 431.2) * 100,
-      companyName: "Tencent",
-      source: "tonghuashun",
-      date: "2026-07-06",
-      open: 432.8,
-      high: 453.4,
-      low: 425.4,
-      previousClose: 431.2,
-      volume: 38675073,
-    });
+    await expect(fetchTonghuashunQuote("0700.HK")).resolves.toBeNull();
   });
 });

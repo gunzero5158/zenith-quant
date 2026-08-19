@@ -93,10 +93,12 @@ export async function fetchTonghuashunQuote(symbol: string): Promise<Tonghuashun
     }
 
     const latestHistory = last.candles[last.candles.length - 1];
-    const active = today && !(latestHistory && today.date < String(latestHistory.date))
-      ? today
-      : latestHistory;
-    if (!active) return null;
+    // This function feeds realtime quote chains. If today.js is unavailable or
+    // stale, last.js is only historical data and must not masquerade as a live quote.
+    if (!today || (latestHistory && today.date < String(latestHistory.date))) {
+      return null;
+    }
+    const active = today;
     const prev = latestHistory?.date === active.date
       ? last.candles[last.candles.length - 2]
       : latestHistory;

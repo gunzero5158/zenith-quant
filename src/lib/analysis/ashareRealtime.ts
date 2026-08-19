@@ -2,13 +2,14 @@ import { Candle } from "@/lib/analysis/indicators";
 import { fetchEastMoneyJson } from "@/lib/analysis/eastmoneyHttp";
 import { convertSymbolToEastMoneyAShareSecid } from "@/lib/analysis/symbolConversion";
 import { fetchTonghuashunQuote } from "@/lib/analysis/tonghuashun";
+import { fetchTencentQuote } from "@/lib/analysis/tencent";
 
 export { convertSymbolToEastMoneyAShareSecid };
 
 const EAST_MONEY_REALTIME_TIMEOUT_MS = 2000;
 const A_SHARE_REALTIME_CACHE_TTL_MS = 30 * 1000;
 
-export type AShareRealtimeSource = "eastmoney-realtime" | "tonghuashun" | "quote-api";
+export type AShareRealtimeSource = "eastmoney-realtime" | "tonghuashun" | "tencent" | "quote-api";
 
 export interface AShareRealtimeQuote {
   source: AShareRealtimeSource;
@@ -130,6 +131,22 @@ async function fetchFreshAShareRealtimeQuote(symbol: string, secid: string): Pro
       volume: tonghuashunQuote.volume,
       date: tonghuashunQuote.date,
       changePercent: tonghuashunQuote.changePercent,
+    };
+  }
+
+  const tencentQuote = await fetchTencentQuote(symbol);
+  if (tencentQuote) {
+    return {
+      source: "tencent",
+      name: tencentQuote.companyName,
+      price: tencentQuote.price,
+      open: tencentQuote.open,
+      high: tencentQuote.high,
+      low: tencentQuote.low,
+      previousClose: tencentQuote.previousClose,
+      volume: tencentQuote.volume,
+      date: tencentQuote.date,
+      changePercent: tencentQuote.changePercent,
     };
   }
 

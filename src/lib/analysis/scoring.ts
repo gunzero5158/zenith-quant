@@ -109,7 +109,14 @@ function locationContext(snapshot: EvidenceSnapshot, items: EvidenceItem[], atr?
     level.strength >= 0.65 &&
     snapshot.price - level.price <= atr * 2
   ));
-  const breakoutReference = [...patternTriggerLevels(items, snapshot.price), ...historicalBreakoutLevels]
+  const vpvr = items.find((item) => item.family === "vpvr" && item.timeframe === "daily");
+  const valueAreaHigh = typeof vpvr?.values?.valueAreaHigh === "number" ? vpvr.values.valueAreaHigh : undefined;
+  const vpvrBreakoutLevel: TradeLevel[] = hasConfirmedVpvrBreakout(items) &&
+    valueAreaHigh !== undefined && valueAreaHigh < snapshot.price &&
+    (atr === undefined || snapshot.price - valueAreaHigh <= atr * 2)
+    ? [{ price: valueAreaHigh, kind: "support", source: "vpvr", strength: 0.75 }]
+    : [];
+  const breakoutReference = [...patternTriggerLevels(items, snapshot.price), ...historicalBreakoutLevels, ...vpvrBreakoutLevel]
     .sort((left, right) => right.price - left.price)[0];
 
   return {
@@ -204,6 +211,17 @@ function isBullishCandleAtSupport(item: EvidenceItem): boolean {
     item.state === "triggered" &&
     item.values?.location === "support" &&
     (item.barsSince ?? 0) <= 1;
+}
+
+function hasConfirmedVpvrBreakout(items: EvidenceItem[]): boolean {
+  return items.some((item) => (
+    item.family === "vpvr" &&
+    item.direction === "bullish" &&
+    item.values?.breakoutVolumeConfirmed === true &&
+    typeof item.values?.barsSinceValueAreaBreakout === "number" &&
+    item.values.barsSinceValueAreaBreakout >= 0 &&
+    item.values.barsSinceValueAreaBreakout <= 2
+  ));
 }
 
 function tdStage(items: EvidenceItem[], setup: "buy" | "sell"): { stage: number; weight: number; completed: boolean } | undefined {
@@ -321,8 +339,10 @@ function rightConfirmationScore(items: EvidenceItem[], reasons: string[]): numbe
   const bullishCmf = items.some((item) => item.family === "cmf" && item.direction === "bullish");
   const bullishObv = items.some((item) => item.family === "obv" && item.direction === "bullish");
   const priceVolumeDivergence = items.some((item) => item.family === "volume" && item.values?.hasPriceVolumeDivergence === true);
+  const confirmedVpvrBreakout = hasConfirmedVpvrBreakout(items);
   let flowCluster = bullishVolume ? 0.3 : bullishCmf ? 0.2 : bullishObv ? 0.15 : 0;
   if (heldRetest) flowCluster = Math.max(flowCluster, 0.25);
+  if (confirmedVpvrBreakout) flowCluster = Math.max(flowCluster, 0.3);
   let score = flowCluster + (items.some(isFreshBullishMomentum) ? 0.15 : 0);
 
   if (priceVolumeDivergence) {
@@ -356,6 +376,7 @@ function scenarioStatuses(
   const confirmedBullishPattern = items.some((item) => item.family === "classicalPattern" && item.direction === "bullish" && item.state === "confirmed");
   const confirmedBearishPattern = items.some((item) => item.family === "classicalPattern" && item.direction === "bearish" && item.state === "confirmed");
   const buyTd = tdStage(items, "buy");
+  const confirmedVpvrBreakout = hasConfirmedVpvrBreakout(items);
 
   const leftSetupPresent = Boolean(buyTd) || hasRsiOversold(items) || hasKdjLow(items) || bottomDivergence || chanlunBottom || lowVolumePullback || supportCandle || bullishPattern;
   const leftNearSupport = (context.supportDistanceAtr ?? Infinity) <= 2;
@@ -383,7 +404,7 @@ function scenarioStatuses(
   const bullishVolume = items.some((item) => item.family === "volume" && item.direction === "bullish");
   const positiveFlow = items.some((item) => ["cmf", "obv"].includes(item.family) && item.direction === "bullish");
   const heldRetest = lowVolumePullback && (context.breakoutDistanceAtr ?? Infinity) <= 0.75;
-  const rightConfirmation = confirmedBullishPattern || volumeBreakout || (bullishVolume && positiveFlow) || heldRetest;
+  const rightConfirmation = confirmedBullishPattern || volumeBreakout || (bullishVolume && positiveFlow) || heldRetest || confirmedVpvrBreakout;
   const rightTrigger = context.breakoutReference !== undefined &&
     (context.breakoutDistanceAtr ?? Infinity) >= 0 &&
     (context.breakoutDistanceAtr ?? Infinity) <= 1.5 &&
@@ -395,13 +416,16 @@ function scenarioStatuses(
   const nearStrongHorizontalResistance = context.resistance?.source === "horizontal" &&
     context.resistance.strength >= 0.65 &&
     (context.resistanceDistanceAtr ?? Infinity) <= 0.5;
-  const rightCandidateStructure = nearPattern || nearStrongHorizontalResistance;
+  const nearStrongVpvrResistance = context.resistance?.source === "vpvr" &&
+    context.resistance.strength >= 0.75 &&
+    (context.resistanceDistanceAtr ?? Infinity) <= 0.5;
+  const rightCandidateStructure = nearPattern || nearStrongHorizontalResistance || nearStrongVpvrResistance;
   const earlyRepairEvidence = freshMomentum || bullishVolume || positiveFlow || lowVolumePullback;
   const rightWatch = rightCandidateStructure &&
     earlyRepairEvidence &&
     !["breakdown", "extended"].includes(snapshot.dailyPhase) &&
     !confirmedBearishPattern;
-  const rightSetupPresent = context.breakoutReference !== undefined && (confirmedBullishPattern || volumeBreakout || snapshot.dailyPhase === "breakout");
+  const rightSetupPresent = context.breakoutReference !== undefined && (confirmedBullishPattern || volumeBreakout || confirmedVpvrBreakout || snapshot.dailyPhase === "breakout");
   const rightExpired = rightSetupPresent && (
     (context.breakoutDistanceAtr ?? 0) > 1.5 ||
     (riskPlan.rewardRisk !== undefined && riskPlan.rewardRisk < 1.2)

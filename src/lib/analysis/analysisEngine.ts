@@ -184,6 +184,7 @@ export function runAnalysisEngine(input: AnalysisEngineInput): AnalysisEngineRes
       direction: wave.waveScoreContribution > 0 ? "bullish" : wave.waveScoreContribution < 0 ? "bearish" : "neutral",
       description: wave.waveDescription,
     },
+    volumeProfile: supportResistance.volumeProfile,
     levels: supportResistance.typedLevels ?? [],
   });
   const entryAssessment = calculateEntryAssessment(snapshot);

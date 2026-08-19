@@ -88,7 +88,7 @@ Confidence calibration:
 Writing requirements:
 - Synthesize rather than enumerate raw evidence. Include meaningful triggers and material timing/provisional status.
 - Overview: 2-3 short paragraphs with direct conclusion, trend quality, price position, opportunity, and risk. Do not repeat the score.
-- technicalAnalysis: concise Markdown headings/bullets covering meaningful trend, levels/ATR, momentum, volume flow, Ichimoku, patterns, TD, Elliott Wave, and Chanlun findings.
+- technicalAnalysis: concise Markdown headings/bullets covering meaningful trend, levels/VPVR/ATR, momentum, volume flow, Ichimoku, patterns, TD, Elliott Wave, and Chanlun findings.
 - strategyCommentary: most important confirmation and invalidation conditions without repeating the four strategy items.
 
 Return JSON only:

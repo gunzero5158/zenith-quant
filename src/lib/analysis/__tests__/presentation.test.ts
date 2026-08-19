@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildEntryScorePresentation } from "../presentation";
+import { buildEntryScorePresentation, formatDataAsOf } from "../presentation";
 import { EntryAssessment } from "../scoring";
 import { AiEntryAssessment } from "../aiAnalysisResult";
 
@@ -21,6 +21,11 @@ function assessment(overrides: Partial<EntryAssessment> = {}): EntryAssessment {
 }
 
 describe("entry score presentation", () => {
+  it("formats the UTC analysis timestamp in the requested display timezone", () => {
+    expect(formatDataAsOf("2026-08-19T03:58:57.596Z", "Asia/Shanghai"))
+      .toBe("2026-08-19 11:58");
+  });
+
   it("presents the AI trend instead of internal score details", () => {
     expect(buildEntryScorePresentation(assessment({ aiOutlook: "bearish" }), "zh-CN")).toMatchObject({
       outlookLabel: "AI趋势",

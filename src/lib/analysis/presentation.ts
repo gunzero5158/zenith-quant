@@ -80,7 +80,7 @@ export function buildEntryScorePresentation(
   const labels = LABELS[normalized];
   const statusParts: string[] = [];
   if (dataQuality) {
-    statusParts.push(dataQuality.asOf.slice(0, 16).replace("T", " "));
+    statusParts.push(formatDataAsOf(dataQuality.asOf));
     if (!dataQuality.dailyBarComplete) statusParts.push(labels.dailyProvisional);
     if (!dataQuality.weeklyBarComplete) statusParts.push(labels.weeklyProvisional);
   }
@@ -112,4 +112,20 @@ export function buildEntryScorePresentation(
     outlookLabel: labels.aiTrend,
     outlookText: assessment.aiOutlook ? labels.outlooks[assessment.aiOutlook] : labels.outlookUnavailable,
   };
+}
+
+export function formatDataAsOf(asOf: string, timeZone?: string): string {
+  const date = new Date(asOf);
+  if (!Number.isFinite(date.getTime())) return asOf.slice(0, 16).replace("T", " ");
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}`;
 }

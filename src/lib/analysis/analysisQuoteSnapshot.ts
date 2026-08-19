@@ -37,13 +37,25 @@ export function applyAnalysisQuoteSnapshot(
   snapshot: AnalysisQuoteSnapshot | null,
   currentDate: string,
 ): AShareRealtimeQuote | null {
-  if (!snapshot) return realtimeQuote;
+  // A server-fetched quote has provider provenance and must not be overwritten by
+  // an untimestamped browser snapshot. The snapshot is only an outage fallback.
+  if (realtimeQuote || !snapshot) return realtimeQuote;
 
   return {
-    ...(realtimeQuote ?? { source: "quote-api" as const, date: currentDate }),
+    source: "quote-api",
+    date: currentDate,
     price: snapshot.price,
     changePercent: snapshot.change,
   };
+}
+
+export function shouldRefreshForQuoteSnapshot(
+  cachedPrice: number,
+  snapshot: AnalysisQuoteSnapshot | null,
+): boolean {
+  if (!snapshot || !Number.isFinite(cachedPrice)) return false;
+  const tolerance = Math.max(0.000001, Math.abs(cachedPrice) * 1e-8);
+  return Math.abs(snapshot.price - cachedPrice) > tolerance;
 }
 
 export function getShanghaiDateKey(timestamp: number): string {

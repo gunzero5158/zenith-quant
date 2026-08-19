@@ -186,6 +186,41 @@ describe("gated entry assessment", () => {
     expect(withSellNine.pathScores.right).toBeLessThan(confirmed.pathScores.right);
   });
 
+  it("treats a recent volume-confirmed VPVR value-area breakout as right-side confirmation", () => {
+    const result = calculateEntryAssessment(snapshot({
+      dailyPhase: "breakout",
+      items: [
+        atr(),
+        evidence("daily.vpvr.value_area_breakout_confirmed", "vpvr", "bullish", "value_area_breakout_confirmed", {
+          valueAreaHigh: 99,
+          breakoutVolumeConfirmed: true,
+          barsSinceValueAreaBreakout: 1,
+        }, 1),
+      ],
+      levels: [
+        { price: 99, kind: "support", source: "vpvr", strength: 0.75 },
+        { price: 108, kind: "resistance", source: "horizontal", strength: 0.8 },
+      ],
+    }));
+
+    expect(result.rightStatus).toBe("triggered");
+    expect(result.activeSetup).toBe("right");
+    expect(result.dimensions.confirmationQuality).toBeGreaterThanOrEqual(0.3);
+  });
+
+  it("allows a strong nearby VPVR boundary to form a right-side watch", () => {
+    const result = calculateEntryAssessment(snapshot({
+      dailyPhase: "range",
+      items: [atr(), freshMacd()],
+      levels: [
+        { price: 90, kind: "support", source: "horizontal", strength: 0.8 },
+        { price: 100.8, kind: "resistance", source: "vpvr", strength: 0.75 },
+      ],
+    }));
+
+    expect(result.rightStatus).toBe("watch");
+  });
+
   it("does not call proximity to an ordinary resistance a right-side watch", () => {
     const result = calculateEntryAssessment(snapshot({
       dailyPhase: "range",
