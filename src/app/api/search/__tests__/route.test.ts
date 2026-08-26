@@ -259,4 +259,47 @@ describe("/api/search", () => {
 
     expect(body.quotes.map((quote: { symbol: string }) => quote.symbol)).toEqual(["7974.T", "NTDOY"]);
   });
+
+  it.each([
+    ["00981", "SMIC", "0981.HK"],
+    ["01024", "Kuaishou", "1024.HK"],
+  ])("keeps an exact padded Hong Kong code from being shadowed by an A-share result", async (
+    query,
+    name,
+    expectedSymbol,
+  ) => {
+    searchMock.mockResolvedValue({
+      quotes: [{
+        symbol: `30${query.slice(2)}.SZ`,
+        quoteType: "EQUITY",
+        shortname: "Unrelated A-share",
+        exchDisp: "Shenzhen",
+        typeDisp: "Equity",
+      }],
+    });
+    windowsYahooSearchMock.mockResolvedValue({ quotes: [] });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        QuotationCodeTable: {
+          Data: [{
+            Code: query,
+            Name: name,
+            QuoteID: `116.${query}`,
+            SecurityTypeName: "港股",
+            Classify: "HK",
+            JYS: "HK",
+          }],
+        },
+      }),
+    }));
+
+    const response = await GET(new Request(`http://localhost/api/search?q=${query}`));
+    const body = await response.json();
+
+    expect(body.quotes).toEqual([expect.objectContaining({
+      symbol: expectedSymbol,
+      name,
+    })]);
+  });
 });

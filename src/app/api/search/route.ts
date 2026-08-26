@@ -141,8 +141,21 @@ export async function GET(request: Request) {
     fetchYahooHttpSuggestions(cleanQuery),
     fetchProviderSearchSuggestions(cleanQuery),
     fetchEastMoneySuggestions(cleanQuery),
-  ]);
+  ].map(async (source) => filterExactPaddedHongKongMatches(cleanQuery, await source)));
   return NextResponse.json({ quotes });
+}
+
+function filterExactPaddedHongKongMatches(
+  query: string,
+  suggestions: SearchSuggestion[],
+): SearchSuggestion[] {
+  if (!/^0\d{4}$/.test(query)) return suggestions;
+
+  const requestedCode = Number(query);
+  return suggestions.filter((suggestion) => {
+    const match = suggestion.symbol.toUpperCase().match(/^(\d{1,5})\.HK$/);
+    return match !== null && Number(match[1]) === requestedCode;
+  });
 }
 
 async function fetchYahooSdkSuggestions(query: string): Promise<SearchSuggestion[]> {
