@@ -10,6 +10,7 @@ import {
   resolveJevDecision,
   resolveJevPrimaryDecision,
   resolveJevReadings,
+  summarizeDisagreement,
   withJevReadings,
 } from "../jevDecision";
 import { buildJevReadingsSection } from "../jevReadingsReport";
@@ -127,7 +128,6 @@ function primaryAnswers(overrides: Record<string, unknown> = {}) {
   return {
     outlook: choice("bullish", { bullish: 0.62, neutral: 0.3, bearish: 0.08 }, 0.43),
     setupStage: choice("right_triggered"),
-    evidenceConflict: { type: "noul", noul: 0.21 },
     ...overrides,
   };
 }
@@ -191,6 +191,15 @@ describe("Jev decision request", () => {
     }, request);
     expect(readings[2]).toMatchObject({ id: "daily.elliottWave.wave2", ruleDirection: "bullish", direction: "bearish", probability: 0.6 });
 
+    // 1 bullish (0.9) against 2 bearish (0.6 + 0.8): the minority carries 0.9 / 2.3 of the directional weight.
+    expect(summarizeDisagreement(readings)).toEqual({
+      bullish: 1, neutral: 1, bearish: 2, minorityShare: 0.39, level: "high", timeframesOppose: false,
+    });
+    expect(summarizeDisagreement(readings.filter((reading) => reading.direction !== "bullish"))).toMatchObject({ minorityShare: 0, level: "low" });
+    expect(summarizeDisagreement([
+      { ...readings[0], timeframe: "weekly" }, readings[3],
+    ]).timeframesOppose).toBe(true);
+
     const enriched = withJevReadings(request, readings);
     const evidence = enriched.state.evidence as Record<string, Record<string, unknown>>;
     expect(evidence.e1.reading).toBe("bullish (90%)");
@@ -206,7 +215,7 @@ describe("Jev decision request", () => {
   });
 
   it("asks left and right status as one staged judgment", () => {
-    expect(Object.keys(request.primaryQuestions)).toEqual(["outlook", "setupStage", "evidenceConflict"]);
+    expect(Object.keys(request.primaryQuestions)).toEqual(["outlook", "setupStage"]);
   });
 
   it("shows earlier decisions to the dependent follow-up questions", () => {

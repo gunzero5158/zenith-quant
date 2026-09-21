@@ -1276,7 +1276,9 @@ export default function Home() {
                               {jevPresentation.stageLabel && jevPresentation.stageText && (
                                 <span>{jevPresentation.stageLabel} <strong style={{ color: "#d1d4dc" }}>{jevPresentation.stageText}</strong></span>
                               )}
-                              <span>{jevPresentation.conflictLabel} {jevPresentation.conflictText}</span>
+                              {jevPresentation.conflictLabel && jevPresentation.conflictText && (
+                                <span>{jevPresentation.conflictLabel} {jevPresentation.conflictText}</span>
+                              )}
                             </div>
                           </>
                         ) : (

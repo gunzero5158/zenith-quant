@@ -90,22 +90,23 @@ describe("Jev score presentation", () => {
   it("shows outlook probabilities that sum to 100 with the stage and conflict probability", () => {
     const view = buildJevScorePresentation({
       outlookProbabilities: { bullish: 0.335, neutral: 0.335, bearish: 0.33 },
-      conflictProbability: 0.214,
+      disagreement: { bullish: 12, neutral: 9, bearish: 5, minorityShare: 0.29, level: "medium", timeframesOppose: true },
       setupStage: "right_triggered",
     }, "zh-CN");
     expect(view.finalLabel).toBe("Jev 评分");
     expect(view.outlook.map((part) => part.label)).toEqual(["看多", "震荡", "看空"]);
     expect(view.outlook.reduce((sum, part) => sum + part.percent, 0)).toBe(100);
     expect(view.stageText).toBe("右侧可执行");
-    expect(view.conflictText).toBe("21%");
+    expect(view.conflictLabel).toBe("多空分歧");
+    expect(view.conflictText).toBe("中 (12:5) · 日周相反");
   });
 
   it("omits the stage for results cached before stages existed", () => {
     const view = buildJevScorePresentation({
       outlookProbabilities: { bullish: 0.7, neutral: 0.2, bearish: 0.1 },
-      conflictProbability: 0.3,
     }, "en");
     expect(view.stageLabel).toBeUndefined();
+    expect(view.conflictText).toBeUndefined();
     expect(view.outlook[0]).toEqual({ key: "bullish", label: "Bullish", percent: 70 });
   });
 });

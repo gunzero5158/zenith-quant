@@ -63,6 +63,17 @@ export interface JevReading {
   probability: number;
 }
 
+export interface JevDisagreement {
+  bullish: number;
+  neutral: number;
+  bearish: number;
+  /** Weight of the minority side over both directional sides: 0 is one-sided, 0.5 is an even split. */
+  minorityShare: number;
+  level: "low" | "medium" | "high";
+  /** True when the daily and weekly readings lean in opposite directions. */
+  timeframesOppose: boolean;
+}
+
 export interface JevDecisionRequest {
   price: number;
   state: Record<string, unknown>;
@@ -90,7 +101,6 @@ export interface JevPrimaryDecision {
   confidence: number;
   setupStage: JevSetupStage;
   stageConfidence: number;
-  conflictProbability: number;
   adjustments: string[];
 }
 
@@ -100,7 +110,8 @@ export interface JevDecision {
   finalScore: number;
   confidence: number;
   scoreConfidence: number;
-  conflictProbability: number;
+  /** How evenly Jev's own per-signal readings split between bullish and bearish, counted in code. */
+  disagreement: JevDisagreement;
   setupStage: JevSetupStage;
   stageConfidence: number;
   leftStatus: JevSetupStatus;
@@ -370,10 +381,6 @@ export function buildJevDecisionRequest(input: {
         (Object.keys(SETUP_STAGES) as JevSetupStage[]).map((stage) => [stage, SETUP_STAGES[stage].description])
       ),
     },
-    evidenceConflict: {
-      type: "noul",
-      instructions: "The evidence contains major conflicts: important indicator families or the daily and weekly timeframes point in opposite directions.",
-    },
   };
 
   return { price: snapshot.price, state, signals, readingQuestions, primaryQuestions, stopCandidates, targetCandidates };
@@ -530,12 +537,36 @@ function candidatePrice(
   return candidates.find((candidate) => candidate.key === choice)?.price;
 }
 
+/**
+ * Jev cannot count reliably and reads questions literally, so "is the evidence
+ * conflicted?" is true for every stock. The split is measured here instead,
+ * from the per-signal readings Jev already gave, weighted by their probability.
+ */
+export function summarizeDisagreement(readings: JevReading[]): JevDisagreement {
+  const weight = (direction: EvidenceDirection, timeframe?: Timeframe) => readings
+    .filter((reading) => reading.direction === direction && (!timeframe || reading.timeframe === timeframe))
+    .reduce((sum, reading) => sum + reading.probability, 0);
+  const count = (direction: EvidenceDirection) => readings.filter((reading) => reading.direction === direction).length;
+  const bullish = weight("bullish");
+  const bearish = weight("bearish");
+  const minorityShare = bullish + bearish > 0 ? Number((Math.min(bullish, bearish) / (bullish + bearish)).toFixed(2)) : 0;
+  const lean = (timeframe: Timeframe) => Math.sign(weight("bullish", timeframe) - weight("bearish", timeframe));
+
+  return {
+    bullish: count("bullish"),
+    neutral: count("neutral"),
+    bearish: count("bearish"),
+    minorityShare,
+    level: minorityShare >= 0.35 ? "high" : minorityShare >= 0.2 ? "medium" : "low",
+    timeframesOppose: lean("daily") * lean("weekly") < 0,
+  };
+}
+
 export function resolveJevPrimaryDecision(rawAnswers: unknown): JevPrimaryDecision {
   const answers = answerMap(rawAnswers);
   const adjustments: string[] = [];
   const outlook = choiceAnswer(answers, "outlook", ["bullish", "neutral", "bearish"] as const);
   const stage = choiceAnswer(answers, "setupStage", Object.keys(SETUP_STAGES) as JevSetupStage[]);
-  const conflict = answers.evidenceConflict as Partial<JevNoulAnswer> | undefined;
 
   let setupStage = stage.choice;
   const waitingStage = SETUP_STAGES[setupStage].withoutEntry;
@@ -551,9 +582,6 @@ export function resolveJevPrimaryDecision(rawAnswers: unknown): JevPrimaryDecisi
     confidence: outlook.confidence,
     setupStage,
     stageConfidence: stage.confidence,
-    conflictProbability: typeof conflict?.noul === "number" && Number.isFinite(conflict.noul)
-      ? Math.min(1, Math.max(0, conflict.noul))
-      : 0,
     adjustments,
   };
 }
@@ -611,7 +639,7 @@ export function resolveJevDecision(
     scoreConfidence: typeof entry.confidence === "number" && Number.isFinite(entry.confidence)
       ? Math.min(1, Math.max(0, entry.confidence))
       : 0,
-    conflictProbability: primary.conflictProbability,
+    disagreement: summarizeDisagreement(readings),
     setupStage,
     stageConfidence: primary.stageConfidence,
     leftStatus: stage.left,
@@ -633,14 +661,19 @@ type AnalysisLanguage = "zh-CN" | "zh-TW" | "en" | "ja";
 export function jevConfidenceReason(decision: JevDecision, language: AnalysisLanguage): string {
   const pct = (value: number) => `${Math.round(value * 100)}%`;
   const p = decision.outlookProbabilities;
+  const d = decision.disagreement;
   if (language === "en") {
-    return `Jev calibrated probabilities: bullish ${pct(p.bullish)}, neutral ${pct(p.neutral)}, bearish ${pct(p.bearish)}. Entry-score confidence ${pct(decision.scoreConfidence)}; probability of major evidence conflict ${pct(decision.conflictProbability)}.`;
+    const level = { low: "low", medium: "moderate", high: "high" }[d.level];
+    return `Jev calibrated probabilities: bullish ${pct(p.bullish)}, neutral ${pct(p.neutral)}, bearish ${pct(p.bearish)}. Entry-score confidence ${pct(decision.scoreConfidence)}. Signal readings: ${d.bullish} bullish, ${d.neutral} neutral, ${d.bearish} bearish, so disagreement is ${level}${d.timeframesOppose ? "; daily and weekly lean in opposite directions" : ""}.`;
   }
   if (language === "ja") {
-    return `Jev の較正済み確率：強気 ${pct(p.bullish)}、中立 ${pct(p.neutral)}、弱気 ${pct(p.bearish)}。エントリー評価の確信度 ${pct(decision.scoreConfidence)}、根拠が大きく対立している確率 ${pct(decision.conflictProbability)}。`;
+    const level = { low: "小さい", medium: "中程度", high: "大きい" }[d.level];
+    return `Jev の較正済み確率：強気 ${pct(p.bullish)}、中立 ${pct(p.neutral)}、弱気 ${pct(p.bearish)}。エントリー評価の確信度 ${pct(decision.scoreConfidence)}。指標別判定は強気 ${d.bullish}、中立 ${d.neutral}、弱気 ${d.bearish} で、強弱の対立は${level}${d.timeframesOppose ? "。日足と週足の向きが逆です" : ""}。`;
   }
   if (language === "zh-TW") {
-    return `Jev 校準機率：看多 ${pct(p.bullish)}、震盪 ${pct(p.neutral)}、看空 ${pct(p.bearish)}。入場評分置信度 ${pct(decision.scoreConfidence)}；證據存在重大矛盾的機率 ${pct(decision.conflictProbability)}。`;
+    const level = { low: "低", medium: "中", high: "高" }[d.level];
+    return `Jev 校準機率：看多 ${pct(p.bullish)}、震盪 ${pct(p.neutral)}、看空 ${pct(p.bearish)}。入場評分置信度 ${pct(decision.scoreConfidence)}。逐項判讀：偏多 ${d.bullish} 項、中性 ${d.neutral} 項、偏空 ${d.bearish} 項，多空分歧${level}${d.timeframesOppose ? "；日線與週線方向相反" : ""}。`;
   }
-  return `Jev 校准概率：看多 ${pct(p.bullish)}、震荡 ${pct(p.neutral)}、看空 ${pct(p.bearish)}。入场评分置信度 ${pct(decision.scoreConfidence)}；证据存在重大矛盾的概率 ${pct(decision.conflictProbability)}。`;
+  const level = { low: "低", medium: "中", high: "高" }[d.level];
+  return `Jev 校准概率：看多 ${pct(p.bullish)}、震荡 ${pct(p.neutral)}、看空 ${pct(p.bearish)}。入场评分置信度 ${pct(decision.scoreConfidence)}。逐项判读：偏多 ${d.bullish} 项、中性 ${d.neutral} 项、偏空 ${d.bearish} 项，多空分歧${level}${d.timeframesOppose ? "；日线与周线方向相反" : ""}。`;
 }
