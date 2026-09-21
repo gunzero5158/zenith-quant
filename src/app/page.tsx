@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useSyncExternalStore, useCallback } from "react";
 import dynamic from "next/dynamic";
-import { BrainCircuit, Info, ListChecks, Search, Settings, Star, TrendingUp, TrendingDown, RefreshCw, Trash2, Zap } from "lucide-react";
+import { BrainCircuit, Info, ListChecks, Search, Settings, Star, TrendingUp, TrendingDown, RefreshCw, Trash2, Zap, ClipboardCheck } from "lucide-react";
 import LoadingOverlay from "@/components/LoadingOverlay";
 import SettingsModal from "@/components/SettingsModal";
 import MarkdownBlock from "@/components/MarkdownBlock";
@@ -31,6 +31,8 @@ import {
 import { DataQuality, ScenarioStatus } from "@/lib/analysis/evidence";
 import { buildEntryScorePresentation, buildJevScorePresentation } from "@/lib/analysis/presentation";
 import type { JevDecision } from "@/lib/analysis/jevDecision";
+import { validationLabels } from "@/lib/validation/labels";
+import { loadValidationRecords, mergeValidationRecords, recordsFromAnalysis, saveValidationRecords } from "@/lib/validation/records";
 import { mergeAnalysisQuoteIntoWatchlist, WatchQuote } from "@/lib/analysis/watchlistQuote";
 import {
   AppLanguage,
@@ -42,6 +44,7 @@ import { styles } from "./pageStyles";
 
 // Keep lightweight-charts out of the initial bundle
 const StockChart = dynamic(() => import("@/components/StockChart"), { ssr: false });
+const ValidationPanel = dynamic(() => import("@/components/ValidationPanel"), { ssr: false });
 
 interface SearchSuggestion {
   symbol: string;
@@ -78,6 +81,7 @@ interface StockAnalysisData {
   entryAssessment?: EntryAssessment | AiEntryAssessment;
   analysisMode?: AnalysisMode;
   jevDecision?: JevDecision;
+  ruleBaseline?: EntryAssessment;
   dataQuality?: DataQuality;
   dailyCandles: Candle[];
   weeklyCandles: Candle[];
@@ -342,6 +346,7 @@ export default function Home() {
   });
   const [jevConfig, setJevConfig] = useState<JevConfig>({ apiKey: "", baseUrl: "", modelName: "" });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isValidationOpen, setIsValidationOpen] = useState(false);
   const [appLanguage, setAppLanguage] = useState<AppLanguage>("auto");
   const [useFallback, setUseFallback] = useState(true);
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>(DEFAULT_ANALYSIS_MODE);
@@ -691,6 +696,12 @@ export default function Home() {
 
       const analyzedAt = Date.now();
       recordAnalysisTimestamp(resolvedSymbol, analyzedAt);
+
+      // Log the conclusion so it can later be checked against the actual price.
+      const validationRecords = recordsFromAnalysis(data, analyzedAt, `${config.provider}/${config.modelName}`);
+      if (validationRecords.length > 0) {
+        saveValidationRecords(mergeValidationRecords(loadValidationRecords(), validationRecords));
+      }
 
       if (!data.isMock) {
         writeAnalysisCache(resolvedSymbol, analysisMode, {
@@ -1060,6 +1071,15 @@ export default function Home() {
           <button className="app-settings" aria-label={t.llmSettings} onClick={() => setIsSettingsOpen(true)} style={styles.settingsBtn}>
             <Settings size={18} style={{ marginRight: "6px" }} />
             <span className="app-settings-label">{t.llmSettings}</span>
+          </button>
+          <button
+            className="app-refresh"
+            aria-label={validationLabels(effectiveLang).open}
+            title={validationLabels(effectiveLang).open}
+            onClick={() => setIsValidationOpen(true)}
+            style={styles.refreshBtn}
+          >
+            <ClipboardCheck size={18} />
           </button>
           <button className="app-refresh" aria-label="Refresh" onClick={() => fetchActiveStockData(true)} style={styles.refreshBtn}>
             <RefreshCw size={18} />
@@ -1434,6 +1454,15 @@ export default function Home() {
 
       <PromoFooter effectiveLang={effectiveLang} />
 
+
+      {isValidationOpen && (
+        <ValidationPanel
+          language={effectiveLang}
+          upColor={upColor}
+          downColor={downColor}
+          onClose={() => setIsValidationOpen(false)}
+        />
+      )}
 
       {/* 3. Settings Dialog */}
       {isSettingsOpen && (

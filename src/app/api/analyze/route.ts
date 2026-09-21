@@ -744,6 +744,9 @@ export async function POST(request: Request) {
           score: toLegacyAiScoreDetail(aiResult.scoreAssessment),
           entryAssessment: aiResult.scoreAssessment,
           strategyAdvice: aiResult.strategyAdvice,
+          // The deterministic rule result costs nothing here and lets every analysis
+          // add a sample to the rule track of the validation log.
+          ruleBaseline: techData.entryAssessment,
           dataQuality: techData.snapshot.dataQuality,
           dailyCandles: techData.dailyCandles,
           weeklyCandles: techData.weeklyCandles,
@@ -819,6 +822,9 @@ export async function POST(request: Request) {
           score: toLegacyAiScoreDetail(aiResult.scoreAssessment),
           entryAssessment: aiResult.scoreAssessment,
           strategyAdvice: aiResult.strategyAdvice,
+          // The deterministic rule result costs nothing here and lets every analysis
+          // add a sample to the rule track of the validation log.
+          ruleBaseline: techData.entryAssessment,
           jevDecision: { ...decision, model: jevResponse.model, usage: [readingResponse.usage, primaryResponse.usage, jevResponse.usage] },
           dataQuality: techData.snapshot.dataQuality,
           dailyCandles: techData.dailyCandles,
