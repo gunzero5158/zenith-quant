@@ -1,6 +1,7 @@
 import { DataQuality, ScenarioStatus } from "./evidence";
 import { EntryAssessment } from "./scoring";
 import { AiEntryAssessment } from "./aiAnalysisResult";
+import type { JevDecision, JevSetupStage } from "./jevDecision";
 
 type SupportedLanguage = "zh-CN" | "zh-TW" | "en" | "ja";
 
@@ -111,6 +112,78 @@ export function buildEntryScorePresentation(
     dataStatus: statusParts.join(" · "),
     outlookLabel: labels.aiTrend,
     outlookText: assessment.aiOutlook ? labels.outlooks[assessment.aiOutlook] : labels.outlookUnavailable,
+  };
+}
+
+interface JevLabels {
+  score: string;
+  stage: string;
+  conflict: string;
+  stages: Record<JevSetupStage, string>;
+}
+
+const JEV_LABELS: Record<SupportedLanguage, JevLabels> = {
+  "zh-CN": {
+    score: "Jev 评分", stage: "阶段", conflict: "证据矛盾",
+    stages: {
+      none: "无机会", breakdown: "已破位", left_watch: "左侧酝酿", left_triggered: "左侧可执行", range_watch: "窄幅震荡",
+      rebound_underway: "反弹途中", right_watch: "右侧酝酿", right_triggered: "右侧可执行", extended: "已涨过头",
+    },
+  },
+  "zh-TW": {
+    score: "Jev 評分", stage: "階段", conflict: "證據矛盾",
+    stages: {
+      none: "無機會", breakdown: "已破位", left_watch: "左側醞釀", left_triggered: "左側可執行", range_watch: "窄幅震盪",
+      rebound_underway: "反彈途中", right_watch: "右側醞釀", right_triggered: "右側可執行", extended: "已漲過頭",
+    },
+  },
+  en: {
+    score: "Jev score", stage: "Stage", conflict: "Evidence conflict",
+    stages: {
+      none: "No setup", breakdown: "Breakdown", left_watch: "Left developing", left_triggered: "Left executable", range_watch: "Tight range",
+      rebound_underway: "Rebound underway", right_watch: "Right developing", right_triggered: "Right executable", extended: "Extended",
+    },
+  },
+  ja: {
+    score: "Jev スコア", stage: "段階", conflict: "根拠の対立",
+    stages: {
+      none: "機会なし", breakdown: "下抜け", left_watch: "左側形成中", left_triggered: "左側実行可", range_watch: "狭いレンジ",
+      rebound_underway: "反発途中", right_watch: "右側形成中", right_triggered: "右側実行可", extended: "過熱",
+    },
+  },
+};
+
+export interface JevScorePresentation {
+  finalLabel: string;
+  /** Outlook probabilities as whole percentages that always sum to 100. */
+  outlook: Array<{ key: AiEntryAssessment["outlook"]; label: string; percent: number }>;
+  stageLabel?: string;
+  stageText?: string;
+  conflictLabel: string;
+  conflictText: string;
+}
+
+export function buildJevScorePresentation(
+  decision: Pick<JevDecision, "outlookProbabilities" | "conflictProbability"> & Partial<Pick<JevDecision, "setupStage">>,
+  language: string
+): JevScorePresentation {
+  const normalized = language === "zh-TW" || language === "en" || language === "ja" ? language : "zh-CN";
+  const labels = JEV_LABELS[normalized];
+  const keys = ["bullish", "neutral", "bearish"] as const;
+  const raw = keys.map((key) => Math.max(0, decision.outlookProbabilities?.[key] ?? 0));
+  const total = raw.reduce((sum, value) => sum + value, 0) || 1;
+  const percents = raw.map((value) => Math.round((value / total) * 100));
+  // Rounding can leave the three parts at 99 or 101; settle the difference on the largest part.
+  percents[percents.indexOf(Math.max(...percents))] += 100 - percents.reduce((sum, value) => sum + value, 0);
+  const stageText = decision.setupStage ? labels.stages[decision.setupStage] : undefined;
+
+  return {
+    finalLabel: labels.score,
+    outlook: keys.map((key, index) => ({ key, label: LABELS[normalized].outlooks[key], percent: percents[index] })),
+    stageLabel: stageText ? labels.stage : undefined,
+    stageText,
+    conflictLabel: labels.conflict,
+    conflictText: `${Math.round(Math.min(1, Math.max(0, decision.conflictProbability ?? 0)) * 100)}%`,
   };
 }
 

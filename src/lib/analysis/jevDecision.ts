@@ -515,7 +515,9 @@ export function resolveJevDecision(
   return {
     outlook: primary.outlook,
     outlookProbabilities: primary.outlookProbabilities,
-    finalScore: Number(Math.min(5, Math.max(0, entry.score)).toFixed(1)),
+    // Jev documents its score magnitudes as weakly calibrated between levels,
+    // so the rating is reported in half-point steps rather than false decimals.
+    finalScore: Math.round(Math.min(5, Math.max(0, entry.score)) * 2) / 2,
     confidence: primary.confidence,
     scoreConfidence: typeof entry.confidence === "number" && Number.isFinite(entry.confidence)
       ? Math.min(1, Math.max(0, entry.confidence))

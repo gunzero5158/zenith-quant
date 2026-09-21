@@ -372,6 +372,15 @@ export const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap",
     justifyContent: "center",
   },
+  jevProbabilityBar: {
+    display: "flex",
+    width: "min(100%, 240px)",
+    height: "6px",
+    marginTop: "8px",
+    gap: "2px",
+    borderRadius: "3px",
+    overflow: "hidden",
+  },
   scenarioRow: {
     display: "flex",
     gap: "6px",

@@ -29,7 +29,8 @@ import {
   isMarketTrading,
 } from "@/lib/analysis/analysisCache";
 import { DataQuality, ScenarioStatus } from "@/lib/analysis/evidence";
-import { buildEntryScorePresentation } from "@/lib/analysis/presentation";
+import { buildEntryScorePresentation, buildJevScorePresentation } from "@/lib/analysis/presentation";
+import type { JevDecision } from "@/lib/analysis/jevDecision";
 import { mergeAnalysisQuoteIntoWatchlist, WatchQuote } from "@/lib/analysis/watchlistQuote";
 import {
   AppLanguage,
@@ -76,6 +77,7 @@ interface StockAnalysisData {
   score: ScoreDetail;
   entryAssessment?: EntryAssessment | AiEntryAssessment;
   analysisMode?: AnalysisMode;
+  jevDecision?: JevDecision;
   dataQuality?: DataQuality;
   dailyCandles: Candle[];
   weeklyCandles: Candle[];
@@ -894,6 +896,11 @@ export default function Home() {
   const scorePresentation = stockData?.entryAssessment
     ? buildEntryScorePresentation(stockData.entryAssessment, effectiveLang, stockData.dataQuality)
     : undefined;
+  const jevPresentation = stockData?.analysisMode === "jev-ai" && stockData.jevDecision?.outlookProbabilities
+    ? buildJevScorePresentation(stockData.jevDecision, effectiveLang)
+    : null;
+  const outlookColor = { bullish: upColor, neutral: "#787b86", bearish: downColor };
+
   const scenarioTone = (status: ScenarioStatus): React.CSSProperties => ({
     color: status === "triggered" ? "#089981" : status === "provisional" ? "#2962ff" : status === "too_late" ? "#f23645" : status === "watch" ? "#fbbf24" : "#787b86",
     borderColor: status === "triggered" ? "rgba(8,153,129,0.45)" : status === "provisional" ? "rgba(41,98,255,0.45)" : status === "too_late" ? "rgba(242,54,69,0.45)" : status === "watch" ? "rgba(251,191,36,0.45)" : "#363c4e",
@@ -1219,7 +1226,7 @@ export default function Home() {
 
                 <div className="stats-grid" style={styles.statsContainer}>
                   <div className="stat-item stat-item-score" style={styles.statItem}>
-                    <span style={styles.statLabel}>{scorePresentation?.finalLabel || t.scoreLabel}</span>
+                    <span style={styles.statLabel}>{jevPresentation?.finalLabel || scorePresentation?.finalLabel || t.scoreLabel}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                       <div style={styles.statValue}>
                         <span style={{ fontSize: "20px", color: "#2962ff" }}>{scorePresentation?.finalText || stockData.score.totalScore.toFixed(1)}</span>
@@ -1229,6 +1236,30 @@ export default function Home() {
                     </div>
                     {scorePresentation && stockData.entryAssessment && (
                       <>
+                        {jevPresentation ? (
+                          <>
+                            <div
+                              role="img"
+                              aria-label={jevPresentation.outlook.map((part) => `${part.label} ${part.percent}%`).join(", ")}
+                              style={styles.jevProbabilityBar}
+                            >
+                              {jevPresentation.outlook.filter((part) => part.percent > 0).map((part) => (
+                                <span key={part.key} style={{ width: `${part.percent}%`, backgroundColor: outlookColor[part.key] }} />
+                              ))}
+                            </div>
+                            <div style={styles.scoreBreakdownRow}>
+                              {jevPresentation.outlook.map((part) => (
+                                <span key={part.key} style={{ color: outlookColor[part.key] }}>{part.label} {part.percent}%</span>
+                              ))}
+                            </div>
+                            <div style={styles.scoreBreakdownRow}>
+                              {jevPresentation.stageLabel && jevPresentation.stageText && (
+                                <span>{jevPresentation.stageLabel} <strong style={{ color: "#d1d4dc" }}>{jevPresentation.stageText}</strong></span>
+                              )}
+                              <span>{jevPresentation.conflictLabel} {jevPresentation.conflictText}</span>
+                            </div>
+                          </>
+                        ) : (
                         <div style={styles.scoreBreakdownRow}>
                           {scorePresentation.confidenceLabel && scorePresentation.confidenceText && (
                             <span>{scorePresentation.confidenceLabel} {scorePresentation.confidenceText}</span>
@@ -1237,6 +1268,7 @@ export default function Home() {
                             <span>{scorePresentation.outlookLabel} {scorePresentation.outlookText}</span>
                           )}
                         </div>
+                        )}
                         <div style={styles.scenarioRow}>
                           <span style={{ ...styles.scenarioBadge, ...scenarioTone(stockData.entryAssessment.leftStatus) }}>
                             {scorePresentation.leftLabel} {scorePresentation.leftText}

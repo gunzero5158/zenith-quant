@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildEntryScorePresentation, formatDataAsOf } from "../presentation";
+import { buildEntryScorePresentation, buildJevScorePresentation, formatDataAsOf } from "../presentation";
 import { EntryAssessment } from "../scoring";
 import { AiEntryAssessment } from "../aiAnalysisResult";
 
@@ -83,5 +83,29 @@ describe("entry score presentation", () => {
       confidenceText: "78%",
       outlookText: "看多",
     });
+  });
+});
+
+describe("Jev score presentation", () => {
+  it("shows outlook probabilities that sum to 100 with the stage and conflict probability", () => {
+    const view = buildJevScorePresentation({
+      outlookProbabilities: { bullish: 0.335, neutral: 0.335, bearish: 0.33 },
+      conflictProbability: 0.214,
+      setupStage: "right_triggered",
+    }, "zh-CN");
+    expect(view.finalLabel).toBe("Jev 评分");
+    expect(view.outlook.map((part) => part.label)).toEqual(["看多", "震荡", "看空"]);
+    expect(view.outlook.reduce((sum, part) => sum + part.percent, 0)).toBe(100);
+    expect(view.stageText).toBe("右侧可执行");
+    expect(view.conflictText).toBe("21%");
+  });
+
+  it("omits the stage for results cached before stages existed", () => {
+    const view = buildJevScorePresentation({
+      outlookProbabilities: { bullish: 0.7, neutral: 0.2, bearish: 0.1 },
+      conflictProbability: 0.3,
+    }, "en");
+    expect(view.stageLabel).toBeUndefined();
+    expect(view.outlook[0]).toEqual({ key: "bullish", label: "Bullish", percent: 70 });
   });
 });

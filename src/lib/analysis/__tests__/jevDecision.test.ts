@@ -181,7 +181,7 @@ describe("Jev decision resolution", () => {
     const decision = decide();
     expect(decision).toMatchObject({
       outlook: "bullish",
-      finalScore: 3.6,
+      finalScore: 3.5,
       confidence: 0.43,
       setupStage: "right_triggered",
       leftStatus: "too_late",
@@ -262,7 +262,7 @@ describe("Jev decision resolution", () => {
       strategyTexts: { holder: { ...cite, action: "exit" }, leftEntry: cite, rightAdd: cite, exitStop: cite },
     }, "zh-CN");
     const result = validateAiAnalysisResult(merged, snapshot, "zh-CN");
-    expect(result.scoreAssessment).toMatchObject({ outlook: "bullish", finalScore: 3.6, activeSetup: "right", leftStatus: "too_late" });
+    expect(result.scoreAssessment).toMatchObject({ outlook: "bullish", finalScore: 3.5, activeSetup: "right", leftStatus: "too_late" });
     expect(result.scoreAssessment.riskPlan).toMatchObject({ stop: 95, target: 110, rewardRisk: 2 });
     expect(result.strategyAdvice.holder.action).toBe("hold_protect");
     expect(result.strategyAdvice.holder.text).toBe("说明");
