@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { ExternalLink } from "lucide-react";
 import { LLMConfig } from "@/lib/analysis/llmProxy";
 import { AnalysisMode } from "@/lib/analysis/analysisMode";
+import type { JevConfig } from "@/lib/analysis/jevClient";
 import {
   AppLanguage,
   EffectiveLanguage,
@@ -14,6 +15,7 @@ import {
 interface SettingsModalProps {
   isOpen: boolean;
   initialConfig: LLMConfig;
+  initialJevConfig: JevConfig;
   appLanguage: AppLanguage;
   onLanguageChange: (lang: AppLanguage) => void;
   analysisMode: AnalysisMode;
@@ -21,13 +23,14 @@ interface SettingsModalProps {
   onToggleFallback: () => void;
   effectiveLang: EffectiveLanguage;
   t: TranslationStrings;
-  onSave: (config: LLMConfig) => void;
+  onSave: (config: LLMConfig, jevConfig: JevConfig) => void;
   onClose: () => void;
 }
 
 export default function SettingsModal({
   isOpen,
   initialConfig,
+  initialJevConfig,
   appLanguage,
   onLanguageChange,
   analysisMode,
@@ -41,12 +44,17 @@ export default function SettingsModal({
   // Form fields live in local state to avoid re-rendering the whole page on
   // every keystroke; the config is committed to the parent only on save.
   const [config, setConfig] = useState<LLMConfig>(initialConfig);
+  const [jevConfig, setJevConfig] = useState<JevConfig>(initialJevConfig);
 
   if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(config);
+    onSave(config, {
+      apiKey: jevConfig.apiKey.trim(),
+      baseUrl: jevConfig.baseUrl?.trim(),
+      modelName: jevConfig.modelName?.trim(),
+    });
   };
 
   return (
@@ -128,6 +136,46 @@ export default function SettingsModal({
             />
           </div>
 
+          <div style={styles.jevSection}>
+            <div style={styles.fallbackCopy}>
+              <span style={styles.fallbackTitle}>{t.jevSectionTitle}</span>
+              <span style={styles.fallbackDescription}>{t.jevSectionDesc}</span>
+            </div>
+            <div style={styles.formGroup}>
+              <label style={styles.label}>{t.jevApiKeyLabel}</label>
+              <input
+                type="password"
+                required={analysisMode === "jev-ai"}
+                placeholder="API Key"
+                value={jevConfig.apiKey}
+                onChange={(e) => setJevConfig({ ...jevConfig, apiKey: e.target.value })}
+                style={styles.input}
+              />
+            </div>
+            <div style={styles.jevRow}>
+              <div style={{ ...styles.formGroup, flex: 2, minWidth: 0 }}>
+                <label style={styles.label}>{t.jevBaseUrlLabel}</label>
+                <input
+                  type="text"
+                  placeholder="https://api.typesafe.ai"
+                  value={jevConfig.baseUrl ?? ""}
+                  onChange={(e) => setJevConfig({ ...jevConfig, baseUrl: e.target.value })}
+                  style={styles.input}
+                />
+              </div>
+              <div style={{ ...styles.formGroup, flex: 1, minWidth: 0 }}>
+                <label style={styles.label}>{t.jevModelLabel}</label>
+                <input
+                  type="text"
+                  placeholder="jev-latest"
+                  value={jevConfig.modelName ?? ""}
+                  onChange={(e) => setJevConfig({ ...jevConfig, modelName: e.target.value })}
+                  style={styles.input}
+                />
+              </div>
+            </div>
+          </div>
+
           <div style={styles.formGroup}>
             <label style={styles.label}>{t.languageLabel}</label>
             <select
@@ -205,6 +253,9 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid #2a2e39",
     borderRadius: "8px",
     width: "480px",
+    maxWidth: "calc(100vw - 24px)",
+    maxHeight: "calc(100vh - 24px)",
+    overflowY: "auto",
     padding: "24px",
     boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
   },
@@ -240,6 +291,16 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "6px",
     padding: "10px 12px",
   },
+  jevSection: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    backgroundColor: "rgba(167, 139, 250, 0.05)",
+    border: "1px dashed rgba(167, 139, 250, 0.3)",
+    borderRadius: "6px",
+    padding: "10px 12px",
+  },
+  jevRow: { display: "flex", gap: "10px" },
   fallbackCopy: { display: "flex", flexDirection: "column", gap: "2px", flex: 1 },
   fallbackTitle: { fontSize: "13px", fontWeight: 700, color: "#ffffff" },
   fallbackDescription: { fontSize: "11px", color: "#787b86", lineHeight: 1.4 },

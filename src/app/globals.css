@@ -196,6 +196,10 @@ button {
     padding: 0 8px !important;
   }
 
+  .analysis-mode-switch button svg {
+    display: none;
+  }
+
   .app-header-actions {
     gap: 4px !important;
   }
@@ -430,6 +434,15 @@ button {
 }
 
 @media (max-width: 420px) {
+  .analysis-mode-switch button {
+    padding: 0 4px !important;
+    font-size: 11px !important;
+  }
+
+  .analysis-mode-switch button svg {
+    display: none;
+  }
+
   .guide-steps {
     grid-template-columns: minmax(0, 1fr) !important;
   }

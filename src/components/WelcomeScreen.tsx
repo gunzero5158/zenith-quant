@@ -9,6 +9,7 @@ import {
   Settings,
   ShieldAlert,
   TrendingUp,
+  Zap,
 } from "lucide-react";
 import { styles } from "@/app/pageStyles";
 import type { AnalysisMode } from "@/lib/analysis/analysisMode";
@@ -43,6 +44,17 @@ const MODE_OPTIONS = [
     accent: "#fbbf24",
     accentSoft: "rgba(251, 191, 36, 0.10)",
     border: "rgba(251, 191, 36, 0.58)",
+  },
+  {
+    mode: "jev-ai" as const,
+    icon: Zap,
+    titleKey: "jevAiMode",
+    summaryKey: "jevAiSummary",
+    pointKeys: ["jevAiPoint1", "jevAiPoint2"],
+    bestForKey: "jevAiBestFor",
+    accent: "#a78bfa",
+    accentSoft: "rgba(167, 139, 250, 0.10)",
+    border: "rgba(167, 139, 250, 0.58)",
   },
 ] as const;
 

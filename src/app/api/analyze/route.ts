@@ -53,6 +53,9 @@ import { fetchYahooJsonViaWindows } from "@/lib/analysis/windowsHttpFallback";
 import { buildAiNativeAnalystPrompt } from "@/lib/analysis/aiNativeAnalysisPrompt";
 import { validateAiAnalysisResult, toLegacyAiScoreDetail } from "@/lib/analysis/aiAnalysisResult";
 import { composeAiNativeReport } from "@/lib/analysis/aiNativeReportComposition";
+import { buildJevDecisionRequest, resolveJevDecision } from "@/lib/analysis/jevDecision";
+import { JevConfig, requestJevDecision } from "@/lib/analysis/jevClient";
+import { buildJevReportPrompt, JEV_REPORT_SYSTEM_BOUNDARY, mergeJevDecisionWithReport } from "@/lib/analysis/jevReportPrompt";
 
 export const maxDuration = 300;
 
@@ -491,9 +494,10 @@ async function improveCompanyName(symbol: string, currentName: string, englishNa
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { symbol, llmConfig, language, useFallback, quoteSnapshot, analysisMode: requestedAnalysisMode } = body as {
+    const { symbol, llmConfig, jevConfig, language, useFallback, quoteSnapshot, analysisMode: requestedAnalysisMode } = body as {
       symbol: string;
       llmConfig?: LLMConfig;
+      jevConfig?: JevConfig;
       language?: string;
       useFallback?: boolean;
       quoteSnapshot?: unknown;
@@ -509,6 +513,9 @@ export async function POST(request: Request) {
     if (llmConfig !== undefined && llmConfig !== null && (typeof llmConfig !== "object" || Array.isArray(llmConfig))) {
       return NextResponse.json({ error: "Invalid llmConfig: expected an object" }, { status: 400 });
     }
+    if (jevConfig !== undefined && jevConfig !== null && (typeof jevConfig !== "object" || Array.isArray(jevConfig))) {
+      return NextResponse.json({ error: "Invalid jevConfig: expected an object" }, { status: 400 });
+    }
     if (requestedAnalysisMode !== undefined && !isAnalysisMode(requestedAnalysisMode)) {
       return NextResponse.json({ error: "Invalid analysisMode" }, { status: 400 });
     }
@@ -521,6 +528,14 @@ export async function POST(request: Request) {
         : effectiveLang === "ja"
           ? "AI判断モードにはAPIキーが必要です。設定でモデルを構成してください。"
           : "纯 AI 分析需要 API Key，请先在大模型配置中完成设置。";
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+    if (analysisMode === "jev-ai" && (!jevConfig?.apiKey || !llmConfig?.apiKey)) {
+      const message = effectiveLang === "en"
+        ? "Jev + AI mode requires both a Jev API key and an LLM API key. Configure them in Settings."
+        : effectiveLang === "ja"
+          ? "Jev + AI モードには Jev の API キーと LLM の API キーの両方が必要です。設定で構成してください。"
+          : "Jev 决策分析需要同时配置 Jev API Key 和大模型 API Key，请先在设置中完成配置。";
       return NextResponse.json({ error: message }, { status: 400 });
     }
 
@@ -746,6 +761,80 @@ export async function POST(request: Request) {
           : effectiveLang === "ja"
             ? "AI判断に失敗しました"
             : "纯 AI 分析失败";
+        return NextResponse.json({ error: `${prefix}: ${summarizeLLMError(err)}` }, { status: 502 });
+      }
+    }
+
+    if (analysisMode === "jev-ai") {
+      let stage: "jev" | "report" = "jev";
+      try {
+        const jevRequest = buildJevDecisionRequest({
+          snapshot: techData.snapshot,
+          dailyCandles: techData.dailyCandles,
+          weeklyCandles: techData.weeklyCandles,
+        });
+        const jevResponse = await requestJevDecision(jevRequest.state, jevRequest.questions, jevConfig!);
+        const decision = resolveJevDecision(jevResponse.answers, jevRequest);
+
+        stage = "report";
+        const prompt = buildJevReportPrompt({
+          snapshot: techData.snapshot,
+          decision,
+          dailyCandles: techData.dailyCandles,
+          weeklyCandles: techData.weeklyCandles,
+          language: effectiveLang,
+          currencySymbol,
+        });
+        const reportText = await generateLLMReport(prompt, llmConfig!, JEV_REPORT_SYSTEM_BOUNDARY);
+        const lang = effectiveLang as "zh-CN" | "zh-TW" | "en" | "ja";
+        const aiResult = validateAiAnalysisResult(
+          mergeJevDecisionWithReport(decision, parseLLMJsonResponse<unknown>(reportText), lang),
+          techData.snapshot,
+          lang
+        );
+        const report = composeAiNativeReport(aiResult, effectiveLang);
+
+        return NextResponse.json({
+          symbol: cleanSymbol,
+          companyName: techData.companyName,
+          companyNameEn: techData.companyNameEn,
+          price: techData.price,
+          changePercent: techData.changePercent,
+          score: toLegacyAiScoreDetail(aiResult.scoreAssessment),
+          entryAssessment: aiResult.scoreAssessment,
+          strategyAdvice: aiResult.strategyAdvice,
+          jevDecision: { ...decision, model: jevResponse.model, usage: jevResponse.usage },
+          dataQuality: techData.snapshot.dataQuality,
+          dailyCandles: techData.dailyCandles,
+          weeklyCandles: techData.weeklyCandles,
+          indicators: techData.indicators,
+          patterns: techData.patterns,
+          wave: techData.wave,
+          chanlun: techData.chanlun,
+          sr: techData.sr,
+          volumeAnalysis: techData.volumeAnalysis,
+          reportOverview: replaceDollarPriceSymbols(report.overview, currencySymbol),
+          reportRecommendation: replaceDollarPriceSymbols(report.recommendation, currencySymbol),
+          reportTechnical: replaceDollarPriceSymbols(report.technicalAnalysis, currencySymbol),
+          isLLMUsed: true,
+          isMock: false,
+          dataSource: techData.dataSource,
+          currencySymbol,
+          analysisMode,
+        });
+      } catch (err: unknown) {
+        console.error(`Jev + AI analysis failed at the ${stage} stage:`, err);
+        const prefix = stage === "jev"
+          ? effectiveLang === "en"
+            ? "Jev decision failed"
+            : effectiveLang === "ja"
+              ? "Jev の判断に失敗しました"
+              : "Jev 决策失败"
+          : effectiveLang === "en"
+            ? "Jev decision succeeded, but the LLM report failed"
+            : effectiveLang === "ja"
+              ? "Jev の判断は成功しましたが、LLM レポートの生成に失敗しました"
+              : "Jev 决策已完成，但大模型报告生成失败";
         return NextResponse.json({ error: `${prefix}: ${summarizeLLMError(err)}` }, { status: 502 });
       }
     }

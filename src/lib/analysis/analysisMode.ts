@@ -1,4 +1,4 @@
-export const ANALYSIS_MODES = ["rule-ai", "ai-native"] as const;
+export const ANALYSIS_MODES = ["rule-ai", "ai-native", "jev-ai"] as const;
 
 export type AnalysisMode = (typeof ANALYSIS_MODES)[number];
 

@@ -38,7 +38,7 @@ function allowPrivateHosts(): boolean {
  * Validates a user-supplied LLM base URL and returns it normalized (no trailing slash).
  * Rejects non-HTTP(S) schemes, embedded credentials, and private/metadata hosts.
  */
-function resolveBaseUrl(baseUrl: string | undefined, defaultBase: string): string {
+export function resolveBaseUrl(baseUrl: string | undefined, defaultBase: string): string {
   if (!baseUrl || !baseUrl.trim()) return defaultBase;
 
   let parsed: URL;
@@ -62,7 +62,7 @@ function resolveBaseUrl(baseUrl: string | undefined, defaultBase: string): strin
 }
 
 /** Model names are interpolated into URL paths; keep them to a conservative charset. */
-function sanitizeModelName(modelName: string | undefined, fallback: string): string {
+export function sanitizeModelName(modelName: string | undefined, fallback: string): string {
   const name = (modelName || "").trim() || fallback;
   if (!/^[\w.:\-]+$/.test(name)) {
     throw new Error("Invalid LLM model name");
@@ -85,7 +85,7 @@ function resolveOpenAICompatibleEndpoint(baseUrl: string | undefined): string {
     : `${normalized}/chat/completions`;
 }
 
-async function parseUpstreamJson<T>(provider: string, res: Response): Promise<T> {
+export async function parseUpstreamJson<T>(provider: string, res: Response): Promise<T> {
   try {
     return await res.json() as T;
   } catch {
@@ -98,7 +98,7 @@ async function parseUpstreamJson<T>(provider: string, res: Response): Promise<T>
 }
 
 /** Builds an error without echoing unbounded upstream response bodies back to the client. */
-async function upstreamError(provider: string, res: Response): Promise<Error> {
+export async function upstreamError(provider: string, res: Response): Promise<Error> {
   let detail = "";
   try {
     detail = (await res.text()).slice(0, MAX_UPSTREAM_ERROR_CHARS);
@@ -108,7 +108,7 @@ async function upstreamError(provider: string, res: Response): Promise<Error> {
   return new Error(`${provider} API Error (${res.status}): ${detail}`);
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, provider: string, timeoutMs: number): Promise<Response> {
+export async function fetchWithTimeout(url: string, init: RequestInit, provider: string, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -130,7 +130,11 @@ async function fetchWithTimeout(url: string, init: RequestInit, provider: string
 /**
  * Dynamically forwards the generated analysis prompt to the specified LLM provider using standard HTTP fetch.
  */
-export async function generateLLMReport(prompt: string, config: LLMConfig): Promise<string> {
+export async function generateLLMReport(
+  prompt: string,
+  config: LLMConfig,
+  systemPrompt: string = ANALYSIS_SYSTEM_BOUNDARY
+): Promise<string> {
   const { provider, apiKey, baseUrl, modelName } = config;
 
   if (!apiKey) {
@@ -146,7 +150,7 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
 
     const payload = {
       systemInstruction: {
-        parts: [{ text: ANALYSIS_SYSTEM_BOUNDARY }],
+        parts: [{ text: systemPrompt }],
       },
       contents: [
         {
@@ -181,7 +185,7 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
     const payload = {
       model: sanitizeModelName(modelName, "claude-sonnet-5"),
       max_tokens: 4096,
-      system: ANALYSIS_SYSTEM_BOUNDARY,
+      system: systemPrompt,
       messages: [
         {
           role: "user",
@@ -216,7 +220,7 @@ export async function generateLLMReport(prompt: string, config: LLMConfig): Prom
     messages: [
       {
         role: "system",
-        content: ANALYSIS_SYSTEM_BOUNDARY
+        content: systemPrompt
       },
       {
         role: "user",

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useSyncExternalStore, useCallback } from "react";
 import dynamic from "next/dynamic";
-import { BrainCircuit, Info, ListChecks, Search, Settings, Star, TrendingUp, TrendingDown, RefreshCw, Trash2 } from "lucide-react";
+import { BrainCircuit, Info, ListChecks, Search, Settings, Star, TrendingUp, TrendingDown, RefreshCw, Trash2, Zap } from "lucide-react";
 import LoadingOverlay from "@/components/LoadingOverlay";
 import SettingsModal from "@/components/SettingsModal";
 import MarkdownBlock from "@/components/MarkdownBlock";
@@ -13,7 +13,8 @@ import { formatMarketPrice, getMarketCurrencySymbol, normalizeManualSymbolInput 
 import { Candle, IchimokuResult } from "@/lib/analysis/indicators";
 import { EntryAssessment, ScoreDetail } from "@/lib/analysis/scoring";
 import { AiEntryAssessment } from "@/lib/analysis/aiAnalysisResult";
-import { AnalysisMode, DEFAULT_ANALYSIS_MODE, isAnalysisMode } from "@/lib/analysis/analysisMode";
+import { ANALYSIS_MODES, AnalysisMode, DEFAULT_ANALYSIS_MODE, isAnalysisMode } from "@/lib/analysis/analysisMode";
+import type { JevConfig } from "@/lib/analysis/jevClient";
 import { PatternResult } from "@/lib/analysis/patterns";
 import { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
 import { ChanLunResult } from "@/lib/analysis/chanlun";
@@ -337,6 +338,7 @@ export default function Home() {
     baseUrl: "",
     modelName: "gemini-1.5-flash",
   });
+  const [jevConfig, setJevConfig] = useState<JevConfig>({ apiKey: "", baseUrl: "", modelName: "" });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [appLanguage, setAppLanguage] = useState<AppLanguage>("auto");
   const [useFallback, setUseFallback] = useState(true);
@@ -433,6 +435,10 @@ export default function Home() {
       if (savedConfig) {
         setLlmConfig(JSON.parse(savedConfig) as LLMConfig);
       }
+      const savedJevConfig = localStorage.getItem("jevConfig");
+      if (savedJevConfig) {
+        setJevConfig(JSON.parse(savedJevConfig) as JevConfig);
+      }
 
       // 3. Load Language
       const savedLanguage = localStorage.getItem("appLanguage");
@@ -520,10 +526,15 @@ export default function Home() {
     fetchWatchlistQuotes();
   }, [watchlistKey]);
 
-  const fetchActiveStockData = useCallback(async (forceFetch: boolean | React.MouseEvent = false, overrideConfig?: LLMConfig) => {
+  const fetchActiveStockData = useCallback(async (
+    forceFetch: boolean | React.MouseEvent = false,
+    overrideConfig?: LLMConfig,
+    overrideJevConfig?: JevConfig
+  ) => {
     const isForce = forceFetch === true || (forceFetch && typeof forceFetch === "object" && "nativeEvent" in forceFetch);
     const requestedSymbol = activeSymbol;
     const config = overrideConfig ?? llmConfig;
+    const jev = overrideJevConfig ?? jevConfig;
     const requestLang = resolveEffectiveLanguage(appLanguage);
     currentRequestSymbolRef.current = requestedSymbol;
 
@@ -646,6 +657,7 @@ export default function Home() {
         body: JSON.stringify({
           symbol: requestedSymbol,
           llmConfig: config.apiKey ? config : undefined,
+          jevConfig: analysisMode === "jev-ai" && jev.apiKey ? jev : undefined,
           language: requestLang,
           useFallback,
           quoteSnapshot,
@@ -702,7 +714,7 @@ export default function Home() {
         setLoading(false);
       }
     }
-  }, [activeSymbol, analysisMode, appLanguage, llmConfig, recordAnalysisTimestamp, syncAnalysisQuoteToWatchlist, useFallback]);
+  }, [activeSymbol, analysisMode, appLanguage, llmConfig, jevConfig, recordAnalysisTimestamp, syncAnalysisQuoteToWatchlist, useFallback]);
 
   const fetchActiveStockDataRef = useRef(fetchActiveStockData);
   useEffect(() => {
@@ -834,21 +846,26 @@ export default function Home() {
     setAnalysisTimestamps(timestamps);
   };
 
-  const handleSaveSettings = (newConfig: LLMConfig) => {
+  const handleSaveSettings = (newConfig: LLMConfig, newJevConfig: JevConfig) => {
     const prevConfigStr = localStorage.getItem("llmConfig");
     const prevApiKey = prevConfigStr ? JSON.parse(prevConfigStr).apiKey : "";
+    const prevJevConfigStr = localStorage.getItem("jevConfig");
+    const prevJevApiKey = prevJevConfigStr ? JSON.parse(prevJevConfigStr).apiKey : "";
     // The state default is `true` and the loader only flips it off for the
     // literal "false", so a missing key must also be treated as `true`.
     const prevFallback = localStorage.getItem("zenith_use_fallback") !== "false";
 
     localStorage.setItem("llmConfig", JSON.stringify(newConfig));
+    localStorage.setItem("jevConfig", JSON.stringify(newJevConfig));
     localStorage.setItem("appLanguage", appLanguage);
     localStorage.setItem("zenith_use_fallback", useFallback ? "true" : "false");
     setLlmConfig(newConfig);
+    setJevConfig(newJevConfig);
     setIsSettingsOpen(false);
 
-    if (activeSymbol && (prevApiKey !== newConfig.apiKey || prevFallback !== useFallback)) {
-      fetchActiveStockData(true, newConfig);
+    const jevKeyChanged = analysisMode === "jev-ai" && prevJevApiKey !== newJevConfig.apiKey;
+    if (activeSymbol && (prevApiKey !== newConfig.apiKey || prevFallback !== useFallback || jevKeyChanged)) {
+      fetchActiveStockData(true, newConfig, newJevConfig);
     }
   };
 
@@ -988,7 +1005,7 @@ export default function Home() {
         </div>
 
         <div className="analysis-mode-switch" role="group" aria-label={t.analysisModeLabel} style={styles.analysisModeSwitch}>
-          {(["rule-ai", "ai-native"] as const).map((mode) => (
+          {ANALYSIS_MODES.map((mode) => (
             <button
               key={mode}
               type="button"
@@ -999,12 +1016,14 @@ export default function Home() {
                 ...(analysisMode === mode
                   ? mode === "rule-ai"
                     ? styles.ruleModeButtonActive
-                    : styles.aiModeButtonActive
+                    : mode === "ai-native"
+                      ? styles.aiModeButtonActive
+                      : styles.jevModeButtonActive
                   : {}),
               }}
             >
-              {mode === "rule-ai" ? <ListChecks size={15} /> : <BrainCircuit size={15} />}
-              {mode === "rule-ai" ? t.ruleAiMode : t.aiNativeMode}
+              {mode === "rule-ai" ? <ListChecks size={15} /> : mode === "ai-native" ? <BrainCircuit size={15} /> : <Zap size={15} />}
+              {mode === "rule-ai" ? t.ruleAiMode : mode === "ai-native" ? t.aiNativeMode : t.jevAiMode}
             </button>
           ))}
         </div>
@@ -1351,7 +1370,7 @@ export default function Home() {
                     <div style={styles.reportHeader}>
                       <span>{t.technicalHeader}</span>
                       {stockData.isLLMUsed ? (
-                        <span style={styles.llmBadge}>{t.llmBadge} ({llmConfig.provider})</span>
+                        <span style={styles.llmBadge}>{t.llmBadge} ({stockData.analysisMode === "jev-ai" ? `Jev + ${llmConfig.provider}` : llmConfig.provider})</span>
                       ) : (
                         <span style={styles.ruleBadge}>{t.ruleBadge}</span>
                       )}
@@ -1388,6 +1407,7 @@ export default function Home() {
         <SettingsModal
           isOpen={isSettingsOpen}
           initialConfig={llmConfig}
+          initialJevConfig={jevConfig}
           appLanguage={appLanguage}
           onLanguageChange={setAppLanguage}
           analysisMode={analysisMode}

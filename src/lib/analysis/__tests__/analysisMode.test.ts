@@ -6,9 +6,10 @@ describe("analysis mode", () => {
     expect(DEFAULT_ANALYSIS_MODE).toBe("rule-ai");
   });
 
-  it("accepts only the two supported modes", () => {
+  it("accepts only the supported modes", () => {
     expect(isAnalysisMode("rule-ai")).toBe(true);
     expect(isAnalysisMode("ai-native")).toBe(true);
+    expect(isAnalysisMode("jev-ai")).toBe(true);
     expect(isAnalysisMode("rules")).toBe(false);
     expect(isAnalysisMode(undefined)).toBe(false);
   });
@@ -18,5 +19,6 @@ describe("analysis mode", () => {
     expect(canUseMockMarketData("rule-ai", false)).toBe(false);
     expect(canUseMockMarketData("rule-ai", undefined)).toBe(false);
     expect(canUseMockMarketData("ai-native", true)).toBe(false);
+    expect(canUseMockMarketData("jev-ai", true)).toBe(false);
   });
 });

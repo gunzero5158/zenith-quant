@@ -60,6 +60,11 @@ export const styles: Record<string, CSSProperties> = {
     borderColor: "rgba(251, 191, 36, 0.58)",
     color: "#fcd34d",
   },
+  jevModeButtonActive: {
+    backgroundColor: "rgba(167, 139, 250, 0.14)",
+    borderColor: "rgba(167, 139, 250, 0.58)",
+    color: "#c4b5fd",
+  },
   brand: {
     display: "flex",
     alignItems: "center",
@@ -773,7 +778,7 @@ export const styles: Record<string, CSSProperties> = {
   },
   welcomeModeGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
     gap: "14px",
   },
   welcomeModeCard: {
