@@ -53,7 +53,7 @@ import { fetchYahooJsonViaWindows } from "@/lib/analysis/windowsHttpFallback";
 import { buildAiNativeAnalystPrompt } from "@/lib/analysis/aiNativeAnalysisPrompt";
 import { validateAiAnalysisResult, toLegacyAiScoreDetail } from "@/lib/analysis/aiAnalysisResult";
 import { composeAiNativeReport } from "@/lib/analysis/aiNativeReportComposition";
-import { buildJevDecisionRequest, resolveJevDecision } from "@/lib/analysis/jevDecision";
+import { buildJevDecisionRequest, buildJevFollowUpRequest, resolveJevDecision, resolveJevPrimaryDecision } from "@/lib/analysis/jevDecision";
 import { JevConfig, requestJevDecision } from "@/lib/analysis/jevClient";
 import { buildJevReportPrompt, JEV_REPORT_SYSTEM_BOUNDARY, mergeJevDecisionWithReport } from "@/lib/analysis/jevReportPrompt";
 
@@ -524,18 +524,18 @@ export async function POST(request: Request) {
     const analysisMode = requestedAnalysisMode ?? DEFAULT_ANALYSIS_MODE;
     if (analysisMode === "ai-native" && !llmConfig?.apiKey) {
       const message = effectiveLang === "en"
-        ? "AI Native mode requires an API key. Configure a model in Settings."
+        ? "LLM Native mode requires an API key. Configure a model in Settings."
         : effectiveLang === "ja"
-          ? "AI判断モードにはAPIキーが必要です。設定でモデルを構成してください。"
-          : "纯 AI 分析需要 API Key，请先在大模型配置中完成设置。";
+          ? "LLM判断モードにはAPIキーが必要です。設定でモデルを構成してください。"
+          : "纯 LLM 分析需要 API Key，请先在大模型配置中完成设置。";
       return NextResponse.json({ error: message }, { status: 400 });
     }
     if (analysisMode === "jev-ai" && (!jevConfig?.apiKey || !llmConfig?.apiKey)) {
       const message = effectiveLang === "en"
-        ? "Jev + AI mode requires both a Jev API key and an LLM API key. Configure them in Settings."
+        ? "Jev Decision mode requires both a Jev API key and an LLM API key. Configure them in Settings."
         : effectiveLang === "ja"
-          ? "Jev + AI モードには Jev の API キーと LLM の API キーの両方が必要です。設定で構成してください。"
-          : "Jev 决策分析需要同时配置 Jev API Key 和大模型 API Key，请先在设置中完成配置。";
+          ? "Jev 判定モードには Jev の API キーと LLM の API キーの両方が必要です。設定で構成してください。"
+          : "Jev 决策模式需要同时配置 Jev API Key 和大模型 API Key，请先在设置中完成配置。";
       return NextResponse.json({ error: message }, { status: 400 });
     }
 
@@ -755,12 +755,12 @@ export async function POST(request: Request) {
           analysisMode,
         });
       } catch (err: unknown) {
-        console.error("AI Native analysis failed:", err);
+        console.error("LLM Native analysis failed:", err);
         const prefix = effectiveLang === "en"
-          ? "AI Native analysis failed"
+          ? "LLM Native analysis failed"
           : effectiveLang === "ja"
-            ? "AI判断に失敗しました"
-            : "纯 AI 分析失败";
+            ? "LLM判断に失敗しました"
+            : "纯 LLM 分析失败";
         return NextResponse.json({ error: `${prefix}: ${summarizeLLMError(err)}` }, { status: 502 });
       }
     }
@@ -773,8 +773,12 @@ export async function POST(request: Request) {
           dailyCandles: techData.dailyCandles,
           weeklyCandles: techData.weeklyCandles,
         });
-        const jevResponse = await requestJevDecision(jevRequest.state, jevRequest.questions, jevConfig!);
-        const decision = resolveJevDecision(jevResponse.answers, jevRequest);
+        const primaryResponse = await requestJevDecision(jevRequest.state, jevRequest.primaryQuestions, jevConfig!);
+        const primaryDecision = resolveJevPrimaryDecision(primaryResponse.answers);
+        // Dependent judgments are asked second so Jev can see the outlook and setup stage.
+        const followUp = buildJevFollowUpRequest(jevRequest, primaryDecision);
+        const jevResponse = await requestJevDecision(followUp.state, followUp.questions, jevConfig!);
+        const decision = resolveJevDecision(primaryDecision, jevResponse.answers, jevRequest);
 
         stage = "report";
         const prompt = buildJevReportPrompt({
@@ -803,7 +807,7 @@ export async function POST(request: Request) {
           score: toLegacyAiScoreDetail(aiResult.scoreAssessment),
           entryAssessment: aiResult.scoreAssessment,
           strategyAdvice: aiResult.strategyAdvice,
-          jevDecision: { ...decision, model: jevResponse.model, usage: jevResponse.usage },
+          jevDecision: { ...decision, model: jevResponse.model, usage: [primaryResponse.usage, jevResponse.usage] },
           dataQuality: techData.snapshot.dataQuality,
           dailyCandles: techData.dailyCandles,
           weeklyCandles: techData.weeklyCandles,
@@ -823,7 +827,7 @@ export async function POST(request: Request) {
           analysisMode,
         });
       } catch (err: unknown) {
-        console.error(`Jev + AI analysis failed at the ${stage} stage:`, err);
+        console.error(`Jev Decision analysis failed at the ${stage} stage:`, err);
         const prefix = stage === "jev"
           ? effectiveLang === "en"
             ? "Jev decision failed"

@@ -8,7 +8,7 @@ AI analysis is based on public market data and standard technical indicators. It
 
 ## Recent Updates (August 2026)
 
-- Added an analysis-mode selector: use **Rules + AI** for deterministic scoring with an AI review, or **AI Native** to let the model independently judge outlook, entry quality, confidence, and strategy from objective evidence.
+- Added an analysis-mode selector: use **Rules + LLM** for deterministic scoring with an AI review, or **LLM Native** to let the model independently judge outlook, entry quality, confidence, and strategy from objective evidence.
 - Rebranded the product as **Rooftop Quant**, with localized names **天台分析** and **屋上クオンツ**, and added a multilingual investment-risk notice to the application.
 - Reworked entry assessment into separate left-side reversal and right-side confirmation paths. Their numeric path scores remain internal; the interface shows one final score and clear scenario states instead.
 - Made TD Sequential stages 6-9 progressively affect setup maturity, so an unfinished sequence can contribute evidence without being treated as a completed signal.
@@ -59,12 +59,12 @@ Realtime quotes are merged into analysis snapshots where supported so the displa
 
 Every request first builds the same immutable, objective evidence snapshot. The dashboard then offers two modes:
 
-- **Rules + AI** (default): the local engine calculates left-side reversal and right-side confirmation paths and a deterministic 0-5 score. A configured LLM reviews the evidence and may adjust that score by at most `+/-0.5`.
-- **AI Native**: the model receives the objective indicator values, evidence, price levels, and recent candles without the local rule score, score cap, or predetermined regime. It independently returns the outlook, 0-5 entry score, confidence, left/right state, risk plan, and report in one model request.
+- **Rules + LLM** (default): the local engine calculates left-side reversal and right-side confirmation paths and a deterministic 0-5 score. A configured LLM reviews the evidence and may adjust that score by at most `+/-0.5`.
+- **LLM Native**: the model receives the objective indicator values, evidence, price levels, and recent candles without the local rule score, score cap, or predetermined regime. It independently returns the outlook, 0-5 entry score, confidence, left/right state, risk plan, and report in one model request.
 
-- **Jev + AI**: [Jev](https://docs.typesafe.ai) (TypeSafe's System One decision model) answers a set of typed questions about the same objective evidence in one parallel request — outlook, 0-5 entry score, left/right state, holder/entry actions, stop trigger, and the stop and target picked from the supplied levels — each with calibrated probabilities. The LLM then only writes the report around those immutable decisions. Jev is weak at arithmetic, so it receives semantic evidence and code-computed distance categories instead of raw indicator values; parallel answers are independent, so the server downgrades any actionable plan they do not jointly support. This mode needs both a Jev API key and an LLM configured in Settings.
+- **Jev Decision**: [Jev](https://docs.typesafe.ai) (TypeSafe's System One decision model) answers typed questions about the same objective evidence in two steps — first the outlook and the setup stage (left/right state is one staged judgment, so the pair is always coherent), then, with those decisions visible, the 0-5 entry score, holder action, stop trigger, and the stop and target picked from the supplied levels — each with calibrated probabilities. The LLM then only writes the report around those immutable decisions. Jev is weak at arithmetic, so it receives semantic evidence and code-computed distance categories instead of raw indicator values; answers within one step are independent, so the server downgrades any actionable plan they do not jointly support. This mode needs both a Jev API key and an LLM configured in Settings.
 
-AI Native requires a configured LLM and does not silently fall back to rule scoring. Stops and targets must match supplied support/resistance levels; unsafe or incomplete actionable plans are downgraded to waiting without replacing the AI's score.
+LLM Native requires a configured LLM and does not silently fall back to rule scoring. Stops and targets must match supplied support/resistance levels; unsafe or incomplete actionable plans are downgraded to waiting without replacing the AI's score.
 
 The two paths use explicit scenario states: **Not formed**, **Watch**, **Intraday provisional**, **Confirmed**, and **Too late**. Their numeric scores are internal implementation details rather than additional headline ratings. TD Sequential starts contributing capped exhaustion evidence from stage 6, with progressively higher weight through stage 9; an unfinished sequence is evidence, not confirmation by itself.
 

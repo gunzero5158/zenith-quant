@@ -46,10 +46,32 @@ export interface JevLevelCandidate {
 }
 
 export interface JevDecisionRequest {
+  price: number;
   state: Record<string, unknown>;
-  questions: Record<string, JevQuestion>;
+  primaryQuestions: Record<string, JevQuestion>;
   stopCandidates: JevLevelCandidate[];
   targetCandidates: JevLevelCandidate[];
+}
+
+export type JevSetupStage =
+  | "none"
+  | "breakdown"
+  | "left_watch"
+  | "left_triggered"
+  | "range_watch"
+  | "rebound_underway"
+  | "right_watch"
+  | "right_triggered"
+  | "extended";
+
+export interface JevPrimaryDecision {
+  outlook: AiMarketOutlook;
+  outlookProbabilities: Record<AiMarketOutlook, number>;
+  confidence: number;
+  setupStage: JevSetupStage;
+  stageConfidence: number;
+  conflictProbability: number;
+  adjustments: string[];
 }
 
 export interface JevDecision {
@@ -59,6 +81,8 @@ export interface JevDecision {
   confidence: number;
   scoreConfidence: number;
   conflictProbability: number;
+  setupStage: JevSetupStage;
+  stageConfidence: number;
   leftStatus: JevSetupStatus;
   rightStatus: JevSetupStatus;
   activeSetup: "left" | "right" | "none";
@@ -74,7 +98,60 @@ export interface JevDecision {
 
 const MAX_LEVEL_CANDIDATES = 8;
 const NO_LEVEL = "none";
-const SETUP_STATUSES: readonly JevSetupStatus[] = ["not_formed", "watch", "triggered", "too_late"];
+const MIN_EXECUTABLE_REWARD_RISK = 1.2;
+
+interface SetupStageDefinition {
+  description: string;
+  left: JevSetupStatus;
+  right: JevSetupStatus;
+  leftAction: LeftEntryAction;
+  rightAction: RightAddAction;
+  /** The stage to fall back to when an executable entry is not backed by the other decisions. */
+  withoutEntry?: JevSetupStage;
+}
+
+// Left and right status are one judgment, not two: a trade develops from the
+// left-side chance to the right-side chance, so each stage fixes a coherent pair.
+const SETUP_STAGES: Record<JevSetupStage, SetupStageDefinition> = {
+  none: {
+    description: "No setup: price is not near meaningful support, shows no reversal signals, and is not near a breakout.",
+    left: "not_formed", right: "not_formed", leftAction: "not_applicable", rightAction: "wait_breakout",
+  },
+  breakdown: {
+    description: "Breakdown: support has failed or the structure is clearly bearish; no long setup exists until a new base forms.",
+    left: "not_formed", right: "not_formed", leftAction: "not_applicable", rightAction: "wait_breakout",
+  },
+  left_watch: {
+    description: "Left-side developing: price is approaching or sitting at support, or reversal signals are appearing, but confirmation is still missing. No breakout is in play.",
+    left: "watch", right: "not_formed", leftAction: "wait", rightAction: "wait_breakout",
+  },
+  left_triggered: {
+    description: "Left-side executable: price is at support with reversal evidence and a nearby support can serve as a stop. The breakout has not happened yet.",
+    left: "triggered", right: "not_formed", leftAction: "probe", rightAction: "wait_breakout",
+    withoutEntry: "left_watch",
+  },
+  range_watch: {
+    description: "Tight range: price is squeezed between nearby support and nearby resistance, so both a dip entry and a breakout entry are being watched and neither is confirmed.",
+    left: "watch", right: "watch", leftAction: "wait", rightAction: "wait_breakout",
+  },
+  rebound_underway: {
+    description: "Rebound underway: price already bounced away from support, so the dip entry has passed, but it is not yet close to a breakout level.",
+    left: "too_late", right: "not_formed", leftAction: "not_applicable", rightAction: "wait_breakout",
+  },
+  right_watch: {
+    description: "Right-side developing: price is pressing against a breakout level or the trend is improving, but the breakout or its retest is not confirmed. The dip entry has passed.",
+    left: "too_late", right: "watch", leftAction: "not_applicable", rightAction: "wait_breakout",
+  },
+  right_triggered: {
+    description: "Right-side executable: the breakout or trend continuation is confirmed and price is still close enough to the breakout area to enter. The dip entry has passed.",
+    left: "too_late", right: "triggered", leftAction: "not_applicable", rightAction: "add_on_retest",
+    withoutEntry: "right_watch",
+  },
+  extended: {
+    description: "Extended: price has run far above the breakout area or is overbought, so both the dip entry and the breakout entry have passed and chasing has poor reward-to-risk.",
+    left: "too_late", right: "too_late", leftAction: "not_applicable", rightAction: "avoid_chasing",
+  },
+};
 
 function dailyAtr(snapshot: EvidenceSnapshot): number | undefined {
   const atr = snapshot.items.find((item) => item.family === "atr" && item.timeframe === "daily")?.values?.value;
@@ -225,21 +302,7 @@ export function buildJevDecisionRequest(input: {
     resistanceLevelsAbovePrice: targetCandidates.map((candidate) => candidate.description),
   };
 
-  const setupCriteria = (side: "left" | "right"): Record<JevSetupStatus, string> => side === "left"
-    ? {
-      not_formed: "No left-side (buy the dip / early reversal) setup exists: price is not near meaningful support and there are no reversal or oversold signals.",
-      watch: "A left-side setup is developing: price is approaching or sitting at support, or reversal signals are appearing, but confirmation or a clear stop is still missing.",
-      triggered: "A left-side entry is executable now: price is at support with reversal evidence, and a nearby support level can serve as a stop.",
-      too_late: "The left-side opportunity has passed: price already rebounded far from support, or support has broken down.",
-    }
-    : {
-      not_formed: "No right-side (breakout / trend confirmation) setup exists: there is no breakout, no confirmed uptrend, and no nearby trigger level.",
-      watch: "A right-side setup is developing: price is near a breakout level or the trend is improving, but the breakout or retest is not yet confirmed.",
-      triggered: "A right-side entry is executable now: breakout or trend continuation is confirmed by evidence and price is still close enough to the breakout area to enter.",
-      too_late: "The right-side move is already extended: price is far above the breakout area or overbought, so chasing has poor reward-to-risk.",
-    };
-
-  const questions: Record<string, JevQuestion> = {
+  const primaryQuestions: Record<string, JevQuestion> = {
     outlook: {
       type: "choice",
       instructions: "Based on `evidence` and `priceAction`, what is the most likely price direction of this stock over the next 5-20 trading days?",
@@ -249,9 +312,45 @@ export function buildJevDecisionRequest(input: {
         bearish: "Evidence across trend, momentum, volume and structure favors lower prices.",
       },
     },
+    setupStage: {
+      type: "choice",
+      instructions: "A long swing trade develops in order: first a left-side chance (buying weakness near support before the reversal is confirmed), later a right-side chance (buying strength after a breakout or trend confirmation). Which single stage describes this stock right now?",
+      criteria: Object.fromEntries(
+        (Object.keys(SETUP_STAGES) as JevSetupStage[]).map((stage) => [stage, SETUP_STAGES[stage].description])
+      ),
+    },
+    evidenceConflict: {
+      type: "noul",
+      instructions: "The evidence contains major conflicts: important indicator families or the daily and weekly timeframes point in opposite directions.",
+    },
+  };
+
+  return { price: snapshot.price, state, primaryQuestions, stopCandidates, targetCandidates };
+}
+
+/**
+ * Parallel Jev answers cannot see each other, so judgments that depend on the
+ * outlook and setup stage are asked in a second call that carries those
+ * decisions in its state.
+ */
+export function buildJevFollowUpRequest(
+  request: JevDecisionRequest,
+  primary: JevPrimaryDecision
+): { state: Record<string, unknown>; questions: Record<string, JevQuestion> } {
+  const pct = (value: number) => `${Math.round(value * 100)}%`;
+  const state = {
+    ...request.state,
+    decisionsSoFar: {
+      outlook: `${primary.outlook} (probabilities: bullish ${pct(primary.outlookProbabilities.bullish)}, neutral ${pct(primary.outlookProbabilities.neutral)}, bearish ${pct(primary.outlookProbabilities.bearish)})`,
+      setupStage: SETUP_STAGES[primary.setupStage].description,
+    },
+  };
+  const consistent = "Answer consistently with `decisionsSoFar`.";
+
+  const questions: Record<string, JevQuestion> = {
     entryQuality: {
       type: "score",
-      instructions: "How attractive is opening a new long position in this stock right now? Trend direction and entry quality are different judgments: a strong uptrend can still be a poor entry if price is extended.",
+      instructions: `How attractive is opening a new long position in this stock right now? Trend direction and entry quality are different judgments: a strong uptrend can still be a poor entry if price is extended. ${consistent}`,
       criteria: [
         "No defensible long case: evidence is clearly bearish or the structure is broken.",
         "Poor entry: mostly negative evidence, or price is badly located with no usable support.",
@@ -261,51 +360,14 @@ export function buildJevDecisionRequest(input: {
         "Exceptional entry: strong agreement across timeframes, confirmed trigger, close stop and open upside.",
       ],
     },
-    leftStatus: {
-      type: "choice",
-      instructions: "What is the status of a left-side long entry (buying weakness near support before the reversal is confirmed)?",
-      criteria: setupCriteria("left"),
-    },
-    rightStatus: {
-      type: "choice",
-      instructions: "What is the status of a right-side long entry (buying strength after a breakout or trend confirmation)?",
-      criteria: setupCriteria("right"),
-    },
-    preferredSetup: {
-      type: "choice",
-      instructions: "If a new long position were opened now, which entry style fits the evidence best?",
-      criteria: {
-        left: "Left-side: buy near support in anticipation of a reversal.",
-        right: "Right-side: buy the confirmed breakout or the retest of it.",
-        none: "Neither: the evidence does not justify opening a new long position now.",
-      },
-    },
     holderAction: {
       type: "choice",
-      instructions: "What should an investor who already holds this stock do?",
+      instructions: `What should an investor who already holds this stock do? ${consistent}`,
       criteria: {
         hold: "Keep holding: the trend is intact and there is no pressing risk.",
         hold_protect: "Keep holding but tighten a protective stop: the trend is intact yet risks or extension are rising.",
         reduce: "Reduce the position: evidence is deteriorating or price is at strong resistance with weakening momentum.",
         exit: "Exit the position: the structure has broken down or evidence is clearly bearish.",
-      },
-    },
-    leftEntryAction: {
-      type: "choice",
-      instructions: "What should an investor who wants a left-side entry do now?",
-      criteria: {
-        wait: "Wait: a left-side setup may come, but conditions are not met yet.",
-        probe: "Open a small probing position now near support with a defined stop.",
-        not_applicable: "Left-side entry does not apply: there is no support-based setup, or the chance has passed.",
-      },
-    },
-    rightAddAction: {
-      type: "choice",
-      instructions: "What should an investor who wants a right-side entry or add do now?",
-      criteria: {
-        wait_breakout: "Wait for a confirmed breakout above resistance before acting.",
-        add_on_retest: "Buy or add now on the confirmed breakout or its successful retest.",
-        avoid_chasing: "Do not chase: price is already extended above the breakout area.",
       },
     },
     stopTrigger: {
@@ -316,34 +378,37 @@ export function buildJevDecisionRequest(input: {
         intraday: "Intraday: the structure is fragile, volatility is high, or a break would signal an immediate breakdown.",
       },
     },
-    evidenceConflict: {
-      type: "noul",
-      instructions: "The evidence contains major conflicts: important indicator families or the daily and weekly timeframes point in opposite directions.",
-    },
   };
 
-  if (stopCandidates.length > 0) {
+  if (request.stopCandidates.length > 0) {
     questions.stopLevel = {
       type: "choice",
-      instructions: "Which support level is the most defensible protective stop for a long position: close enough to limit the loss, yet strong enough not to be hit by normal volatility?",
+      instructions: `Which support level is the most defensible protective stop for a long position: close enough to limit the loss, yet strong enough not to be hit by normal volatility? ${consistent}`,
       criteria: {
-        ...Object.fromEntries(stopCandidates.map((candidate) => [candidate.key, candidate.description])),
+        ...Object.fromEntries(request.stopCandidates.map((candidate) => [candidate.key, candidate.description])),
         [NO_LEVEL]: "None of the levels is a defensible stop.",
       },
     };
   }
-  if (targetCandidates.length > 0) {
+  if (request.targetCandidates.length > 0) {
     questions.targetLevel = {
       type: "choice",
-      instructions: "Which resistance level is the most realistic first profit target for a long position over the next 5-20 trading days?",
+      instructions: `Which resistance level is the most realistic first profit target for a long position over the next 5-20 trading days? ${consistent}`,
       criteria: {
-        ...Object.fromEntries(targetCandidates.map((candidate) => [candidate.key, candidate.description])),
+        ...Object.fromEntries(request.targetCandidates.map((candidate) => [candidate.key, candidate.description])),
         [NO_LEVEL]: "None of the levels is a realistic target.",
       },
     };
   }
 
-  return { state, questions, stopCandidates, targetCandidates };
+  return { state, questions };
+}
+
+function answerMap(rawAnswers: unknown): Record<string, unknown> {
+  if (!rawAnswers || typeof rawAnswers !== "object" || Array.isArray(rawAnswers)) {
+    throw new Error("Jev response has no answers object");
+  }
+  return rawAnswers as Record<string, unknown>;
 }
 
 function choiceAnswer<T extends string>(
@@ -377,33 +442,47 @@ function candidatePrice(
   return candidates.find((candidate) => candidate.key === choice)?.price;
 }
 
-export function resolveJevDecision(
-  rawAnswers: unknown,
-  request: Pick<JevDecisionRequest, "stopCandidates" | "targetCandidates">
-): JevDecision {
-  if (!rawAnswers || typeof rawAnswers !== "object" || Array.isArray(rawAnswers)) {
-    throw new Error("Jev response has no answers object");
-  }
-  const answers = rawAnswers as Record<string, unknown>;
+export function resolveJevPrimaryDecision(rawAnswers: unknown): JevPrimaryDecision {
+  const answers = answerMap(rawAnswers);
   const adjustments: string[] = [];
-
   const outlook = choiceAnswer(answers, "outlook", ["bullish", "neutral", "bearish"] as const);
+  const stage = choiceAnswer(answers, "setupStage", Object.keys(SETUP_STAGES) as JevSetupStage[]);
+  const conflict = answers.evidenceConflict as Partial<JevNoulAnswer> | undefined;
+
+  let setupStage = stage.choice;
+  const waitingStage = SETUP_STAGES[setupStage].withoutEntry;
+  if (outlook.choice === "bearish" && waitingStage) {
+    adjustments.push(`Setup stage lowered from ${setupStage} to ${waitingStage}: a long entry is not executable while the outlook is bearish.`);
+    setupStage = waitingStage;
+  }
+
+  const probability = (option: AiMarketOutlook) => outlook.probabilities[option] ?? 0;
+  return {
+    outlook: outlook.choice,
+    outlookProbabilities: { bullish: probability("bullish"), neutral: probability("neutral"), bearish: probability("bearish") },
+    confidence: outlook.confidence,
+    setupStage,
+    stageConfidence: stage.confidence,
+    conflictProbability: typeof conflict?.noul === "number" && Number.isFinite(conflict.noul)
+      ? Math.min(1, Math.max(0, conflict.noul))
+      : 0,
+    adjustments,
+  };
+}
+
+export function resolveJevDecision(
+  primary: JevPrimaryDecision,
+  rawFollowUpAnswers: unknown,
+  request: Pick<JevDecisionRequest, "price" | "stopCandidates" | "targetCandidates">
+): JevDecision {
+  const answers = answerMap(rawFollowUpAnswers);
+  const adjustments = [...primary.adjustments];
+
   const entry = answers.entryQuality as Partial<JevScoreAnswer> | undefined;
   if (!entry || typeof entry.score !== "number" || !Number.isFinite(entry.score)) {
     throw new Error('Jev answer "entryQuality" is missing a numeric score');
   }
-  const conflict = answers.evidenceConflict as Partial<JevNoulAnswer> | undefined;
-
-  const left = choiceAnswer(answers, "leftStatus", SETUP_STATUSES);
-  const right = choiceAnswer(answers, "rightStatus", SETUP_STATUSES);
-  let leftStatus = left.choice;
-  let rightStatus = right.choice;
-  const leftProbability = left.probabilities.triggered ?? 0;
-  const rightProbability = right.probabilities.triggered ?? 0;
-  const preferred = choiceAnswer(answers, "preferredSetup", ["left", "right", "none"] as const).choice;
   let holderAction = choiceAnswer(answers, "holderAction", ["hold", "hold_protect", "reduce", "exit"] as const).choice;
-  let leftEntryAction = choiceAnswer(answers, "leftEntryAction", ["wait", "probe", "not_applicable"] as const).choice;
-  let rightAddAction = choiceAnswer(answers, "rightAddAction", ["wait_breakout", "add_on_retest", "avoid_chasing"] as const).choice;
   const stopTrigger = choiceAnswer(answers, "stopTrigger", ["close", "intraday"] as const).choice;
 
   const stop = candidatePrice(answers, "stopLevel", request.stopCandidates);
@@ -413,36 +492,18 @@ export function resolveJevDecision(
     adjustments.push("Dropped the target because no defensible stop was selected.");
   }
 
-  // Parallel answers are independent, so an actionable entry must be backed by
-  // every related answer; otherwise it is downgraded to the waiting state.
-  const riskComplete = stop !== undefined && target !== undefined;
-  let leftActionable = riskComplete && leftStatus === "triggered" && leftEntryAction === "probe";
-  let rightActionable = riskComplete && rightStatus === "triggered" && rightAddAction === "add_on_retest";
-  if (leftActionable && rightActionable) {
-    const keepLeft = preferred === "left" || (preferred === "none" && leftProbability >= rightProbability);
-    if (keepLeft) rightActionable = false;
-    else leftActionable = false;
-    adjustments.push(`Both entries looked actionable; kept the ${keepLeft ? "left" : "right"}-side setup only.`);
-  }
-
-  if (!leftActionable) {
-    if (leftStatus === "triggered") {
-      leftStatus = "watch";
-      adjustments.push("Left-side status lowered from triggered to watch: the entry action or the stop-target pair did not confirm it.");
-    }
-    if (leftEntryAction === "probe") {
-      leftEntryAction = "wait";
-      adjustments.push("Left-side probe changed to wait: the setup status or the stop-target pair did not confirm it.");
-    }
-  }
-  if (!rightActionable) {
-    if (rightStatus === "triggered") {
-      rightStatus = "watch";
-      adjustments.push("Right-side status lowered from triggered to watch: the entry action or the stop-target pair did not confirm it.");
-    }
-    if (rightAddAction === "add_on_retest") {
-      rightAddAction = "wait_breakout";
-      adjustments.push("Right-side add changed to wait for breakout: the setup status or the stop-target pair did not confirm it.");
+  let setupStage = primary.setupStage;
+  const waitingStage = SETUP_STAGES[setupStage].withoutEntry;
+  if (waitingStage && (stop === undefined || target === undefined)) {
+    adjustments.push(`Setup stage lowered from ${setupStage} to ${waitingStage}: an executable entry needs both a stop and a target.`);
+    setupStage = waitingStage;
+  } else if (waitingStage && stop !== undefined && target !== undefined) {
+    // Jev cannot do arithmetic, so the payoff of its chosen pair is checked here
+    // against the same threshold the rule engine uses for an executable entry.
+    const rewardRisk = (target - request.price) / (request.price - stop);
+    if (!(rewardRisk >= MIN_EXECUTABLE_REWARD_RISK)) {
+      adjustments.push(`Setup stage lowered from ${setupStage} to ${waitingStage}: the chosen stop and target give a reward-to-risk of ${rewardRisk.toFixed(2)}, below ${MIN_EXECUTABLE_REWARD_RISK}.`);
+      setupStage = waitingStage;
     }
   }
   if (holderAction === "hold_protect" && stop === undefined) {
@@ -450,24 +511,24 @@ export function resolveJevDecision(
     adjustments.push("Protective hold changed to hold: no defensible stop was selected.");
   }
 
-  const probability = (option: AiMarketOutlook) => outlook.probabilities[option] ?? 0;
+  const stage = SETUP_STAGES[setupStage];
   return {
-    outlook: outlook.choice,
-    outlookProbabilities: { bullish: probability("bullish"), neutral: probability("neutral"), bearish: probability("bearish") },
+    outlook: primary.outlook,
+    outlookProbabilities: primary.outlookProbabilities,
     finalScore: Number(Math.min(5, Math.max(0, entry.score)).toFixed(1)),
-    confidence: outlook.confidence,
+    confidence: primary.confidence,
     scoreConfidence: typeof entry.confidence === "number" && Number.isFinite(entry.confidence)
       ? Math.min(1, Math.max(0, entry.confidence))
       : 0,
-    conflictProbability: typeof conflict?.noul === "number" && Number.isFinite(conflict.noul)
-      ? Math.min(1, Math.max(0, conflict.noul))
-      : 0,
-    leftStatus,
-    rightStatus,
-    activeSetup: leftActionable ? "left" : rightActionable ? "right" : "none",
+    conflictProbability: primary.conflictProbability,
+    setupStage,
+    stageConfidence: primary.stageConfidence,
+    leftStatus: stage.left,
+    rightStatus: stage.right,
+    activeSetup: stage.left === "triggered" ? "left" : stage.right === "triggered" ? "right" : "none",
     holderAction,
-    leftEntryAction,
-    rightAddAction,
+    leftEntryAction: stage.leftAction,
+    rightAddAction: stage.rightAction,
     stopTrigger,
     stop,
     target,

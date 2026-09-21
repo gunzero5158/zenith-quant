@@ -3,7 +3,13 @@ import type { EvidenceSnapshot } from "../evidence";
 import type { Candle } from "../indicators";
 import { validateAiAnalysisResult } from "../aiAnalysisResult";
 import { resolveJevEndpoint } from "../jevClient";
-import { buildJevDecisionRequest, jevConfidenceReason, resolveJevDecision } from "../jevDecision";
+import {
+  buildJevDecisionRequest,
+  buildJevFollowUpRequest,
+  jevConfidenceReason,
+  resolveJevDecision,
+  resolveJevPrimaryDecision,
+} from "../jevDecision";
 import { buildJevReportPrompt, mergeJevDecisionWithReport } from "../jevReportPrompt";
 
 const snapshot: EvidenceSnapshot = {
@@ -103,31 +109,38 @@ function choice(value: string, probabilities: Record<string, number> = { [value]
   return { type: "choice", choice: value, probabilities, confidence };
 }
 
-function answers(overrides: Record<string, unknown> = {}) {
+function primaryAnswers(overrides: Record<string, unknown> = {}) {
   return {
     outlook: choice("bullish", { bullish: 0.62, neutral: 0.3, bearish: 0.08 }, 0.43),
-    entryQuality: { type: "score", score: 3.64, probabilities: {}, confidence: 0.55 },
-    leftStatus: choice("watch"),
-    rightStatus: choice("triggered"),
-    preferredSetup: choice("right"),
-    holderAction: choice("hold_protect"),
-    leftEntryAction: choice("wait"),
-    rightAddAction: choice("add_on_retest"),
-    stopTrigger: choice("close"),
-    stopLevel: choice("s2"),
-    targetLevel: choice("t1"),
+    setupStage: choice("right_triggered"),
     evidenceConflict: { type: "noul", noul: 0.21 },
     ...overrides,
   };
 }
 
-describe("Jev decision request", () => {
-  const request = buildJevDecisionRequest({ snapshot, dailyCandles: candles, weeklyCandles: candles });
+function followUpAnswers(overrides: Record<string, unknown> = {}) {
+  return {
+    entryQuality: { type: "score", score: 3.64, probabilities: {}, confidence: 0.55 },
+    holderAction: choice("hold_protect"),
+    stopTrigger: choice("close"),
+    stopLevel: choice("s2"),
+    targetLevel: choice("t1"),
+    ...overrides,
+  };
+}
 
+const request = buildJevDecisionRequest({ snapshot, dailyCandles: candles, weeklyCandles: candles });
+
+function decide(primary: Record<string, unknown> = {}, followUp: Record<string, unknown> = {}) {
+  return resolveJevDecision(resolveJevPrimaryDecision(primaryAnswers(primary)), followUpAnswers(followUp), request);
+}
+
+describe("Jev decision request", () => {
   it("offers only supplied levels on the correct side of price as candidates", () => {
     expect(request.stopCandidates.map((candidate) => candidate.price)).toEqual([97, 95]);
     expect(request.targetCandidates.map((candidate) => candidate.price)).toEqual([110, 120]);
-    const stopQuestion = request.questions.stopLevel;
+    const followUp = buildJevFollowUpRequest(request, resolveJevPrimaryDecision(primaryAnswers()));
+    const stopQuestion = followUp.questions.stopLevel;
     expect(stopQuestion.type === "choice" && Object.keys(stopQuestion.criteria)).toEqual(["s1", "s2", "none"]);
   });
 
@@ -144,24 +157,37 @@ describe("Jev decision request", () => {
     expect(serialized).toContain("up (+6.3%)");
   });
 
+  it("asks left and right status as one staged judgment", () => {
+    expect(Object.keys(request.primaryQuestions)).toEqual(["outlook", "setupStage", "evidenceConflict"]);
+  });
+
+  it("shows earlier decisions to the dependent follow-up questions", () => {
+    const followUp = buildJevFollowUpRequest(request, resolveJevPrimaryDecision(primaryAnswers()));
+    expect(JSON.stringify(followUp.state.decisionsSoFar)).toContain("bullish 62%");
+    expect(JSON.stringify(followUp.state.decisionsSoFar)).toContain("Right-side executable");
+    expect(Object.keys(followUp.questions)).toEqual(["entryQuality", "holderAction", "stopTrigger", "stopLevel", "targetLevel"]);
+  });
+
   it("omits level questions when no candidate exists", () => {
     const bare = buildJevDecisionRequest({ snapshot: { ...snapshot, levels: [] }, dailyCandles: [], weeklyCandles: [] });
-    expect(bare.questions.stopLevel).toBeUndefined();
-    expect(bare.questions.targetLevel).toBeUndefined();
+    const followUp = buildJevFollowUpRequest(bare, resolveJevPrimaryDecision(primaryAnswers()));
+    expect(followUp.questions.stopLevel).toBeUndefined();
+    expect(followUp.questions.targetLevel).toBeUndefined();
   });
 });
 
 describe("Jev decision resolution", () => {
-  const request = buildJevDecisionRequest({ snapshot, dailyCandles: candles, weeklyCandles: candles });
-
-  it("maps consistent answers to a grounded decision", () => {
-    const decision = resolveJevDecision(answers(), request);
+  it("maps a confirmed right-side stage to a coherent left/right pair", () => {
+    const decision = decide();
     expect(decision).toMatchObject({
       outlook: "bullish",
       finalScore: 3.6,
       confidence: 0.43,
+      setupStage: "right_triggered",
+      leftStatus: "too_late",
       rightStatus: "triggered",
       activeSetup: "right",
+      leftEntryAction: "not_applicable",
       rightAddAction: "add_on_retest",
       holderAction: "hold_protect",
       stop: 95,
@@ -171,37 +197,62 @@ describe("Jev decision resolution", () => {
     expect(jevConfidenceReason(decision, "zh-CN")).toContain("看多 62%");
   });
 
-  it("downgrades an entry that independent answers do not jointly support", () => {
-    const decision = resolveJevDecision(answers({ stopLevel: choice("none"), leftEntryAction: choice("probe") }), request);
+  it("never reports a triggered side together with a watching opposite side", () => {
+    const stages = ["none", "breakdown", "left_watch", "left_triggered", "range_watch", "rebound_underway", "right_watch", "right_triggered", "extended"];
+    for (const stage of stages) {
+      const decision = decide({ setupStage: choice(stage) });
+      if (decision.rightStatus === "triggered") expect(decision.leftStatus).toBe("too_late");
+      if (decision.leftStatus === "triggered") expect(decision.rightStatus).toBe("not_formed");
+      expect(decision.activeSetup === "left").toBe(decision.leftEntryAction === "probe");
+      expect(decision.activeSetup === "right").toBe(decision.rightAddAction === "add_on_retest");
+    }
+  });
+
+  it("downgrades an executable stage without a stop-target pair", () => {
+    const decision = decide({}, { stopLevel: choice("none") });
     expect(decision.stop).toBeUndefined();
     expect(decision.target).toBeUndefined();
+    expect(decision.setupStage).toBe("right_watch");
     expect(decision.activeSetup).toBe("none");
     expect(decision.rightStatus).toBe("watch");
     expect(decision.rightAddAction).toBe("wait_breakout");
-    expect(decision.leftEntryAction).toBe("wait");
     expect(decision.holderAction).toBe("hold");
     expect(decision.adjustments.length).toBeGreaterThan(0);
   });
 
-  it("keeps a single active setup when both sides look actionable", () => {
-    const decision = resolveJevDecision(answers({
-      leftStatus: choice("triggered"),
-      leftEntryAction: choice("probe"),
-      preferredSetup: choice("left"),
-    }), request);
-    expect(decision.activeSetup).toBe("left");
-    expect(decision.rightStatus).toBe("watch");
-    expect(decision.rightAddAction).toBe("wait_breakout");
+  it("downgrades an executable stage whose chosen levels pay less than the rule-engine threshold", () => {
+    const decision = decide({}, { stopLevel: choice("s2"), targetLevel: choice("t1") });
+    expect(decision.activeSetup).toBe("right");
+    const thin = resolveJevDecision(
+      resolveJevPrimaryDecision(primaryAnswers()),
+      followUpAnswers(),
+      { ...request, price: 106 }
+    );
+    expect(thin.setupStage).toBe("right_watch");
+    expect(thin.activeSetup).toBe("none");
+    expect(thin.adjustments.join(" ")).toContain("reward-to-risk");
+  });
+
+  it("does not keep an executable long entry under a bearish outlook", () => {
+    const decision = decide({
+      outlook: choice("bearish", { bullish: 0.1, neutral: 0.2, bearish: 0.7 }),
+      setupStage: choice("left_triggered"),
+    });
+    expect(decision.setupStage).toBe("left_watch");
+    expect(decision.leftStatus).toBe("watch");
+    expect(decision.leftEntryAction).toBe("wait");
+    expect(decision.activeSetup).toBe("none");
   });
 
   it("rejects answers outside the declared options", () => {
-    expect(() => resolveJevDecision(answers({ outlook: choice("moon") }), request)).toThrow(/outlook/);
-    expect(() => resolveJevDecision(answers({ stopLevel: choice("s9") }), request)).toThrow(/stopLevel/);
-    expect(() => resolveJevDecision(undefined, request)).toThrow();
+    expect(() => decide({ outlook: choice("moon") })).toThrow(/outlook/);
+    expect(() => decide({ setupStage: choice("sideways") })).toThrow(/setupStage/);
+    expect(() => decide({}, { stopLevel: choice("s9") })).toThrow(/stopLevel/);
+    expect(() => resolveJevPrimaryDecision(undefined)).toThrow();
   });
 
   it("produces a result that passes the AI-native validator with Jev decisions intact", () => {
-    const decision = resolveJevDecision(answers(), request);
+    const decision = decide();
     const cite = { evidenceIds: ["daily.ema.bullish"], text: "说明 daily.ema.bullish" };
     const merged = mergeJevDecisionWithReport(decision, {
       overview: "总览",
@@ -211,7 +262,7 @@ describe("Jev decision resolution", () => {
       strategyTexts: { holder: { ...cite, action: "exit" }, leftEntry: cite, rightAdd: cite, exitStop: cite },
     }, "zh-CN");
     const result = validateAiAnalysisResult(merged, snapshot, "zh-CN");
-    expect(result.scoreAssessment).toMatchObject({ outlook: "bullish", finalScore: 3.6, activeSetup: "right" });
+    expect(result.scoreAssessment).toMatchObject({ outlook: "bullish", finalScore: 3.6, activeSetup: "right", leftStatus: "too_late" });
     expect(result.scoreAssessment.riskPlan).toMatchObject({ stop: 95, target: 110, rewardRisk: 2 });
     expect(result.strategyAdvice.holder.action).toBe("hold_protect");
     expect(result.strategyAdvice.holder.text).toBe("说明");
@@ -220,10 +271,9 @@ describe("Jev decision resolution", () => {
 
 describe("Jev report prompt and endpoint", () => {
   it("passes decisions as immutable input without leaking rule conclusions", () => {
-    const request = buildJevDecisionRequest({ snapshot, dailyCandles: candles, weeklyCandles: candles });
     const prompt = buildJevReportPrompt({
       snapshot,
-      decision: resolveJevDecision(answers(), request),
+      decision: decide(),
       dailyCandles: candles,
       weeklyCandles: candles,
       language: "zh-CN",
