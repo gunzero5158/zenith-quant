@@ -53,7 +53,15 @@ import { fetchYahooJsonViaWindows } from "@/lib/analysis/windowsHttpFallback";
 import { buildAiNativeAnalystPrompt } from "@/lib/analysis/aiNativeAnalysisPrompt";
 import { validateAiAnalysisResult, toLegacyAiScoreDetail } from "@/lib/analysis/aiAnalysisResult";
 import { composeAiNativeReport } from "@/lib/analysis/aiNativeReportComposition";
-import { buildJevDecisionRequest, buildJevFollowUpRequest, resolveJevDecision, resolveJevPrimaryDecision } from "@/lib/analysis/jevDecision";
+import {
+  buildJevDecisionRequest,
+  buildJevFollowUpRequest,
+  resolveJevDecision,
+  resolveJevPrimaryDecision,
+  resolveJevReadings,
+  withJevReadings,
+} from "@/lib/analysis/jevDecision";
+import { buildJevReadingsSection } from "@/lib/analysis/jevReadingsReport";
 import { JevConfig, requestJevDecision } from "@/lib/analysis/jevClient";
 import { buildJevReportPrompt, JEV_REPORT_SYSTEM_BOUNDARY, mergeJevDecisionWithReport } from "@/lib/analysis/jevReportPrompt";
 
@@ -768,17 +776,21 @@ export async function POST(request: Request) {
     if (analysisMode === "jev-ai") {
       let stage: "jev" | "report" = "jev";
       try {
-        const jevRequest = buildJevDecisionRequest({
+        // Parallel Jev answers cannot see each other, so the judgments run in three
+        // dependent steps: read every signal, then outlook and stage, then the rest.
+        const bareRequest = buildJevDecisionRequest({
           snapshot: techData.snapshot,
           dailyCandles: techData.dailyCandles,
           weeklyCandles: techData.weeklyCandles,
         });
+        const readingResponse = await requestJevDecision(bareRequest.state, bareRequest.readingQuestions, jevConfig!);
+        const readings = resolveJevReadings(readingResponse.answers, bareRequest);
+        const jevRequest = withJevReadings(bareRequest, readings);
         const primaryResponse = await requestJevDecision(jevRequest.state, jevRequest.primaryQuestions, jevConfig!);
         const primaryDecision = resolveJevPrimaryDecision(primaryResponse.answers);
-        // Dependent judgments are asked second so Jev can see the outlook and setup stage.
         const followUp = buildJevFollowUpRequest(jevRequest, primaryDecision);
         const jevResponse = await requestJevDecision(followUp.state, followUp.questions, jevConfig!);
-        const decision = resolveJevDecision(primaryDecision, jevResponse.answers, jevRequest);
+        const decision = resolveJevDecision(primaryDecision, jevResponse.answers, jevRequest, readings);
 
         stage = "report";
         const prompt = buildJevReportPrompt({
@@ -807,7 +819,7 @@ export async function POST(request: Request) {
           score: toLegacyAiScoreDetail(aiResult.scoreAssessment),
           entryAssessment: aiResult.scoreAssessment,
           strategyAdvice: aiResult.strategyAdvice,
-          jevDecision: { ...decision, model: jevResponse.model, usage: [primaryResponse.usage, jevResponse.usage] },
+          jevDecision: { ...decision, model: jevResponse.model, usage: [readingResponse.usage, primaryResponse.usage, jevResponse.usage] },
           dataQuality: techData.snapshot.dataQuality,
           dailyCandles: techData.dailyCandles,
           weeklyCandles: techData.weeklyCandles,
@@ -819,7 +831,7 @@ export async function POST(request: Request) {
           volumeAnalysis: techData.volumeAnalysis,
           reportOverview: replaceDollarPriceSymbols(report.overview, currencySymbol),
           reportRecommendation: replaceDollarPriceSymbols(report.recommendation, currencySymbol),
-          reportTechnical: replaceDollarPriceSymbols(report.technicalAnalysis, currencySymbol),
+          reportTechnical: `${replaceDollarPriceSymbols(report.technicalAnalysis, currencySymbol)}\n\n${buildJevReadingsSection(readings, techData.snapshot, lang)}`,
           isLLMUsed: true,
           isMock: false,
           dataSource: techData.dataSource,

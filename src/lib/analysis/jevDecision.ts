@@ -1,5 +1,5 @@
 import type { Candle } from "./indicators";
-import type { EvidenceSnapshot, ScenarioStatus, TradeLevel } from "./evidence";
+import type { EvidenceDirection, EvidenceSnapshot, ScenarioStatus, SignalFamily, Timeframe, TradeLevel } from "./evidence";
 import type { AiMarketOutlook, AiStrategyAdvice } from "./aiAnalysisResult";
 
 // Jev (TypeSafe System One) answers typed questions with calibrated
@@ -45,9 +45,29 @@ export interface JevLevelCandidate {
   description: string;
 }
 
+export interface JevSignalRef {
+  key: string;
+  id: string;
+  family: SignalFamily;
+  timeframe: Timeframe;
+  ruleDirection: EvidenceDirection;
+}
+
+export interface JevReading {
+  id: string;
+  family: SignalFamily;
+  timeframe: Timeframe;
+  /** The rule engine's tag, kept only to show where Jev disagrees with it. */
+  ruleDirection: EvidenceDirection;
+  direction: EvidenceDirection;
+  probability: number;
+}
+
 export interface JevDecisionRequest {
   price: number;
   state: Record<string, unknown>;
+  signals: JevSignalRef[];
+  readingQuestions: Record<string, JevQuestion>;
   primaryQuestions: Record<string, JevQuestion>;
   stopCandidates: JevLevelCandidate[];
   targetCandidates: JevLevelCandidate[];
@@ -92,6 +112,8 @@ export interface JevDecision {
   stopTrigger: StopTrigger;
   stop?: number;
   target?: number;
+  /** Jev's own bullish/neutral/bearish reading of every evidence item. */
+  readings: JevReading[];
   /** Consistency corrections applied in code because parallel Jev answers are independent. */
   adjustments: string[];
 }
@@ -275,22 +297,41 @@ export function buildJevDecisionRequest(input: {
   const stopCandidates = levelCandidates(snapshot, "stop");
   const targetCandidates = levelCandidates(snapshot, "target");
 
-  const evidence = snapshot.items
+  // The rule engine's bullish/bearish tag on each item is an opinion, not a
+  // fact (e.g. it tags "above the upper Bollinger band" as bullish and "RSI
+  // oversold" as bearish). Jev only sees the facts and reads each signal itself.
+  const signals: JevSignalRef[] = [];
+  const evidence: Record<string, Record<string, unknown>> = {};
+  snapshot.items
     // Placeholder items ("No active signal", "Insufficient data") are noise for the model.
     .filter((item) => item.reliability > 0 && item.label === item.id)
-    .map((item) => ({
-      family: item.family,
-      signal: signalName(item.id, item.timeframe),
-      timeframe: item.timeframe,
-      direction: item.direction,
-      state: englishText(item.state) ?? item.direction,
-      description: englishText(item.description)
-        ?? `${signalName(item.id, item.timeframe)} currently reads ${item.direction}${englishText(item.state) ? ` (${englishText(item.state)})` : ""}.`,
-      ...(typeof item.barsSince === "number" ? { barsSinceSignal: item.barsSince } : {}),
-      barStatus: item.provisional ? "provisional (bar not closed)" : "confirmed",
-      ...(item.invalidation && englishText(item.invalidation) ? { invalidation: englishText(item.invalidation) } : {}),
-      ...(semanticValues(item.values) ? { details: semanticValues(item.values) } : {}),
-    }));
+    .forEach((item, index) => {
+      const key = `e${index + 1}`;
+      const signal = `${item.timeframe} ${signalName(item.id, item.timeframe)}`;
+      const state = englishText(item.state);
+      signals.push({ key, id: item.id, family: item.family, timeframe: item.timeframe, ruleDirection: item.direction });
+      evidence[key] = {
+        signal,
+        family: item.family,
+        timeframe: item.timeframe,
+        ...(state ? { state } : {}),
+        description: englishText(item.description) ?? `${signal}${state ? ` (${state})` : ""}.`,
+        ...(typeof item.barsSince === "number" ? { barsSinceSignal: item.barsSince } : {}),
+        barStatus: item.provisional ? "provisional (bar not closed)" : "confirmed",
+        ...(item.invalidation && englishText(item.invalidation) ? { invalidation: englishText(item.invalidation) } : {}),
+        ...(semanticValues(item.values) ? { details: semanticValues(item.values) } : {}),
+      };
+    });
+
+  const readingQuestions: Record<string, JevQuestion> = Object.fromEntries(signals.map((signal) => [signal.key, {
+    type: "choice",
+    instructions: `Look at \`evidence\`.\`${signal.key}\` in the context of the other evidence and \`priceAction\`. What does this single signal imply for the stock's price over the next 5-20 trading days? Judge this signal only, not the overall outlook.`,
+    criteria: {
+      bullish: "This signal supports higher prices.",
+      neutral: "This signal is not directional, is merely descriptive, or is too weak or ambiguous to lean either way.",
+      bearish: "This signal supports lower prices, or warns that an advance is exhausted.",
+    },
+  } satisfies JevQuestion]));
 
   const state = {
     task: "Technical-analysis evidence for one stock, used to judge a long-only swing trade over the next 5-20 trading days.",
@@ -315,7 +356,7 @@ export function buildJevDecisionRequest(input: {
   const primaryQuestions: Record<string, JevQuestion> = {
     outlook: {
       type: "choice",
-      instructions: "Based on `evidence` and `priceAction`, what is the most likely price direction of this stock over the next 5-20 trading days?",
+      instructions: "Based on `evidence` (each item carries its own `reading`) and `priceAction`, what is the most likely price direction of this stock over the next 5-20 trading days?",
       criteria: {
         bullish: "Evidence across trend, momentum, volume and structure favors higher prices.",
         neutral: "Evidence is mixed or range-bound; there is no clear directional edge.",
@@ -335,7 +376,44 @@ export function buildJevDecisionRequest(input: {
     },
   };
 
-  return { price: snapshot.price, state, primaryQuestions, stopCandidates, targetCandidates };
+  return { price: snapshot.price, state, signals, readingQuestions, primaryQuestions, stopCandidates, targetCandidates };
+}
+
+export function resolveJevReadings(
+  rawAnswers: unknown,
+  request: Pick<JevDecisionRequest, "signals">
+): JevReading[] {
+  const answers = answerMap(rawAnswers);
+  return request.signals.map((signal) => {
+    const answer = choiceAnswer(answers, signal.key, ["bullish", "neutral", "bearish"] as const);
+    return {
+      id: signal.id,
+      family: signal.family,
+      timeframe: signal.timeframe,
+      ruleDirection: signal.ruleDirection,
+      direction: answer.choice,
+      probability: answer.probabilities[answer.choice] ?? 0,
+    };
+  });
+}
+
+/** Later calls see Jev's own reading of every signal instead of the rule engine's tag. */
+export function withJevReadings(request: JevDecisionRequest, readings: JevReading[]): JevDecisionRequest {
+  const byId = new Map(readings.map((reading) => [reading.id, reading]));
+  const evidence = request.state.evidence as Record<string, Record<string, unknown>>;
+  return {
+    ...request,
+    state: {
+      ...request.state,
+      evidence: Object.fromEntries(request.signals.map((signal) => {
+        const reading = byId.get(signal.id);
+        return [signal.key, {
+          ...evidence[signal.key],
+          ...(reading ? { reading: `${reading.direction} (${Math.round(reading.probability * 100)}%)` } : {}),
+        }];
+      })),
+    },
+  };
 }
 
 /**
@@ -483,7 +561,8 @@ export function resolveJevPrimaryDecision(rawAnswers: unknown): JevPrimaryDecisi
 export function resolveJevDecision(
   primary: JevPrimaryDecision,
   rawFollowUpAnswers: unknown,
-  request: Pick<JevDecisionRequest, "price" | "stopCandidates" | "targetCandidates">
+  request: Pick<JevDecisionRequest, "price" | "stopCandidates" | "targetCandidates">,
+  readings: JevReading[] = []
 ): JevDecision {
   const answers = answerMap(rawFollowUpAnswers);
   const adjustments = [...primary.adjustments];
@@ -544,6 +623,7 @@ export function resolveJevDecision(
     stopTrigger,
     stop,
     target,
+    readings,
     adjustments,
   };
 }

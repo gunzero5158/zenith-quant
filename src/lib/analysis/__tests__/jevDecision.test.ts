@@ -9,7 +9,10 @@ import {
   jevConfidenceReason,
   resolveJevDecision,
   resolveJevPrimaryDecision,
+  resolveJevReadings,
+  withJevReadings,
 } from "../jevDecision";
+import { buildJevReadingsSection } from "../jevReadingsReport";
 import { buildJevReportPrompt, mergeJevDecisionWithReport } from "../jevReportPrompt";
 
 const snapshot: EvidenceSnapshot = {
@@ -164,9 +167,42 @@ describe("Jev decision request", () => {
     expect(serialized).not.toContain("Insufficient samples");
     expect(serialized).not.toContain("No active");
     expect(serialized).toContain("Wave 2 Bottoming");
-    expect(serialized).toContain("pattern head and shoulders forming currently reads bearish");
+    expect(serialized).toContain("daily pattern head and shoulders forming");
     expect(/[^\x00-\x7f]/.test(serialized)).toBe(false);
     expect(serialized).toContain("up (+6.3%)");
+  });
+
+  it("hides the rule engine's bullish/bearish tags and asks Jev to read every signal", () => {
+    const evidence = request.state.evidence as Record<string, Record<string, unknown>>;
+    expect(Object.keys(evidence)).toEqual(request.signals.map((signal) => signal.key));
+    expect(Object.values(evidence).every((item) => !("direction" in item))).toBe(true);
+    expect(Object.keys(request.readingQuestions)).toEqual(Object.keys(evidence));
+    expect(request.signals.map((signal) => signal.id)).toEqual([
+      "daily.ema.bullish", "daily.atr.rising", "daily.elliottWave.wave2", "daily.pattern.headAndShoulders.forming",
+    ]);
+  });
+
+  it("feeds Jev's own readings into the later questions and reports disagreements with the rule tags", () => {
+    const readings = resolveJevReadings({
+      e1: choice("bullish", { bullish: 0.9, neutral: 0.08, bearish: 0.02 }),
+      e2: choice("neutral", { bullish: 0.1, neutral: 0.8, bearish: 0.1 }),
+      e3: choice("bearish", { bullish: 0.2, neutral: 0.2, bearish: 0.6 }),
+      e4: choice("bearish", { bullish: 0.05, neutral: 0.15, bearish: 0.8 }),
+    }, request);
+    expect(readings[2]).toMatchObject({ id: "daily.elliottWave.wave2", ruleDirection: "bullish", direction: "bearish", probability: 0.6 });
+
+    const enriched = withJevReadings(request, readings);
+    const evidence = enriched.state.evidence as Record<string, Record<string, unknown>>;
+    expect(evidence.e1.reading).toBe("bullish (90%)");
+    expect((request.state.evidence as Record<string, Record<string, unknown>>).e1.reading).toBeUndefined();
+
+    const section = buildJevReadingsSection(readings, snapshot, "zh-CN");
+    expect(section).toContain("### Jev 逐项判读");
+    expect(section).toContain("- 日线 头肩顶 · 经典形态形成中：**偏空** 80%");
+    expect(section).toContain("- 日线 ATR rising：**中性** 80%");
+    expect(section).toContain("**偏空** 60% ⚠ 规则标签：偏多");
+    expect(section).toContain("偏多 1 项、中性 1 项、偏空 2 项；与规则标签不一致 1 项");
+    expect(() => resolveJevReadings({ e1: choice("bullish") }, request)).toThrow(/e2/);
   });
 
   it("asks left and right status as one staged judgment", () => {

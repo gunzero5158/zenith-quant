@@ -35,7 +35,7 @@ const FAMILY_LABELS: Record<SignalFamily, string> = {
   chanlun: "缠论",
 };
 
-function localizedState(item: EvidenceItem, lang: string): string {
+export function localizedState(item: EvidenceItem, lang: string): string {
   if (lang !== "zh-CN" && lang !== "zh-TW" && lang !== "zh-HK") {
     return `${FAMILY_LABELS[item.family]} ${item.state}`;
   }
