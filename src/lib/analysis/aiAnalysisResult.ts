@@ -299,8 +299,10 @@ function normalizeUnsafeActions(
   strategy: AiStrategyAdvice,
   language: AnalysisLanguage
 ): void {
+  // A long entry is not executable while the same assessment calls the outlook bearish.
   const hasCompleteRiskPlan = assessment.riskPlan.stop !== undefined
-    && assessment.riskPlan.target !== undefined;
+    && assessment.riskPlan.target !== undefined
+    && assessment.outlook !== "bearish";
   const leftActionable = hasCompleteRiskPlan
     && assessment.activeSetup === "left"
     && assessment.leftStatus === "triggered"
@@ -334,6 +336,15 @@ function normalizeUnsafeActions(
   if (assessment.riskPlan.stop === undefined && strategy.holder.action === "hold_protect") {
     strategy.holder.action = "hold";
     strategy.holder.text = normalizedAdviceText(language, "holder");
+  }
+
+  // The left-side chance precedes the right-side chance, so once one side is
+  // confirmed the other cannot still describe a different moment of the cycle.
+  if (assessment.rightStatus === "triggered" && assessment.leftStatus === "watch") {
+    assessment.leftStatus = "too_late";
+  }
+  if (assessment.leftStatus === "triggered" && ["triggered", "too_late"].includes(assessment.rightStatus)) {
+    assessment.rightStatus = "not_formed";
   }
 }
 

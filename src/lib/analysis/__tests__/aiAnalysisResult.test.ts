@@ -224,6 +224,29 @@ describe("AI-native analysis result validation", () => {
     expect(result.strategyAdvice.rightAdd.action).toBe("wait_breakout");
   });
 
+  it("does not leave the left side watching once the right side is confirmed", () => {
+    const value = validResult();
+    value.scoreAssessment.leftStatus = "watch";
+    value.scoreAssessment.rightStatus = "triggered";
+    value.scoreAssessment.activeSetup = "right";
+    value.strategyAdvice.leftEntry.action = "wait";
+    value.strategyAdvice.rightAdd.action = "add_on_retest";
+
+    const result = validateAiAnalysisResult(value, snapshot);
+    expect(result.scoreAssessment.rightStatus).toBe("triggered");
+    expect(result.scoreAssessment.leftStatus).toBe("too_late");
+  });
+
+  it("does not keep an executable long entry under a bearish outlook", () => {
+    const value = validResult();
+    value.scoreAssessment.outlook = "bearish";
+
+    const result = validateAiAnalysisResult(value, snapshot);
+    expect(result.scoreAssessment.activeSetup).toBe("none");
+    expect(result.scoreAssessment.leftStatus).toBe("watch");
+    expect(result.strategyAdvice.leftEntry.action).toBe("wait");
+  });
+
   it("removes internal evidence IDs from every user-visible string", () => {
     const value = validResult();
     value.overview = "Trend support is improving (`daily.ema.trend`).";

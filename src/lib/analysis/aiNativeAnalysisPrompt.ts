@@ -40,11 +40,21 @@ export function buildAiNativeAnalystPrompt(input: AiNativeAnalysisPromptInput): 
   void omittedDailyPhase;
   void omittedDataQuality;
 
+  // The rule engine's bullish/bearish tag on each item is an opinion (it tags
+  // "RSI oversold" bearish and "above the upper Bollinger band" bullish), and a
+  // supplied label anchors the model even when told to ignore it. The state,
+  // description, and values carry every fact, so the tag is withheld.
+  const items = objectiveSnapshot.items.map((item) => {
+    const { direction: omittedDirection, ...facts } = item;
+    void omittedDirection;
+    return facts;
+  });
+
   const payload = {
     language: input.language,
     currencySymbol: input.currencySymbol,
     immutableFacts: {
-      snapshot: { ...objectiveSnapshot, dataQuality },
+      snapshot: { ...objectiveSnapshot, items, dataQuality },
       recentDailyCandles: input.dailyCandles.slice(-20).map(candleSummary),
       recentWeeklyCandles: input.weeklyCandles.slice(-12).map(candleSummary),
     },
@@ -57,7 +67,7 @@ Write every user-visible string in that language. Indicator abbreviations may re
 Analytical authority:
 - Independently determine market outlook, long-entry attractiveness, setup state, and advice from the supplied objective facts.
 - There is no prior score, fixed weighting table, local score cap, or predetermined market regime to preserve.
-- Indicator states and direction labels are measurements to interpret in context, not forced conclusions.
+- Evidence items state facts only. Decide yourself what each one implies in context: an oversold reading can be a left-side opportunity or a sign of weakness, and a move above the upper band can be strength or exhaustion.
 - Assign a 0-5 entry-attractiveness score using professional judgment. Semantic anchors only: 0 means no defensible long case, 2.5 means no clear edge, and 5 means an exceptional evidence-backed opportunity.
 - Trend direction and entry quality are different judgments.
 
@@ -74,6 +84,8 @@ Decision consistency:
 - leftEntry.action: wait, probe, not_applicable. Use probe only with activeSetup=left.
 - rightAdd.action: wait_breakout, add_on_retest, avoid_chasing. Use add_on_retest only with activeSetup=right.
 - exitStop.trigger: close, intraday.
+- A swing trade develops from the left-side chance to the right-side chance, so the two statuses must describe one coherent moment. If rightStatus is triggered, the dip entry has passed: leftStatus must be too_late or not_formed, never watch or triggered. If leftStatus is triggered, the breakout has not happened yet: rightStatus must be not_formed or watch.
+- Do not recommend an actionable long entry (probe or add_on_retest) while outlook is bearish; use the waiting state instead.
 
 Risk-plan rules:
 - Select stop and target only as exact prices from immutableFacts.snapshot.levels.
