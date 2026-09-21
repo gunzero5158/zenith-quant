@@ -440,7 +440,7 @@ export function detectPatterns(candles: Candle[], volume: PatternVolumeContext =
         if (isFiniteNumber(neckline) && pctDiff(l1.price, l2.price) <= 3 && timeDiff >= 8 && currentPrice >= neckline * 0.98) {
           result.isDoubleBottom = true;
           const invalidationPrice = Math.min(l1.price, l2.price);
-          pushSignal(signals, "doubleBottom", "Double bottom/W bottom", "bullish", 0.72, `Two major lows are close and price is near or above neckline ${neckline.toFixed(2)}.`, {
+          pushSignal(signals, "doubleBottom", "Double bottom", "bullish", 0.72, `Two major lows are close and price is near or above neckline ${neckline.toFixed(2)}.`, {
             ...lifecycleFor("bullish", currentPrice, neckline, invalidationPrice, volume),
             startIndex: l1.index,
             endIndex: l2.index,
@@ -494,7 +494,7 @@ export function detectPatterns(candles: Candle[], volume: PatternVolumeContext =
 
     if (isFiniteNumber(neckline) && pctDiff(maxLow, minLow) <= 3.5 && span >= 14 && currentPrice >= neckline * 0.98) {
       result.isTripleBottom = true;
-      pushSignal(signals, "tripleBottom", "三重底", "bullish", 0.76, `三个低点区间稳定，价格正在确认 ${neckline.toFixed(2)} 附近的颈线。`);
+      pushSignal(signals, "tripleBottom", "Triple bottom", "bullish", 0.76, `Three lows hold a stable zone and price is testing the neckline near ${neckline.toFixed(2)}.`);
     }
   }
 
@@ -511,7 +511,7 @@ export function detectPatterns(candles: Candle[], volume: PatternVolumeContext =
 
     if (isFiniteNumber(neckline) && pctDiff(maxHigh, minHigh) <= 3.5 && span >= 14 && currentPrice <= neckline * 1.02) {
       result.isTripleTop = true;
-      pushSignal(signals, "tripleTop", "三重顶", "bearish", 0.76, `三个高点反复受压，价格正在确认 ${neckline.toFixed(2)} 附近的颈线风险。`);
+      pushSignal(signals, "tripleTop", "Triple top", "bearish", 0.76, `Three highs were rejected repeatedly and price is testing the neckline near ${neckline.toFixed(2)}.`);
     }
   }
 
@@ -529,7 +529,7 @@ export function detectPatterns(candles: Candle[], volume: PatternVolumeContext =
       (!isFiniteNumber(neckline) || currentPrice <= neckline * 1.03)
     ) {
       result.isHeadAndShoulders = true;
-      pushSignal(signals, "headAndShoulders", "头肩顶", "bearish", 0.68, "右肩弱于头部，顶部派发结构风险升高。");
+      pushSignal(signals, "headAndShoulders", "Head and shoulders", "bearish", 0.68, "The right shoulder is weaker than the head, raising the risk of a distribution top.");
     }
   }
 
@@ -564,7 +564,7 @@ export function detectPatterns(candles: Candle[], volume: PatternVolumeContext =
 
     if (lipDiff <= 4 && cupDepth >= 10 && handleDip > 0 && handleDip <= 10 && currentPrice >= hRight.price * 0.99) {
       result.isCupAndHandle = true;
-      pushSignal(signals, "cupAndHandle", "杯柄突破", "bullish", 0.74, `杯沿接近，柄部回撤可控，价格正在挑战 ${hRight.price.toFixed(2)} 附近突破位。`);
+      pushSignal(signals, "cupAndHandle", "Cup and handle", "bullish", 0.74, `The cup rims are close, the handle pullback is contained, and price is challenging the breakout level near ${hRight.price.toFixed(2)}.`);
     }
   }
 
@@ -576,7 +576,7 @@ export function detectPatterns(candles: Candle[], volume: PatternVolumeContext =
 
     if (h1 > h0 && h2 > h1 && h3 < h2) {
       result.isRoundingTop = true;
-      pushSignal(signals, "roundingTop", "圆弧顶", "bearish", 0.62, "高点抬升后开始回落，顶部圆弧雏形出现。");
+      pushSignal(signals, "roundingTop", "Rounding top", "bearish", 0.62, "Successive highs flatten and begin to fall.");
     }
   }
 
@@ -604,12 +604,12 @@ export function detectPatterns(candles: Candle[], volume: PatternVolumeContext =
 
     if (impulseMove >= 12 && flagRange.widthPct <= 14 && highSlope <= 0 && lowSlope <= 0 && currentPrice >= flagRange.high * 0.98) {
       result.isBullFlag = true;
-      pushSignal(signals, "bullFlag", "牛旗", "bullish", 0.67, "前段急涨后进入向下窄幅整理，价格接近旗形上沿。");
+      pushSignal(signals, "bullFlag", "Bull flag", "bullish", 0.67, "A sharp advance is followed by a narrow downward consolidation and price is near the upper flag boundary.");
     }
 
     if (impulseMove <= -12 && flagRange.widthPct <= 14 && highSlope >= 0 && lowSlope >= 0 && currentPrice <= flagRange.low * 1.02) {
       result.isBearFlag = true;
-      pushSignal(signals, "bearFlag", "熊旗", "bearish", 0.67, "前段急跌后进入向上窄幅整理，价格接近旗形下沿。");
+      pushSignal(signals, "bearFlag", "Bear flag", "bearish", 0.67, "A sharp decline is followed by a narrow upward consolidation and price is near the lower flag boundary.");
     }
   }
 
@@ -624,7 +624,7 @@ export function detectPatterns(candles: Candle[], volume: PatternVolumeContext =
     const lowTouches = recentLows.filter((p) => pctDiff(p.price, box.low) <= 2.5).length;
     if (highTouches >= 2 && lowTouches >= 2 && currentPrice > box.low * 1.02 && currentPrice < box.high * 0.98) {
       result.isRectangle = true;
-      pushSignal(signals, "rectangle", "箱体震荡", "neutral", 0.58, `价格在 ${box.low.toFixed(2)}-${box.high.toFixed(2)} 区间内反复震荡，等待方向选择。`);
+      pushSignal(signals, "rectangle", "Rectangle", "neutral", 0.58, `Price is oscillating inside the ${box.low.toFixed(2)}-${box.high.toFixed(2)} range, waiting for a directional break.`);
     }
   }
 
@@ -648,7 +648,7 @@ export function detectPatterns(candles: Candle[], volume: PatternVolumeContext =
       if (Math.abs(impulseMove) >= 8) {
         pushSignal(signals, "pennant", "Pennant", impulseMove > 0 ? "bullish" : "bearish", 0.62, "A compact converging range follows a directional impulse.");
       }
-      pushSignal(signals, "trianglePennant", "三角旗形/收敛三角", "neutral", 0.6, "高点下移且低点上移，波动正在收敛，需等待突破方向确认。");
+      pushSignal(signals, "trianglePennant", "Converging triangle", "neutral", 0.6, "Lower highs and higher lows are converging; the breakout direction is not yet confirmed.");
     }
 
     if (Math.abs(highSlope) <= flatSlope && lowSlope > flatSlope) {
@@ -663,12 +663,12 @@ export function detectPatterns(candles: Candle[], volume: PatternVolumeContext =
 
     if (highSlope > 0 && lowSlope > 0 && lowSlope > highSlope * 1.15) {
       result.isRisingWedge = true;
-      pushSignal(signals, "risingWedge", "上升楔形", "bearish", 0.62, "高低点同步抬升但空间收窄，上升动能有衰减风险。");
+      pushSignal(signals, "risingWedge", "Rising wedge", "bearish", 0.62, "Highs and lows are both rising within a narrowing range, so upside momentum is at risk of fading.");
     }
 
     if (highSlope < 0 && lowSlope < 0 && highSlope < lowSlope * 1.15) {
       result.isFallingWedge = true;
-      pushSignal(signals, "fallingWedge", "下降楔形", "bullish", 0.62, "高低点同步下移但跌势收敛，若放量上破可视为修复信号。");
+      pushSignal(signals, "fallingWedge", "Falling wedge", "bullish", 0.62, "Highs and lows are both falling while the decline narrows; an upside break on volume would signal repair.");
     }
   }
 

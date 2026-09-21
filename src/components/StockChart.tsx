@@ -23,6 +23,8 @@ import { Candle } from "@/lib/analysis/indicators";
 import type { PatternResult } from "@/lib/analysis/patterns";
 import type { SupportResistanceResult } from "@/lib/analysis/supportResistance";
 import type { WaveAnalysisResult } from "@/lib/analysis/waveTheory";
+import { chartLabels, localizedPatternName } from "@/lib/i18n/chartLabels";
+import type { EffectiveLanguage } from "@/lib/i18n/translations";
 
 interface StockChartProps {
   candles: Candle[];
@@ -50,6 +52,7 @@ interface StockChartProps {
   >;
   wave: Pick<WaveAnalysisResult, "wavePoints">;
   isRedUp: boolean;
+  language?: EffectiveLanguage;
 }
 
 type IndicatorTab = "volume" | "macd" | "kdj" | "rsi";
@@ -78,7 +81,7 @@ const getSeriesPriceAt = (series: ISeriesApi<SeriesType>, param: MouseEventParam
   return 0;
 };
 
-function StockChart({ candles, indicators, patterns, sr, wave, isRedUp }: StockChartProps) {
+function StockChart({ candles, indicators, patterns, sr, wave, isRedUp, language = "zh-CN" }: StockChartProps) {
   const priceContainerRef = useRef<HTMLDivElement>(null);
   const indContainerRef = useRef<HTMLDivElement>(null);
 
@@ -241,6 +244,7 @@ function StockChart({ candles, indicators, patterns, sr, wave, isRedUp }: StockC
 
     // 3. Draw Markers on Candlestick for TD 9 and Geometric Patterns
     const markers: SeriesMarker<string>[] = [];
+    const labels = chartLabels(language);
 
     // TD signals
     patterns.tdSequential.forEach((val, idx) => {
@@ -252,7 +256,7 @@ function StockChart({ candles, indicators, patterns, sr, wave, isRedUp }: StockC
             position: "aboveBar",
             color: "#ff2a2a",
             shape: "arrowDown",
-            text: "九转(9) 卖",
+            text: labels.tdSell,
           });
         } else if (val === -9) {
           markers.push({
@@ -260,7 +264,7 @@ function StockChart({ candles, indicators, patterns, sr, wave, isRedUp }: StockC
             position: "belowBar",
             color: "#089981",
             shape: "arrowUp",
-            text: "九转(9) 买",
+            text: labels.tdBuy,
           });
         }
       }
@@ -274,7 +278,7 @@ function StockChart({ candles, indicators, patterns, sr, wave, isRedUp }: StockC
         position: "belowBar",
         color: "#fbbf24",
         shape: "circle",
-        text: "W底突破",
+        text: labels.doubleBottomBreakout,
       });
     }
 
@@ -285,7 +289,7 @@ function StockChart({ candles, indicators, patterns, sr, wave, isRedUp }: StockC
         position: "belowBar",
         color: "#00b0ff",
         shape: "square",
-        text: "杯柄突破",
+        text: labels.cupAndHandleBreakout,
       });
     }
 
@@ -298,7 +302,7 @@ function StockChart({ candles, indicators, patterns, sr, wave, isRedUp }: StockC
           position: pattern.bias === "bearish" ? "aboveBar" : "belowBar",
           color: pattern.bias === "bearish" ? "#f23645" : pattern.bias === "bullish" ? "#089981" : "#fbbf24",
           shape: pattern.bias === "bearish" ? "arrowDown" : pattern.bias === "bullish" ? "arrowUp" : "circle",
-          text: pattern.name,
+          text: localizedPatternName(pattern.key, pattern.name, language),
         });
       });
     }
@@ -418,6 +422,7 @@ function StockChart({ candles, indicators, patterns, sr, wave, isRedUp }: StockC
     sr.volumePOC,
     sr.volumeProfile,
     wave.wavePoints,
+    language,
   ]);
 
   // ----------------------------------------------------

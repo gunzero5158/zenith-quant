@@ -1385,6 +1385,7 @@ export default function Home() {
                         sr={stockData.sr}
                         wave={stockData.wave}
                         isRedUp={isRedUp}
+                        language={effectiveLang}
                       />
                     </div>
                   </div>
