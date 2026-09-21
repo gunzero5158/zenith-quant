@@ -50,15 +50,12 @@ export interface JevSignalRef {
   id: string;
   family: SignalFamily;
   timeframe: Timeframe;
-  ruleDirection: EvidenceDirection;
 }
 
 export interface JevReading {
   id: string;
   family: SignalFamily;
   timeframe: Timeframe;
-  /** The rule engine's tag, kept only to show where Jev disagrees with it. */
-  ruleDirection: EvidenceDirection;
   direction: EvidenceDirection;
   probability: number;
 }
@@ -320,7 +317,7 @@ export function buildJevDecisionRequest(input: {
       const key = `e${index + 1}`;
       const signal = `${item.timeframe} ${signalName(item.id, item.timeframe)}`;
       const state = englishText(item.state);
-      signals.push({ key, id: item.id, family: item.family, timeframe: item.timeframe, ruleDirection: item.direction });
+      signals.push({ key, id: item.id, family: item.family, timeframe: item.timeframe });
       evidence[key] = {
         signal,
         family: item.family,
@@ -397,7 +394,6 @@ export function resolveJevReadings(
       id: signal.id,
       family: signal.family,
       timeframe: signal.timeframe,
-      ruleDirection: signal.ruleDirection,
       direction: answer.choice,
       probability: answer.probabilities[answer.choice] ?? 0,
     };

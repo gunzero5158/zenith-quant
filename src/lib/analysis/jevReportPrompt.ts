@@ -44,6 +44,14 @@ export function buildJevReportPrompt(input: JevReportPromptInput): string {
   void omittedDailyPhase;
   void omittedDataQuality;
 
+  // As in LLM-native mode, the rule engine's bullish/bearish tags are withheld;
+  // Jev's readings are the only interpretation the report builds on.
+  const items = objectiveSnapshot.items.map((item) => {
+    const { direction: omittedDirection, ...facts } = item;
+    void omittedDirection;
+    return facts;
+  });
+
   const { adjustments, ...decision } = input.decision;
   const payload = {
     language: input.language,
@@ -53,7 +61,7 @@ export function buildJevReportPrompt(input: JevReportPromptInput): string {
       consistencyAdjustments: adjustments,
     },
     immutableFacts: {
-      snapshot: { ...objectiveSnapshot, dataQuality },
+      snapshot: { ...objectiveSnapshot, items, dataQuality },
       recentDailyCandles: input.dailyCandles.slice(-20).map(candleSummary),
       recentWeeklyCandles: input.weeklyCandles.slice(-12).map(candleSummary),
     },
@@ -67,7 +75,7 @@ Division of labor:
 - A calibrated decision model (Jev) has already made every judgment in immutableDecision: market outlook with probabilities, 0-5 long-entry attractiveness (finalScore), left/right setup status, activeSetup, holder/left/right actions, stop trigger, and the stop and target prices.
 - Your job is to explain those decisions with the supplied evidence so that a reader understands why they are reasonable, what would confirm them, and what would invalidate them.
 - Never change, soften, or contradict a decision. If the evidence contains a meaningful counter-argument, present it as a risk or as a condition that would change the view, not as a different conclusion.
-- immutableDecision.readings holds Jev's own bullish/neutral/bearish reading of each evidence item (matched by id), made in the context of all evidence. Where a reading differs from that item's rule-based direction tag in the snapshot, follow the reading: the tags are simple rule labels, not conclusions.
+- immutableDecision.readings holds Jev's own bullish/neutral/bearish reading of each evidence item (matched by id), made in the context of all evidence. Use these readings when you describe what a signal implies.
 - outlookProbabilities and confidence are calibrated. Reflect them honestly: a probability near an even split means low conviction and must be described as such.
 - immutableDecision.disagreement counts how the readings split between bullish and bearish (minorityShare 0 is one-sided, 0.5 is an even split) and whether the daily and weekly readings lean in opposite directions. Describe a high split as genuinely mixed evidence.
 

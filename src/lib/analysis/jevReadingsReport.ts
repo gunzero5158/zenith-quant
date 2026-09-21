@@ -11,42 +11,37 @@ interface ReadingLabels {
   daily: string;
   weekly: string;
   directions: Record<EvidenceDirection, string>;
-  ruleTag: string;
-  tally: (bullish: number, neutral: number, bearish: number, disagreements: number) => string;
+  tally: (bullish: number, neutral: number, bearish: number) => string;
 }
 
 const LABELS: Record<ReportLanguage, ReadingLabels> = {
   "zh-CN": {
     heading: "Jev 逐项判读",
-    note: "每条指标的多空由 Jev 结合整体证据判断，而非沿用规则标签；⚠ 表示与规则标签不一致。",
+    note: "每条指标的多空由 Jev 结合整体证据逐条判断，百分比是它对该判断的把握。",
     daily: "日线", weekly: "周线",
     directions: { bullish: "偏多", neutral: "中性", bearish: "偏空" },
-    ruleTag: "规则标签",
-    tally: (b, n, s, d) => `合计：偏多 ${b} 项、中性 ${n} 项、偏空 ${s} 项；与规则标签不一致 ${d} 项。`,
+    tally: (b, n, s) => `合计：偏多 ${b} 项、中性 ${n} 项、偏空 ${s} 项。`,
   },
   "zh-TW": {
     heading: "Jev 逐項判讀",
-    note: "每條指標的多空由 Jev 結合整體證據判斷，而非沿用規則標籤；⚠ 表示與規則標籤不一致。",
+    note: "每條指標的多空由 Jev 結合整體證據逐條判斷，百分比是它對該判斷的把握。",
     daily: "日線", weekly: "週線",
     directions: { bullish: "偏多", neutral: "中性", bearish: "偏空" },
-    ruleTag: "規則標籤",
-    tally: (b, n, s, d) => `合計：偏多 ${b} 項、中性 ${n} 項、偏空 ${s} 項；與規則標籤不一致 ${d} 項。`,
+    tally: (b, n, s) => `合計：偏多 ${b} 項、中性 ${n} 項、偏空 ${s} 項。`,
   },
   en: {
     heading: "Jev signal-by-signal readings",
-    note: "Each signal is read by Jev in the context of all evidence rather than by the rule tag; ⚠ marks a disagreement with the rule tag.",
+    note: "Jev reads each signal in the context of all evidence; the percentage is its confidence in that reading.",
     daily: "Daily", weekly: "Weekly",
     directions: { bullish: "Bullish", neutral: "Neutral", bearish: "Bearish" },
-    ruleTag: "rule tag",
-    tally: (b, n, s, d) => `Total: ${b} bullish, ${n} neutral, ${s} bearish; ${d} differ from the rule tag.`,
+    tally: (b, n, s) => `Total: ${b} bullish, ${n} neutral, ${s} bearish.`,
   },
   ja: {
     heading: "Jev の指標別判定",
-    note: "各指標の強弱はルールのタグではなく、Jev が全体の根拠を踏まえて判定します。⚠ はルールのタグと異なることを示します。",
+    note: "各指標の強弱は Jev が全体の根拠を踏まえて個別に判定します。パーセントはその判定の確信度です。",
     daily: "日足", weekly: "週足",
     directions: { bullish: "強気", neutral: "中立", bearish: "弱気" },
-    ruleTag: "ルールのタグ",
-    tally: (b, n, s, d) => `合計：強気 ${b}、中立 ${n}、弱気 ${s}。ルールのタグと異なるもの ${d}。`,
+    tally: (b, n, s) => `合計：強気 ${b}、中立 ${n}、弱気 ${s}。`,
   },
 };
 
@@ -77,16 +72,12 @@ export function buildJevReadingsSection(
   const labels = LABELS[language] ?? LABELS["zh-CN"];
   const items = new Map(snapshot.items.map((item) => [item.id, item]));
   const count = (direction: EvidenceDirection) => readings.filter((reading) => reading.direction === direction).length;
-  const disagreements = readings.filter((reading) => reading.direction !== reading.ruleDirection).length;
 
   const lines = readings.flatMap((reading) => {
     const item = items.get(reading.id);
     if (!item) return [];
     const timeframe = reading.timeframe === "weekly" ? labels.weekly : labels.daily;
-    const differs = reading.direction !== reading.ruleDirection
-      ? ` ⚠ ${labels.ruleTag}：${labels.directions[reading.ruleDirection]}`
-      : "";
-    return [`- ${timeframe} ${signalLabel(item, language)}：**${labels.directions[reading.direction]}** ${Math.round(reading.probability * 100)}%${differs}`];
+    return [`- ${timeframe} ${signalLabel(item, language)}：**${labels.directions[reading.direction]}** ${Math.round(reading.probability * 100)}%`];
   });
 
   return [
@@ -95,6 +86,6 @@ export function buildJevReadingsSection(
     "",
     ...lines,
     "",
-    labels.tally(count("bullish"), count("neutral"), count("bearish"), disagreements),
+    labels.tally(count("bullish"), count("neutral"), count("bearish")),
   ].join("\n");
 }

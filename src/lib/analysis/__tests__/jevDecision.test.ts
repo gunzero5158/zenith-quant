@@ -182,14 +182,14 @@ describe("Jev decision request", () => {
     ]);
   });
 
-  it("feeds Jev's own readings into the later questions and reports disagreements with the rule tags", () => {
+  it("feeds Jev's own readings into the later questions and lists them in the report", () => {
     const readings = resolveJevReadings({
       e1: choice("bullish", { bullish: 0.9, neutral: 0.08, bearish: 0.02 }),
       e2: choice("neutral", { bullish: 0.1, neutral: 0.8, bearish: 0.1 }),
       e3: choice("bearish", { bullish: 0.2, neutral: 0.2, bearish: 0.6 }),
       e4: choice("bearish", { bullish: 0.05, neutral: 0.15, bearish: 0.8 }),
     }, request);
-    expect(readings[2]).toMatchObject({ id: "daily.elliottWave.wave2", ruleDirection: "bullish", direction: "bearish", probability: 0.6 });
+    expect(readings[2]).toEqual({ id: "daily.elliottWave.wave2", family: "elliottWave", timeframe: "daily", direction: "bearish", probability: 0.6 });
 
     // 1 bullish (0.9) against 2 bearish (0.6 + 0.8): the minority carries 0.9 / 2.3 of the directional weight.
     expect(summarizeDisagreement(readings)).toEqual({
@@ -209,8 +209,9 @@ describe("Jev decision request", () => {
     expect(section).toContain("### Jev 逐项判读");
     expect(section).toContain("- 日线 头肩顶 · 经典形态形成中：**偏空** 80%");
     expect(section).toContain("- 日线 ATR rising：**中性** 80%");
-    expect(section).toContain("**偏空** 60% ⚠ 规则标签：偏多");
-    expect(section).toContain("偏多 1 项、中性 1 项、偏空 2 项；与规则标签不一致 1 项");
+    expect(section).toContain("**偏空** 60%");
+    expect(section).not.toContain("规则标签");
+    expect(section).toContain("偏多 1 项、中性 1 项、偏空 2 项。");
     expect(() => resolveJevReadings({ e1: choice("bullish") }, request)).toThrow(/e2/);
   });
 
@@ -338,6 +339,7 @@ describe("Jev report prompt and endpoint", () => {
     });
     expect(prompt).toContain('"immutableDecision"');
     expect(prompt).toContain('"outlook":"bullish"');
+    expect(prompt).not.toContain('"direction":"bullish","state"');
     expect(prompt).not.toContain("weeklyRegime");
     expect(prompt).not.toContain("scoreCap");
   });
