@@ -257,6 +257,15 @@ function englishText(value: string): string | undefined {
   return /[A-Za-z]{3,}/.test(stripped) && stripped.length <= 80 ? stripped : undefined;
 }
 
+/** Evidence IDs name the exact signal in English, e.g. daily.pattern.headAndShoulders.forming. */
+function signalName(id: string, timeframe: string): string {
+  const tail = id.startsWith(`${timeframe}.`) ? id.slice(timeframe.length + 1) : id;
+  return tail
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[._]+/g, " ")
+    .toLowerCase();
+}
+
 export function buildJevDecisionRequest(input: {
   snapshot: EvidenceSnapshot;
   dailyCandles: Candle[];
@@ -271,11 +280,12 @@ export function buildJevDecisionRequest(input: {
     .filter((item) => item.reliability > 0 && item.label === item.id)
     .map((item) => ({
       family: item.family,
+      signal: signalName(item.id, item.timeframe),
       timeframe: item.timeframe,
       direction: item.direction,
       state: englishText(item.state) ?? item.direction,
       description: englishText(item.description)
-        ?? `${item.family} structure currently reads ${item.direction}${englishText(item.state) ? ` (${englishText(item.state)})` : ""}.`,
+        ?? `${signalName(item.id, item.timeframe)} currently reads ${item.direction}${englishText(item.state) ? ` (${englishText(item.state)})` : ""}.`,
       ...(typeof item.barsSince === "number" ? { barsSinceSignal: item.barsSince } : {}),
       barStatus: item.provisional ? "provisional (bar not closed)" : "confirmed",
       ...(item.invalidation && englishText(item.invalidation) ? { invalidation: englishText(item.invalidation) } : {}),

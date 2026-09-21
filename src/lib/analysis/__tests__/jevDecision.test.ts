@@ -74,6 +74,17 @@ const snapshot: EvidenceSnapshot = {
       reliability: 0.9,
     },
     {
+      id: "daily.pattern.headAndShoulders.forming",
+      family: "classicalPattern",
+      timeframe: "daily",
+      direction: "bearish",
+      state: "forming",
+      label: "daily.pattern.headAndShoulders.forming",
+      description: "右肩弱于头部，顶部派发结构风险升高。",
+      provisional: false,
+      reliability: 0.9,
+    },
+    {
       id: "daily.fibonacci.neutral",
       family: "fibonacci",
       timeframe: "daily",
@@ -153,6 +164,7 @@ describe("Jev decision request", () => {
     expect(serialized).not.toContain("Insufficient samples");
     expect(serialized).not.toContain("No active");
     expect(serialized).toContain("Wave 2 Bottoming");
+    expect(serialized).toContain("pattern head and shoulders forming currently reads bearish");
     expect(/[^\x00-\x7f]/.test(serialized)).toBe(false);
     expect(serialized).toContain("up (+6.3%)");
   });
