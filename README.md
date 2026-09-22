@@ -2,88 +2,129 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md)
 
-Rooftop Quant (天台分析 / 屋上クオンツ) is a self-hosted stock technical-analysis workspace for US, Hong Kong, mainland China A-share, and Japanese markets. It combines multi-timeframe market data, structured technical evidence, interactive charts, and two selectable scoring and analysis modes in one responsive dashboard.
+Rooftop Quant (Chinese name **天台分析**, Japanese name **屋上クオンツ**) is a self-hostable stock technical-analysis workbench for US, Hong Kong, China A-share, and Japanese equities. It turns multi-timeframe market data, dozens of indicators, and pattern detection into one structured evidence snapshot, then reaches a conclusion in one of three switchable ways: local rule scoring, an independent large-language-model judgment, or a decision made by Jev, a dedicated decision model. Every conclusion is logged and later compared with the actual price, so which approach deserves trust is answered by its track record rather than by guesswork.
 
-AI analysis is based on public market data and standard technical indicators. It is not investment advice or trading guidance. Markets involve risk; decide independently and at your own risk.
+This tool provides analytical reference based on public market data, common technical indicators, and AI output. It is not investment advice. Markets carry risk; make your own decisions and bear the results yourself.
 
-## Recent Updates (August 2026)
+## Recent updates (September 2026)
 
-- Added an analysis-mode selector: use **Rules + LLM** for deterministic scoring with an AI review, or **LLM Native** to let the model independently judge outlook, entry quality, confidence, and strategy from objective evidence.
-- Rebranded the product as **Rooftop Quant**, with localized names **天台分析** and **屋上クオンツ**, and added a multilingual investment-risk notice to the application.
-- Reworked entry assessment into separate left-side reversal and right-side confirmation paths. Their numeric path scores remain internal; the interface shows one final score and clear scenario states instead.
-- Made TD Sequential stages 6-9 progressively affect setup maturity, so an unfinished sequence can contribute evidence without being treated as a completed signal.
-- Added market-session-aware analysis freshness. Analysis history keeps the last analysis time and refreshes results older than 10 minutes when the relevant market is trading.
-- Hardened AI report output by repairing malformed JSON control characters, keeping machine evidence IDs out of visible prose, and preserving localized strategy text.
-- Improved A-share quote synchronization so displayed quotes, indicator snapshots, and scoring use a consistent current candle where supported.
+- **Third analysis mode: Jev Decision.** [Jev](https://docs.typesafe.ai) (TypeSafe's System One decision model) answers typed questions about the evidence with calibrated probabilities; the LLM only writes the report around those decisions. The score panel shows a bullish / neutral / bearish probability bar, the current setup stage, and how split the evidence is.
+- **Track record panel.** Every analysis is logged automatically and compared with the price 5, 10, and 20 trading days on. Four tracks (rules only, Rules + LLM, LLM Native, Jev) are summarized by outlook hit rate, average change after bullish and bearish calls, performance by score bucket, target-first versus stop-first for recommended entries, and whether Jev's probabilities are calibrated.
+- **AI sees facts, not rule opinions.** The rule engine's bullish / bearish tag on each evidence item is withheld from both AI modes; the model receives state, description, and values and reads them itself.
+- **Left and right status are one judgment.** Both AI modes now decide a single setup stage (left developing, right executable, extended, ...) that maps to a coherent left / right pair, so "right confirmed while left is still watching" can no longer occur. No actionable entry is issued under a bearish outlook.
+- **Modes renamed** to Rules + LLM, LLM Native, and Jev Decision.
+- Classical pattern names and descriptions are now English data; chart markers are shown in the UI language.
 
-## What It Does
+## How an analysis works
 
-- Searches stocks across supported markets and keeps a browser-side analysis history with quote snapshots.
-- Builds daily and weekly technical-analysis snapshots from real market data when a provider is available.
-- Displays synchronized price and indicator panes with daily/weekly switching and regional red-up or green-up color modes.
-- Supports both deterministic rule scoring with AI review and independent AI-native scoring from the same objective evidence snapshot.
-- Keeps cached results separate by analysis mode so switching modes cannot reuse the other mode's conclusion.
-- Shows left-side and right-side scenario states as **Not formed**, **Watch**, **Intraday provisional**, **Confirmed**, or **Too late**, while keeping their numeric path scores internal.
-- Generates separate overview, strategy, and technical-detail report sections.
-- Falls back to a built-in local report when LLM generation fails and fallback is enabled.
-- Clearly marks offline demo data when live providers cannot return a usable result.
+The first half is the same in every mode and costs nothing in AI fees:
 
-## Analysis Coverage
+1. Fetch daily and weekly candles and merge a live quote where the market supports it.
+2. Compute every indicator locally: EMA, Bollinger Bands, Ichimoku, MACD, KDJ, RSI, ATR, volume, OBV, CMF, VPVR, support / resistance, Fibonacci, 18 classical patterns, 24 candlestick patterns, TD Sequential, Elliott Wave, and Chanlun.
+3. Assemble an **evidence snapshot**: each item carries a state, a description, how many bars ago it fired, and whether its bar has closed, plus a set of candidate support and resistance levels.
 
-| Area | Included analysis |
+The mode decides who draws the conclusion. All three share the snapshot and keep separate caches; switching modes never reuses another mode's conclusion.
+
+### Rules + LLM (default)
+
+The local engine scores 0-5 across five dimensions, evaluates the left-side reversal and right-side confirmation paths separately, and derives a stop and target from the candidate levels. With an LLM configured, the model reviews the conclusion but may only adjust it within ±0.5, and every reason must cite existing evidence.
+
+This mode is stable, explainable, comparable across stocks, and works without any key (via the built-in local report engine). Its judgment comes from hand-written formulas whose weights have not been back-tested.
+
+### LLM Native
+
+The model receives the evidence snapshot and recent candles only: no rule score, score cap, predetermined regime, or rule direction tags. In one request it independently returns the outlook, a 0-5 score, confidence, setup stage, holder / entry / stop advice, and the full report.
+
+The server enforces discipline: stops and targets must come from the candidate levels; an actionable entry without a complete stop-target pair, or under a bearish outlook, is downgraded to waiting; the left side cannot still be watching once the right side is confirmed. These corrections change states, never the model's score.
+
+### Jev Decision
+
+Jev produces no text. It answers three kinds of question: a choice (probability per option), a yes / no (probability of yes), and a score (level plus confidence). It is tens of times faster and hundreds of times cheaper than an LLM, its output is fixed in shape, and it cannot fabricate. In exchange it cannot do arithmetic, gives no rationale, and is less accurate in languages other than English.
+
+The mode is built around those traits as three dependent calls, each seeing the previous conclusions:
+
+1. **Read every signal.** For each evidence item: does this signal imply bullish, neutral, or bearish for the next 5-20 trading days? The material is facts only: state, English description, bars since the signal. Distances from price to each level are pre-computed in code as "extremely close / close / moderate / far"; raw indicator values are not sent.
+2. **Outlook and stage.** Probabilities for bullish / neutral / bearish, and which of nine setup stages applies now.
+3. **Score and plan.** A 0-5 entry score, holder action, stop trigger, and one stop and one target chosen from the candidate levels.
+
+Code handles what Jev cannot: it measures the bullish-versus-bearish split from the per-signal readings weighted by probability; it checks the reward-to-risk of the chosen stop and target and downgrades an executable plan below 1.2 to watching; it keeps no actionable entry under a bearish outlook. The LLM then does one job: explain the immutable decisions. The technical report ends with Jev's signal-by-signal readings.
+
+This mode needs both a Jev API key and an LLM. Jev is currently supported through TypeSafe's official endpoint only.
+
+### The three modes side by side
+
+| | Rules + LLM | LLM Native | Jev Decision |
+| --- | --- | --- | --- |
+| Who decides | Local rules; AI adjusts ±0.5 | The LLM | Jev |
+| Who writes the report | LLM (optional) | LLM | LLM |
+| Keys needed | None (LLM optional) | LLM | Jev + LLM |
+| Source of confidence | — | Self-reported | Calibrated probabilities |
+| Same input, same result | Yes | No | Mostly |
+| Typical latency | Seconds | Tens of seconds | ~1.5 s for Jev + the report |
+
+None of the three has yet been shown to be more accurate than the others. That is what the next section is for.
+
+## Track record
+
+The clipboard icon at the top right opens the track-record panel. It writes down what each analysis concluded and checks the answer later.
+
+**Logging is automatic.** When an analysis completes, the running mode's conclusion is recorded: outlook, probabilities, score, stage, left / right status, stop, target, and the model used. Whatever mode you use, a free rules-only record is added alongside as the baseline, since the engine computes it on every request anyway. One stock, one mode, one trading day yields one record. Simulated data is never logged.
+
+**Checking is free.** Opening the panel fetches the latest candles and compares each record with the price 5, 10, and 20 trading bars on, without calling any model. A record is final after 20 bars.
+
+**What it reports:**
+
+- Outlook hit rate: bullish requires a gain above 1.5x ATR, bearish a loss beyond 1.5x ATR, neutral a move inside that band.
+- Average change after bullish and after bearish calls, against the all-record average. The calls are useful only if the change after bullish clearly exceeds the average.
+- Average change for scores ≥ 3.5 versus < 2.5, to see whether the score discriminates.
+- Entry plans: target hit first versus stop hit first.
+- Jev calibration: of the records where it said "bullish 70%", did about 70% rise?
+
+Records carry a per-track logic version, so results from different logic are never pooled. With fewer than 30 samples the numbers are indicative only. Records live in the browser with JSON export and import; export before switching devices or clearing browser data.
+
+## Features
+
+- Search stocks across four markets and keep analysis history and quote snapshots in the browser.
+- Linked price and indicator panes, daily / weekly switch, red-up or green-up coloring, pattern markers in the UI language.
+- Left and right scenarios shown as **not formed, watch, intraday provisional, confirmed, too late**.
+- Reports in three parts: market overview, strategy, technical detail; Jev mode appends its signal readings.
+- With the local fallback on, the rules mode uses the built-in report engine when the LLM fails; the two AI modes fail explicitly and never silently fall back to rule scoring.
+- Offline simulated data is clearly flagged and is never sent to any model.
+- UI in Simplified Chinese, Traditional Chinese, English, and Japanese.
+
+## Analysis coverage
+
+| Category | Coverage |
 | --- | --- |
-| Trend and volatility | EMA, Bollinger Bands, Ichimoku Cloud, ATR, daily/weekly structure |
+| Trend and volatility | EMA, Bollinger Bands, Ichimoku, ATR, daily / weekly structure |
 | Momentum | MACD, KDJ, RSI, recent crosses and divergences |
-| Volume and capital flow | Volume averages, OBV, CMF, volume-price confirmation |
-| Price location | Horizontal support/resistance, Fibonacci retracement, VPVR value area and major nodes |
-| Structures and patterns | Classical chart patterns, contextual candlestick patterns, TD Sequential |
-| Market structure | Elliott Wave heuristics and Chanlun pivots, strokes, and central-zone context |
-| Decision support | Entry scenarios, invalidation levels, targets, reward/risk context, data-quality caps |
+| Volume and flow | Volume averages, OBV, CMF, volume confirmation |
+| Price location | Horizontal support / resistance, Fibonacci retracements, VPVR value area and major nodes |
+| Structure and patterns | 18 classical patterns, 24 location-aware candlestick patterns, TD Sequential |
+| Market structure | Elliott Wave heuristics; Chanlun fractals, strokes, and pivots |
+| Decision support | Setup stage, invalidation, targets, reward / risk, data-quality score cap |
 
-Detected classical structures include double and triple tops/bottoms, head-and-shoulders formations, cup and handle, rounding structures, flags, rectangles, triangles, pennants, and rising/falling wedges. Pattern output is evidence for analysis, not a trading signal by itself.
+Classical patterns include double and triple tops / bottoms, head and shoulders (and inverse), cup and handle, rounding tops / bottoms, bull and bear flags, rectangles, symmetric / ascending / descending triangles, pennants, and rising / falling wedges. Patterns are evidence, not standalone trade signals.
 
-## Markets and Data
+## Markets and data
 
-| Market | Example symbols |
+| Market | Examples |
 | --- | --- |
-| United States | `AAPL`, `MSFT` |
+| US | `AAPL`, `MSFT` |
 | Hong Kong | `0700.HK`, `9988.HK` |
-| Mainland China A-share | `600519.SS`, `000001.SZ` |
+| China A-shares | `600519.SS`, `000001.SZ` |
 | Japan | `7203.T`, `9984.T` |
 
-Market-data availability depends on the symbol, market, network, and upstream service. The application uses market-aware fallback paths across Yahoo Finance, EastMoney, Tonghuashun, Kabutan, Tencent, and optional Twelve Data/FMP integrations. Provider order varies by endpoint and market.
+The app falls back across Yahoo Finance, EastMoney, Tonghuashun, Kabutan, Tencent, and optional Twelve Data / FMP depending on the market. Live quotes are merged into the snapshot so price, indicators, and score share the latest bar. Last-resort or simulated data is never cached as primary data.
 
-Realtime quotes are merged into analysis snapshots where supported so the displayed current price, change, indicators, and score use a consistent latest candle. Last-resort or simulated data is not cached as primary market data.
-
-## AI Reports and Scoring
-
-Every request first builds the same immutable, objective evidence snapshot. The dashboard then offers two modes:
-
-- **Rules + LLM** (default): the local engine calculates left-side reversal and right-side confirmation paths and a deterministic 0-5 score. A configured LLM reviews the evidence and may adjust that score by at most `+/-0.5`.
-- **LLM Native**: the model receives the objective indicator values, evidence, price levels, and recent candles without the local rule score, score cap, or predetermined regime. It independently returns the outlook, 0-5 entry score, confidence, left/right state, risk plan, and report in one model request.
-
-- **Jev Decision**: [Jev](https://docs.typesafe.ai) (TypeSafe's System One decision model) answers typed questions about the same objective evidence in two steps — first the outlook and the setup stage (left/right state is one staged judgment, so the pair is always coherent), then, with those decisions visible, the 0-5 entry score, holder action, stop trigger, and the stop and target picked from the supplied levels — each with calibrated probabilities. The LLM then only writes the report around those immutable decisions. Jev is weak at arithmetic, so it receives semantic evidence and code-computed distance categories instead of raw indicator values; answers within one step are independent, so the server downgrades any actionable plan they do not jointly support. This mode needs both a Jev API key and an LLM configured in Settings.
-
-LLM Native requires a configured LLM and does not silently fall back to rule scoring. Stops and targets must match supplied support/resistance levels; unsafe or incomplete actionable plans are downgraded to waiting without replacing the AI's score.
-
-The two paths use explicit scenario states: **Not formed**, **Watch**, **Intraday provisional**, **Confirmed**, and **Too late**. Their numeric scores are internal implementation details rather than additional headline ratings. TD Sequential starts contributing capped exhaustion evidence from stage 6, with progressively higher weight through stage 9; an unfinished sequence is evidence, not confirmation by itself.
-
-In both modes, the model receives structured evidence rather than being asked to invent or recalculate indicators, and visible claims must be grounded in supplied evidence. The final report is split into:
-
-- market and setup overview;
-- strategy, conditions, and risk controls;
-- detailed technical evidence.
-
-Supported UI provider choices are Google Gemini, OpenAI, and Anthropic. An OpenAI-compatible Base URL can also be supplied for compatible services. If no LLM is configured, or an LLM request fails with local fallback enabled, the built-in report engine remains available.
-
-## Getting Started
+## Quick start
 
 ### Requirements
 
-- Node.js 20.9 or newer
+- Node.js 20.9 or later
 - npm
 
-### Install and Run
+### Install and run
 
 ```bash
 git clone https://github.com/gunzero5158/zenith-quant.git
@@ -92,66 +133,53 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
-
-For a production build:
-
-```bash
-npm run build
-npm run start
-```
+Open [http://localhost:3000](http://localhost:3000). Production: `npm run build && npm run start`.
 
 ## Configuration
 
-### LLM
+### Large language model
 
-Open **AI Settings** in the application and configure:
+Open **Model Settings** at the top right and enter the provider (Google Gemini, OpenAI, Anthropic, or any OpenAI-compatible service), model name, API key, optional base URL, and whether to enable the local report fallback.
 
-- provider;
-- model name;
-- API key;
-- optional API Base URL;
-- whether local report fallback is enabled.
+### Jev decision model
 
-The browser stores this configuration locally. During analysis, the credentials are sent to this application's server route and then to the selected upstream LLM endpoint. The application does not intentionally persist LLM credentials on the server.
+The same dialog has a Jev section: enter an official TypeSafe API key. The URL and model name may be left blank; they default to `https://api.typesafe.ai` and `jev-latest`. Only Jev Decision mode uses it, and that mode also needs the LLM settings above.
 
-Private or internal custom LLM hosts are blocked by default. Self-hosted deployments that intentionally use a private endpoint can opt in:
+All credentials stay in the browser. During an analysis they pass through this app's server route to the chosen upstream and are not persisted server-side. Private and internal hosts are blocked by default; self-hosted setups that need an internal model can opt in:
 
 ```env
 ZENITH_ALLOW_PRIVATE_LLM_HOSTS=true
 ```
 
-### Optional Market-Data Providers
+### Optional data providers
 
-Create `.env.local` to enable additional fallback providers:
+Create `.env.local` to enable extra fallback providers:
 
 ```env
 TWELVE_DATA_API_KEY=your_key
 FMP_API_KEY=your_key
 ```
 
-These keys are optional. The application can still use its built-in provider chain without them, subject to upstream availability.
-
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
-| `npm run dev` | Start the development server |
-| `npm run build` | Create a production build |
+| `npm run dev` | Start the dev server |
+| `npm run build` | Production build |
 | `npm run start` | Start the production server |
 | `npm run lint` | Run ESLint |
 | `npm run test` | Run Vitest in watch mode |
 | `npm run test:run` | Run the test suite once |
 
-## Privacy and Limitations
+## Privacy and limits
 
-- Analysis history, cached reports, display preferences, and LLM settings are stored in browser storage or cookies.
-- Market data and AI output come from external services and may be delayed, incomplete, unavailable, or incorrect.
-- A demo-mode warning indicates that the current result is based on simulated rather than live market data.
-- Local caching reduces repeat requests, but force refresh can request a new analysis.
-- Technical indicators, patterns, scores, and generated reports are probabilistic decision-support tools, not forecasts or execution instructions.
+- Analysis history, cached reports, track records, display preferences, and model settings are stored in browser storage or cookies; this deployment has no database.
+- Market data and model output come from external services and may be delayed, missing, unavailable, or wrong.
+- A demo-mode notice means the current result uses simulated data.
+- Jev's probabilities express its confidence in reading the evidence, not the odds that the price rises; its accuracy on stocks has not been independently validated, so use it together with the track record.
+- Indicators, patterns, scores, and generated reports are probabilistic decision aids, not price predictions or trade instructions.
 
-## Tech Stack
+## Stack
 
 - Next.js 16 and React 19
 - TypeScript
@@ -161,4 +189,4 @@ These keys are optional. The application can still use its built-in provider cha
 
 ## License
 
-Licensed under the [MIT License](./LICENSE).
+[MIT License](./LICENSE).

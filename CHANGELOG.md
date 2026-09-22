@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.0 - 2026-09-22
+
+### Added
+- Jev Decision analysis mode: TypeSafe's Jev decision model reads every evidence item, decides outlook and setup stage, then scores the entry and picks a stop and target from the supplied levels, all with calibrated probabilities; the LLM only writes the report around those immutable decisions. Score panel shows a bullish/neutral/bearish probability bar, the setup stage, and the bullish-versus-bearish split of the readings.
+- Track-record panel: every analysis logs its conclusion plus a free rules-only baseline, and outcomes are checked against the price 5, 10, and 20 trading bars later (outlook hit rate, average change after bullish/bearish calls, score-bucket performance, target-first vs stop-first, Jev probability calibration). Records live in the browser with JSON export/import and carry a per-track logic version.
+- Jev API key, URL, and model fields in Settings.
+
+### Changed
+- Analysis modes renamed to Rules + LLM, LLM Native, and Jev Decision.
+- Both AI modes receive evidence facts without the rule engine's bullish/bearish tags, decide a single coherent setup stage instead of separate left/right statuses, and never issue an actionable entry under a bearish outlook.
+- Classical pattern names and descriptions are emitted in English; chart markers are localized per UI language.
+- `generateLLMReport` accepts an optional system prompt.
+
+### Fixed
+- Left side could remain "watch" while the right side was "triggered" in AI modes.
+- English pattern names such as "Double top" appeared in the Chinese chart.
+
 ## 0.5.4 - 2026-07-06
 
 ### Fixed
