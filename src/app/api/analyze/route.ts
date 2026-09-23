@@ -29,6 +29,7 @@ import {
   resolveInputSymbol,
 } from "@/lib/analysis/symbolResolver";
 import { buildWeeklyCandles as buildWeeklyCandlesFromDaily } from "@/lib/analysis/weeklyCandles";
+import { buildYahooChartCandles, YahooChartMeta, YahooChartQuoteSeries } from "@/lib/analysis/yahooChartCandles";
 import { runAnalysisEngine } from "@/lib/analysis/analysisEngine";
 import { EvidenceSnapshot } from "@/lib/analysis/evidence";
 import { buildStrategyAdvice, StrategyAdvice } from "@/lib/analysis/strategyAdvice";
@@ -199,21 +200,10 @@ interface MarketDataResult {
 interface YahooChartResponse {
   chart?: {
     result?: Array<{
-      meta?: {
-        longName?: string;
-        shortName?: string;
-        regularMarketPrice?: number;
-        chartPreviousClose?: number;
-      };
+      meta?: YahooChartMeta;
       timestamp?: number[];
       indicators?: {
-        quote?: Array<{
-          open?: Array<number | null>;
-          high?: Array<number | null>;
-          low?: Array<number | null>;
-          close?: Array<number | null>;
-          volume?: Array<number | null>;
-        }>;
+        quote?: YahooChartQuoteSeries[];
       };
     }>;
     error?: {
@@ -1084,33 +1074,7 @@ async function fetchYahooChartRange(
     throw new Error(data.chart?.error?.description || `Yahoo Chart returned empty data for ${symbol}`);
   }
 
-  const candles: Candle[] = [];
-  for (let i = 0; i < timestamps.length; i++) {
-    const open = quote.open?.[i];
-    const high = quote.high?.[i];
-    const low = quote.low?.[i];
-    const close = quote.close?.[i];
-    const volume = quote.volume?.[i];
-
-    if (
-      typeof open !== "number" ||
-      typeof high !== "number" ||
-      typeof low !== "number" ||
-      typeof close !== "number" ||
-      typeof volume !== "number"
-    ) {
-      continue;
-    }
-
-    candles.push({
-      date: new Date(timestamps[i] * 1000).toISOString().split("T")[0],
-      open,
-      high,
-      low,
-      close,
-      volume,
-    });
-  }
+  const candles = buildYahooChartCandles(timestamps, quote, result.meta);
 
   return {
     candles,
