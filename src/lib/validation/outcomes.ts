@@ -1,7 +1,12 @@
-import { barDateOf, VALIDATION_HORIZONS, ValidationOutcome, ValidationOutlook, ValidationRecord, ValidationTrack } from "./records";
+import { barDateOf, primarySamples, TRACK_VERSIONS, VALIDATION_HORIZONS, ValidationOutcome, ValidationOutlook, ValidationRecord, ValidationTrack } from "./records";
+import { evaluateTrade } from "./tradeExecution";
+import { executionPolicyFor, type CostAssumptions } from "./executionPolicy";
 
 export interface OutcomeCandle {
   date: unknown;
+  open?: number;
+  complete?: boolean;
+  tradable?: boolean;
   high: number;
   low: number;
   close: number;
@@ -15,10 +20,14 @@ const FALLBACK_BAND_PCT = 3;
 const pct = (from: number, to: number) => Number((((to - from) / from) * 100).toFixed(2));
 
 /** Compares a record with the daily bars that followed it. Returns undefined when its bar is not in the series. */
-export function evaluateOutcome(record: ValidationRecord, candles: OutcomeCandle[], now: number): ValidationOutcome | undefined {
-  const start = candles.findIndex((candle) => barDateOf(candle.date) >= record.barDate);
+export function evaluateOutcome(record: ValidationRecord, candles: OutcomeCandle[], now: number, costs?: CostAssumptions): ValidationOutcome | undefined {
+  const start = candles.findIndex((candle) => barDateOf(candle.date) === record.barDate);
   if (start < 0 || !(record.price > 0)) return undefined;
-  const after = candles.slice(start + 1, start + 1 + LONGEST_HORIZON);
+  const after: OutcomeCandle[] = [];
+  for (const candle of candles.slice(start + 1, start + 1 + LONGEST_HORIZON)) {
+    if (candle.complete !== true || !Number.isFinite(candle.close) || candle.close <= 0) break;
+    after.push(candle);
+  }
 
   const returns: ValidationOutcome["returns"] = {};
   for (const horizon of VALIDATION_HORIZONS) {
@@ -37,27 +46,25 @@ export function evaluateOutcome(record: ValidationRecord, candles: OutcomeCandle
     outcome.maxDrawdownPct = pct(record.price, Math.min(...after.map((candle) => candle.low)));
   }
 
-  if (record.activeSetup !== "none" && record.stop !== undefined && record.target !== undefined) {
-    outcome.plan = outcome.complete ? "timeout" : "open";
-    for (const [index, candle] of after.entries()) {
-      // When one bar spans both levels the order is unknowable from daily data; count it as the stop.
-      if (candle.low <= record.stop) {
-        outcome.plan = "stop";
-        outcome.planBars = index + 1;
-        break;
-      }
-      if (candle.high >= record.target) {
-        outcome.plan = "target";
-        outcome.planBars = index + 1;
-        break;
-      }
-    }
+  const triggered = record.opportunity?.status === "triggered" && record.activeSetup !== "none";
+  const policy = costs ? executionPolicyFor(record.symbol, costs) : record.executionPolicy;
+  outcome.execution = evaluateTrade(record.opportunity?.plan, triggered, record.dailyBarComplete, after, policy);
+  if (policy) outcome.costSensitivity = {
+    zero: evaluateTrade(record.opportunity?.plan, triggered, record.dailyBarComplete, after,
+      { ...policy, roundTripCostBps: 0, slippageBpsPerSide: 0 }),
+    doubled: evaluateTrade(record.opportunity?.plan, triggered, record.dailyBarComplete, after,
+      { ...policy, roundTripCostBps: policy.roundTripCostBps * 2, slippageBpsPerSide: policy.slippageBpsPerSide * 2 }),
+  };
+  if (["target", "stop", "timeout", "open"].includes(outcome.execution.status)) {
+    outcome.plan = outcome.execution.status as ValidationOutcome["plan"];
+    outcome.planBars = outcome.execution.barsHeld;
   }
   return outcome;
 }
 
 /** A move smaller than this is noise rather than a directional result. */
 export function meaningfulMovePct(record: ValidationRecord): number {
+  if (record.forecast) return record.forecast.bandPct;
   return record.atrPct && record.atrPct > 0 ? Number((record.atrPct * 1.5).toFixed(2)) : FALLBACK_BAND_PCT;
 }
 
@@ -78,6 +85,10 @@ export interface GroupStat {
 
 export interface TrackStats {
   track: ValidationTrack;
+  version: string;
+  model?: string;
+  horizon?: number;
+  market?: string;
   total: number;
   evaluated: number;
   all: GroupStat;
@@ -86,6 +97,9 @@ export interface TrackStats {
   byOutlook: Record<ValidationOutlook, GroupStat>;
   byScore: { high: GroupStat; middle: GroupStat; low: GroupStat };
   plan: { target: number; stop: number; timeout: number; open: number; winRate?: number };
+  execution: { not_triggered: number; unverifiable: number; skipped: number; ambiguous: number;
+    resolved: number; averageNetR?: number; averageNetReturnPct?: number; triggerRate?: number;
+    zeroCostR?: number; doubledCostR?: number };
 }
 
 function groupStat(returns: number[]): GroupStat {
@@ -97,10 +111,10 @@ function groupStat(returns: number[]): GroupStat {
   };
 }
 
-export function summarizeTrack(track: ValidationTrack, records: ValidationRecord[]): TrackStats {
-  const own = records.filter((record) => record.track === track);
+export function summarizeTrack(track: ValidationTrack, records: ValidationRecord[], version = TRACK_VERSIONS[track]): TrackStats {
+  const own = primarySamples(records, track, version);
   const evaluated = own.flatMap((record) => {
-    const returnPct = record.outcome?.returns[SUMMARY_HORIZON];
+    const returnPct = record.outcome?.returns[record.forecast?.horizon ?? SUMMARY_HORIZON];
     return typeof returnPct === "number" ? [{ record, returnPct }] : [];
   });
   const returnsWhere = (test: (record: ValidationRecord) => boolean) =>
@@ -113,9 +127,15 @@ export function summarizeTrack(track: ValidationTrack, records: ValidationRecord
   const plans = own.map((record) => record.outcome?.plan);
   const target = plans.filter((plan) => plan === "target").length;
   const stop = plans.filter((plan) => plan === "stop").length;
+  const executions = own.flatMap(record => record.outcome?.execution ? [record.outcome.execution] : []);
+  const resolved = executions.filter(e => ["target", "stop", "timeout"].includes(e.status) && e.netR !== undefined && e.netReturnPct !== undefined);
+  const sensitivity = (kind: "zero" | "doubled") => {
+    const values = own.flatMap(r => typeof r.outcome?.costSensitivity?.[kind].netR === "number" ? [r.outcome.costSensitivity[kind].netR!] : []);
+    return values.length ? values.reduce((a, b) => a + b, 0) / values.length : undefined;
+  };
 
   return {
-    track,
+    track, version,
     total: own.length,
     evaluated: evaluated.length,
     all: groupStat(evaluated.map(({ returnPct }) => returnPct)),
@@ -138,7 +158,39 @@ export function summarizeTrack(track: ValidationTrack, records: ValidationRecord
       open: plans.filter((plan) => plan === "open").length,
       winRate: target + stop > 0 ? Number((target / (target + stop)).toFixed(3)) : undefined,
     },
+    execution: {
+      not_triggered: executions.filter(e => e.status === "not_triggered").length,
+      unverifiable: executions.filter(e => e.status === "unverifiable").length,
+      skipped: executions.filter(e => e.status === "skipped").length,
+      ambiguous: executions.filter(e => e.status === "ambiguous").length,
+      resolved: resolved.length,
+      averageNetR: resolved.length ? resolved.reduce((sum, e) => sum + e.netR!, 0) / resolved.length : undefined,
+      averageNetReturnPct: resolved.length ? resolved.reduce((sum, e) => sum + e.netReturnPct!, 0) / resolved.length : undefined,
+      triggerRate: own.length ? own.filter(r => r.opportunity?.status === "triggered").length / own.length : undefined,
+      zeroCostR: sensitivity("zero"), doubledCostR: sensitivity("doubled"),
+    },
   };
+}
+
+export function validationMarket(symbol: string): string {
+  return /\.(SS|SZ|BJ)$/i.test(symbol) ? "CN" : /\.HK$/i.test(symbol) ? "HK" : /\.T$/i.test(symbol) ? "JP" : "US";
+}
+
+/** Never pool different decision versions, models, horizons or markets. */
+export function summarizeGroups(records: ValidationRecord[]): TrackStats[] {
+  const groups = new Map<string, ValidationRecord[]>();
+  for (const record of records) {
+    if (record.schemaVersion !== 2 || !record.forecast) continue;
+    const key = JSON.stringify([record.track, record.trackVersion, record.model ?? "rule", record.forecast.horizon, validationMarket(record.symbol)]);
+    const group = groups.get(key) ?? [];
+    group.push(record);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map(group => {
+    const first = group[0];
+    return { ...summarizeTrack(first.track, group, first.trackVersion), model: first.model,
+      horizon: first.forecast?.horizon, market: validationMarket(first.symbol) };
+  });
 }
 
 export interface CalibrationBucket {
@@ -151,12 +203,13 @@ export interface CalibrationBucket {
 }
 
 /** Does a stated "bullish 70%" come true about 70% of the time? */
-export function jevCalibration(records: ValidationRecord[]): CalibrationBucket[] {
+export function jevCalibration(records: ValidationRecord[], version = TRACK_VERSIONS["jev-ai"]): CalibrationBucket[] {
   const bounds: Array<[number, number, string]> = [[0, 0.4, "<40%"], [0.4, 0.6, "40-60%"], [0.6, 0.8, "60-80%"], [0.8, 1.01, "≥80%"]];
-  const samples = records.flatMap((record) => {
+  const samples = primarySamples(records, "jev-ai", version).flatMap((record) => {
     const probability = record.track === "jev-ai" ? record.outlookProbabilities?.bullish : undefined;
-    const returnPct = record.outcome?.returns[SUMMARY_HORIZON];
-    return typeof probability === "number" && typeof returnPct === "number" ? [{ probability, up: returnPct > 0 }] : [];
+    const returnPct = record.outcome?.returns[record.forecast?.horizon ?? SUMMARY_HORIZON];
+    return typeof probability === "number" && typeof returnPct === "number"
+      ? [{ probability, up: returnPct > meaningfulMovePct(record) }] : [];
   });
   return bounds.map(([min, max, label]) => {
     const bucket = samples.filter((sample) => sample.probability >= min && sample.probability < max);

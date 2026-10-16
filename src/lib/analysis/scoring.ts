@@ -1,4 +1,9 @@
 import { EvidenceItem, EvidenceSnapshot, ScenarioStatus, TradeLevel } from "./evidence";
+import {
+  buildTradePlans, currentTrend, DECISION_VERSION, forecastEvent, hasReboundContext,
+  improvementEvidence, planIsExecutable,
+  type ForecastEvent, type OpportunityAssessment, type OpportunityStatus,
+} from "./opportunities";
 
 export interface ScoreDetail {
   baseTrendScore: number;
@@ -19,6 +24,11 @@ export interface EntryDimensions {
 }
 
 export interface EntryAssessment {
+  decisionVersion?: string;
+  opportunity?: OpportunityAssessment;
+  opportunities?: OpportunityAssessment[];
+  currentTrend?: ReturnType<typeof currentTrend>;
+  forecast?: ForecastEvent;
   ruleScore: number;
   aiAdjustment: number;
   aiOutlook?: "bullish" | "neutral" | "bearish";
@@ -448,7 +458,7 @@ function scenarioStatuses(
   return { leftStatus, rightStatus };
 }
 
-function sharedHardCap(snapshot: EvidenceSnapshot, riskPlan: EntryAssessment["riskPlan"], reasons: string[]): number {
+function sharedHardCap(snapshot: EvidenceSnapshot, riskPlan: EntryAssessment["riskPlan"], reasons: string[], applyPhaseCaps = true): number {
   let hardCap = Math.min(5, snapshot.dataQuality.scoreCap);
   if (riskPlan.stop === undefined) {
     hardCap = Math.min(hardCap, 2.5);
@@ -465,11 +475,11 @@ function sharedHardCap(snapshot: EvidenceSnapshot, riskPlan: EntryAssessment["ri
     hardCap = Math.min(hardCap, 3.2);
     reasons.push("Reward/risk below 1.5: score capped at 3.2.");
   }
-  if (snapshot.dailyPhase === "extended") {
+  if (applyPhaseCaps && snapshot.dailyPhase === "extended") {
     hardCap = Math.min(hardCap, 2.8);
     reasons.push("Composite extension evidence caps new-entry quality at 2.8.");
   }
-  if (snapshot.dailyPhase === "breakdown") hardCap = Math.min(hardCap, 2.9);
+  if (applyPhaseCaps && snapshot.dailyPhase === "breakdown") hardCap = Math.min(hardCap, 2.9);
   return hardCap;
 }
 
@@ -478,7 +488,8 @@ function pathScore(dimensions: EntryDimensions, status: ScenarioStatus, hardCap:
   return roundScore(Math.min(raw, hardCap, STATUS_SCORE_CAP[status]));
 }
 
-export function calculateEntryAssessment(snapshot: EvidenceSnapshot): EntryAssessment {
+/** Scoring baseline for paired validation, not the current entry decision. */
+export function calculateLegacyEntryAssessment(snapshot: EvidenceSnapshot): EntryAssessment {
   const reasons: string[] = [];
   const items = dailyItems(snapshot);
   const atr = atrValue(snapshot);
@@ -527,6 +538,86 @@ export function calculateEntryAssessment(snapshot: EvidenceSnapshot): EntryAsses
     activeSetup,
     riskPlan,
     reasons,
+  };
+}
+
+export function calculateEntryAssessment(snapshot: EvidenceSnapshot): EntryAssessment {
+  const items = dailyItems(snapshot);
+  const atr = atrValue(snapshot);
+  const context = locationContext(snapshot, items, atr);
+  const trend = currentTrend(snapshot);
+  const improvements = improvementEvidence(snapshot);
+  const hasData = snapshot.dataQuality.dailySamples >= 35 && atr !== undefined && snapshot.dataQuality.scoreCap >= 3;
+  const lowVolumePullback = items.some(item => item.family === "volume" && item.values?.isLowVolumePullback === true);
+  const bullishPattern = items.some(item => item.family === "classicalPattern" && item.direction === "bullish"
+    && ["near_trigger", "confirmed"].includes(item.state));
+  const plans = snapshot.tradePlans?.length === 3 ? snapshot.tradePlans : buildTradePlans(snapshot);
+  const scored = plans.map(plan => {
+    const reasons: string[] = [];
+    const isBreakout = plan.kind === "breakout";
+    const nearSupport = context.supportDistanceAtr !== undefined && context.supportDistanceAtr <= 2;
+    const nearResistance = context.resistanceDistanceAtr !== undefined && context.resistanceDistanceAtr <= 0.5
+      && (context.resistance?.strength ?? 0) >= 0.65;
+    const present = plan.kind === "rebound" ? hasReboundContext(snapshot)
+      : plan.kind === "pullback" ? trend.daily === "bullish" && (lowVolumePullback || nearSupport)
+        : Boolean(plan.priceConfirmed || bullishPattern || (nearResistance && improvements.length > 0));
+    const confirmation = isBreakout ? rightConfirmationScore(items, reasons) >= 0.25 : improvements.length > 0;
+    const pastEntry = plan.priceConfirmed && ((plan.confirmationAgeBars ?? 0) > 0
+      || (plan.confirmedAt !== undefined && plan.confirmedAt < (snapshot.dataQuality.latestDailyDate ?? "")))
+      && plan.trigger !== undefined && atr !== undefined
+      && snapshot.price - plan.trigger > atr * 1.5;
+    let status: OpportunityStatus = !present ? "not_formed"
+      : snapshot.priceAction?.supportBroken && !plan.priceConfirmed ? "invalidated"
+        : pastEntry ? "too_late"
+          : plan.priceConfirmed && confirmation && hasData && planIsExecutable(plan)
+            ? snapshot.dataQuality.dailyBarComplete ? "triggered" : "provisional"
+            : "watch";
+    if (snapshot.dailyPhase === "extended" && present && plan.priceConfirmed) status = "too_late";
+    const dimensions: EntryDimensions = {
+      priceLocation: isBreakout ? rightLocationScore(context, reasons) : leftLocationScore(context, reasons),
+      payoffQuality: payoffScore(plan, reasons),
+      setupMaturity: isBreakout ? rightSetupScore(snapshot, items, context, reasons)
+        : clamp(leftSetupScore(snapshot, items, reasons) + (plan.priceConfirmed ? 0.35 : 0), 0, 1.25),
+      timeframeContext: timeframeScore(snapshot, reasons),
+      confirmationQuality: isBreakout ? rightConfirmationScore(items, reasons)
+        : clamp((plan.priceConfirmed ? 0.35 : 0) + (improvements.length > 0 ? 0.3 : 0), 0, 0.75),
+    };
+    const legacyStatus: ScenarioStatus = status === "invalidated" ? "not_formed" : status;
+    const hardCap = Math.min(sharedHardCap(snapshot, plan, reasons, false), STATUS_SCORE_CAP[legacyStatus]);
+    const score = pathScore(dimensions, legacyStatus, hardCap);
+    if (!plan.priceConfirmed) reasons.push("Price confirmation is missing; oversold readings alone do not trigger an entry.");
+    if (!confirmation) reasons.push("An independent momentum or flow improvement is still required.");
+    if (plan.kind === "rebound" && trend.weekly === "bearish") reasons.push("This is a short countertrend rebound, not a confirmed medium-term reversal.");
+    const opportunity: OpportunityAssessment = { kind: plan.kind, status, horizon: plan.horizon, score, plan, reasons };
+    return { opportunity, dimensions, hardCap };
+  });
+  // Prefer an executable opportunity over a higher-scoring watch candidate.
+  // The selected plan must be the one behind any executable action in the UI.
+  const priority = (status: OpportunityStatus) => status === "triggered" ? 4
+    : status === "provisional" ? 3 : status === "watch" ? 2 : status === "too_late" ? 1 : 0;
+  const ranked = [...scored].sort((a, b) => priority(b.opportunity.status) - priority(a.opportunity.status)
+    || b.opportunity.score - a.opportunity.score);
+  const chosen = ranked[0];
+  const left = ranked.find(item => item.opportunity.plan.side === "left")!;
+  const right = ranked.find(item => item.opportunity.plan.side === "right")!;
+  const status = (value: OpportunityStatus): ScenarioStatus => value === "invalidated" ? "not_formed" : value;
+  const opportunity = chosen.opportunity;
+  // Public badges describe the selected trading plan. Other confirmed candidates
+  // remain available in opportunities, but cannot authorize a second trade using
+  // the selected plan's stop, target and horizon.
+  const displayedStatus = (candidate: OpportunityAssessment): ScenarioStatus =>
+    candidate.plan.side !== opportunity.plan.side &&
+    ["triggered", "provisional"].includes(candidate.status)
+      ? "watch" : status(candidate.status);
+  return {
+    decisionVersion: DECISION_VERSION, currentTrend: trend,
+    opportunity, opportunities: scored.map(item => item.opportunity), forecast: forecastEvent(snapshot, opportunity.horizon),
+    ruleScore: opportunity.score, finalScore: opportunity.score, aiAdjustment: 0,
+    hardCap: chosen.hardCap, dimensions: chosen.dimensions,
+    pathScores: { left: left.opportunity.score, right: right.opportunity.score },
+    leftStatus: displayedStatus(left.opportunity), rightStatus: displayedStatus(right.opportunity),
+    activeSetup: opportunity.status === "triggered" ? opportunity.plan.side : "none",
+    riskPlan: opportunity.plan, reasons: opportunity.reasons,
   };
 }
 

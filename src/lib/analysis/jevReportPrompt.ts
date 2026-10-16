@@ -11,7 +11,7 @@ interface JevReportPromptInput {
   currencySymbol: string;
 }
 
-export const JEV_REPORT_SYSTEM_BOUNDARY = "You are writing a technical-analysis report that explains decisions already made by a separate calibrated decision model. Treat the supplied evidence snapshot and the decision object as immutable. Never change, soften, or contradict a decision, score, status, action, stop, or target. Do not recalculate indicators, invent market data, or introduce outside facts. Evidence IDs are machine-only and may appear only in evidenceIds arrays; never include them in user-visible prose.";
+export const JEV_REPORT_SYSTEM_BOUNDARY = "You explain decisions made by a separate decision model. Its probabilities are not validated trading win rates. Treat the supplied evidence and final decision as immutable. Never contradict the opportunity, horizon, score, status, action, stop, or target. Distinguish current trend from the exact future forecast event. Do not invent data. Evidence IDs may appear only in evidenceIds arrays, never user-visible prose.";
 
 function candleSummary(candle: Candle) {
   return {
@@ -72,11 +72,11 @@ Output language: ${targetLanguage(input.language)}.
 Write every user-visible string in that language. Indicator abbreviations may remain unchanged.
 
 Division of labor:
-- A calibrated decision model (Jev) has already made every judgment in immutableDecision: market outlook with probabilities, 0-5 long-entry attractiveness (finalScore), left/right setup status, activeSetup, holder/left/right actions, stop trigger, and the stop and target prices.
+- A decision model (Jev) has already made every judgment in immutableDecision: the declared forecast event with probabilities, 0-5 entry attractiveness, opportunity status, actions, stop trigger, and stop/target prices. A weak current trend can coexist with a short rebound opportunity; do not confuse the horizons.
 - Your job is to explain those decisions with the supplied evidence so that a reader understands why they are reasonable, what would confirm them, and what would invalidate them.
 - Never change, soften, or contradict a decision. If the evidence contains a meaningful counter-argument, present it as a risk or as a condition that would change the view, not as a different conclusion.
 - immutableDecision.readings holds Jev's own bullish/neutral/bearish reading of each evidence item (matched by id), made in the context of all evidence. Use these readings when you describe what a signal implies.
-- outlookProbabilities and confidence are calibrated. Reflect them honestly: a probability near an even split means low conviction and must be described as such.
+- outlookProbabilities and confidence are model outputs, not validated trading win rates. The forecast horizon and price boundaries are in immutableDecision.forecast. An even split means low conviction; high disagreement is not itself a bullish signal.
 - immutableDecision.disagreement counts how the readings split between bullish and bearish (minorityShare 0 is one-sided, 0.5 is an even split) and whether the daily and weekly readings lean in opposite directions. Describe a high split as genuinely mixed evidence.
 
 Evidence boundary:
@@ -144,6 +144,7 @@ export function mergeJevDecisionWithReport(
       leftStatus: decision.leftStatus,
       rightStatus: decision.rightStatus,
       activeSetup: decision.activeSetup,
+      selectedPlanId: decision.selectedPlanId,
       riskPlan: { stop: decision.stop, target: decision.target },
       reasons: report.reasons,
     },

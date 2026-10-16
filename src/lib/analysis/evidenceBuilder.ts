@@ -22,6 +22,8 @@ import {
   RsiSignal,
 } from "./technicalSignals";
 import { VolumeAnalysisResult } from "./volumeForce";
+import { PriceActionFacts, priceActionEvidence } from "./opportunities";
+import { toIsoDateKey } from "./weeklyCandles";
 
 export interface TechnicalFrameEvidence {
   ema?: EmaSignal;
@@ -51,9 +53,11 @@ export interface ElliottEvidenceInput {
   state: string;
   direction?: EvidenceDirection;
   description: string;
+  points?: { price: number; date: Date | string }[];
 }
 
 export interface EvidenceBuilderInput {
+  priceAction?: PriceActionFacts;
   symbol: string;
   price: number;
   dataQuality: DataQuality;
@@ -379,15 +383,28 @@ function addOtherEvidence(items: EvidenceItem[], input: EvidenceBuilderInput): v
       ? `forming_${input.chanlun.formingFractal}`
       : `${input.chanlun.currentStrokeDirection ?? "unknown"}_stroke`;
     items.push(item("chanlun", "daily", `daily.chanlun.${state}`, direction, state, input.chanlun.chanlunDescription ?? "Chanlun structure is unavailable.", provisional, {
-      values: input.chanlun.centralZone ? {
-        zoneLow: input.chanlun.centralZone.low,
-        zoneHigh: input.chanlun.centralZone.high,
-        pricePosition: input.chanlun.centralZone.pricePosition,
-      } : undefined,
+      values: {
+        ...(input.chanlun.centralZone ? {
+          zoneLow: input.chanlun.centralZone.low,
+          zoneHigh: input.chanlun.centralZone.high,
+          pricePosition: input.chanlun.centralZone.pricePosition,
+        } : {}),
+        ...(input.chanlun.strokes?.at(-1) ? {
+          strokeStart: input.chanlun.strokes.at(-1)!.startPrice,
+          strokeEnd: input.chanlun.strokes.at(-1)!.endPrice,
+          strokeStartDate: toIsoDateKey(input.chanlun.strokes.at(-1)!.startDate),
+          strokeEndDate: toIsoDateKey(input.chanlun.strokes.at(-1)!.endDate),
+        } : {}),
+      },
     }));
   }
   if (input.elliottWave) {
-    items.push(item("elliottWave", "daily", `daily.elliott.${input.elliottWave.state}`, input.elliottWave.direction ?? "neutral", input.elliottWave.state, input.elliottWave.description, provisional));
+    items.push(item("elliottWave", "daily", `daily.elliott.${input.elliottWave.state}`, input.elliottWave.direction ?? "neutral", input.elliottWave.state, input.elliottWave.description, provisional, {
+      values: Object.fromEntries((input.elliottWave.points ?? []).flatMap((point, index) => [
+        [`point${index + 1}`, point.price],
+        [`date${index + 1}`, point.date instanceof Date ? point.date.toISOString().slice(0, 10) : point.date.slice(0, 10)],
+      ])),
+    }));
   }
 }
 
@@ -431,7 +448,7 @@ function weeklyRegime(items: EvidenceItem[]): EvidenceSnapshot["weeklyRegime"] {
   return score >= 2 ? "bullish" : score <= -2 ? "bearish" : "neutral";
 }
 
-function dailyPhase(input: EvidenceBuilderInput, items: EvidenceItem[], levels: TradeLevel[]): EvidenceSnapshot["dailyPhase"] {
+function dailyPhase(input: EvidenceBuilderInput, items: EvidenceItem[], levels: TradeLevel[], legacy = false): EvidenceSnapshot["dailyPhase"] {
   const ema = input.daily?.ema;
   const boll = input.daily?.boll;
   const atr = input.daily?.atr?.value;
@@ -458,7 +475,9 @@ function dailyPhase(input: EvidenceBuilderInput, items: EvidenceItem[], levels: 
     candidate.values.barsSinceValueAreaBreakout <= 2
   ));
   const bullishBreakout = confirmedBullishPattern || (bullishVolumeBreakout && nearBrokenHorizontal) || confirmedVpvrBreakout;
-  const bearishBreakdown = ema?.pricePosition === "below_all" && (ema.order === "bearish" || input.daily?.macd?.relation === "bearish");
+  // Weak moving averages are a trend measurement, not evidence that a support broke.
+  const bearishBreakdown = legacy ? ema?.pricePosition === "below_all"
+    && (ema.order === "bearish" || input.daily?.macd?.relation === "bearish") : Boolean(input.priceAction?.supportBroken);
   const rsiOverbought = (input.daily?.rsi?.value ?? 0) >= 70;
   const sellTdStage = items
     .filter((candidate) => candidate.family === "tdSequential" && candidate.values?.setup === "sell")
@@ -509,6 +528,7 @@ export function buildEvidenceSnapshot(input: EvidenceBuilderInput): EvidenceSnap
   addVpvrEvidence(items, input);
   addPatternEvidence(items, input);
   addOtherEvidence(items, input);
+  if (input.priceAction) items.push(...priceActionEvidence(input.priceAction));
   ensureFamilyCoverage(items, input);
   const levels = collectLevels(input);
   return {
@@ -520,5 +540,14 @@ export function buildEvidenceSnapshot(input: EvidenceBuilderInput): EvidenceSnap
     levels,
     weeklyRegime: weeklyRegime(items),
     dailyPhase: dailyPhase(input, items, levels),
+    priceAction: input.priceAction,
   };
+}
+
+/** Same historical inputs, but the exact pre-opportunity phase classification.
+ * Comparison only: never feed new price events or candidate plans into the old score.
+ */
+export function buildLegacyComparisonSnapshot(input: EvidenceBuilderInput): EvidenceSnapshot {
+  const snapshot = buildEvidenceSnapshot({ ...input, priceAction: undefined });
+  return { ...snapshot, dailyPhase: dailyPhase(input, snapshot.items, snapshot.levels, true) };
 }

@@ -89,6 +89,9 @@ const MarkdownBlock = React.memo(function MarkdownBlock({ text, effectiveLang }:
         if (cleanLine.startsWith("### ")) {
           return <h3 key={idx} style={styles.mdH3}>{cleanLine.replace("### ", "")}</h3>;
         }
+        if (cleanLine.startsWith("#### ")) {
+          return <h4 key={idx} style={styles.mdH3}>{parseBoldText(cleanLine.slice(5))}</h4>;
+        }
         if (cleanLine.startsWith("- ") || cleanLine.startsWith("* ")) {
           const content = cleanLine.substring(2);
           return (

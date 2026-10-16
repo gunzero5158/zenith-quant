@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.7.0 - 2026-10-16
+
+### Added
+- Separate rebound, pullback, and breakout opportunities from current trend strength, with explicit forecast horizons, price confirmation, and frozen entry/stop/target plans.
+- Versioned outcome records and paired old/new rule baselines from the same market snapshot. The validation panel groups results by model, market, version, and horizon, and reports simulated execution outcomes with configurable costs and slippage.
+
+### Changed
+- Rules + LLM, LLM Native, and Jev Decision now share factual plan boundaries while retaining their respective decision logic. A weak background trend alone no longer rules out a short-horizon rebound opportunity.
+- Actionable entries require price confirmation and a usable risk/reward plan. Public entry states and strategy text are reconciled with the selected plan.
+- Local reports include opportunity-specific reasoning and localized technical evidence in Chinese, English, and Japanese. Model certainty is not presented as a verified win rate.
+
+### Fixed
+- Normalize provider weekly candle dates and avoid treating unfinished or future weekly bars as completed.
+- Use opportunity-relevant stops rather than unrelated historical pattern levels, and preserve actual confirmation dates.
+- Correct close-based stop simulation around opening gaps and T+1 restrictions; distinguish ambiguous, untriggered, and unverifiable outcomes.
+- Invalidate incompatible analysis caches and render fourth-level Markdown headings correctly.
+
+### Validation
+- 419 automated tests, ESLint, and the production build passed. Real non-mock market-data requests were exercised across A-share, Hong Kong, US, and Japanese examples.
+- Live LLM and Jev calls require user acceptance on the deployed site. Simulated outcomes and model probabilities are not evidence of improved investment returns.
+
 ## 0.6.0 - 2026-09-22
 
 ### Added

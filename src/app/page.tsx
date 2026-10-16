@@ -72,6 +72,9 @@ interface TechnicalIndicators {
 }
 
 interface StockAnalysisData {
+  decisionId?: string;
+  decisionTime?: string;
+  snapshotId?: string;
   symbol: string;
   companyName: string;
   companyNameEn?: string;
@@ -82,6 +85,7 @@ interface StockAnalysisData {
   analysisMode?: AnalysisMode;
   jevDecision?: JevDecision;
   ruleBaseline?: EntryAssessment;
+  legacyComparison?: EntryAssessment;
   dataQuality?: DataQuality;
   dailyCandles: Candle[];
   weeklyCandles: Candle[];
@@ -1246,7 +1250,7 @@ export default function Home() {
 
                 <div className="stats-grid" style={styles.statsContainer}>
                   <div className="stat-item stat-item-score" style={styles.statItem}>
-                    <span style={styles.statLabel}>{jevPresentation?.finalLabel || scorePresentation?.finalLabel || t.scoreLabel}</span>
+                    <span style={styles.statLabel} title={scorePresentation?.opportunity?.note}>{scorePresentation?.opportunity?.label || jevPresentation?.finalLabel || scorePresentation?.finalLabel || t.scoreLabel}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                       <div style={styles.statValue}>
                         <span style={{ fontSize: "20px", color: "#2962ff" }}>{scorePresentation?.finalText || stockData.score.totalScore.toFixed(1)}</span>
@@ -1256,6 +1260,20 @@ export default function Home() {
                     </div>
                     {scorePresentation && stockData.entryAssessment && (
                       <>
+                        {scorePresentation.opportunity && (
+                          <div style={{ fontSize: 12, lineHeight: 1.6, color: "#d1d4dc", maxWidth: 340, whiteSpace: "normal" }}>
+                            <div>{scorePresentation.opportunity.trend}</div>
+                            <div>{scorePresentation.opportunity.opportunity}</div>
+                            {scorePresentation.opportunity.plan && (
+                              <details>
+                                <summary style={{ cursor: "pointer" }}>{effectiveLang === "en" ? "Entry & risk plan" : effectiveLang === "ja" ? "エントリーとリスク計画" : "入场与风险计划"}</summary>
+                                <div>{scorePresentation.opportunity.plan}</div>
+                              </details>
+                            )}
+                          </div>
+                        )}
+                        <details style={{ fontSize: 12, lineHeight: 1.6 }}>
+                          <summary style={{ cursor: "pointer" }}>{scorePresentation.opportunity?.detailsLabel || (effectiveLang === "en" ? "Model details" : effectiveLang === "ja" ? "モデルの詳細" : "模型详情")}</summary>
                         {jevPresentation ? (
                           <>
                             <div
@@ -1291,6 +1309,7 @@ export default function Home() {
                           )}
                         </div>
                         )}
+                        </details>
                         <div style={styles.scenarioRow}>
                           <span style={{ ...styles.scenarioBadge, ...scenarioTone(stockData.entryAssessment.leftStatus) }}>
                             {scorePresentation.leftLabel} {scorePresentation.leftText}

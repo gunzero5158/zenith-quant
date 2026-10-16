@@ -192,9 +192,12 @@ export function buildStrategyAdvice(
   };
 
   const atr = latestAtr(snapshot);
-  const structuralStop = assessment.riskPlan.stop;
-  const atrStop = atr ? Number((snapshot.price - atr * 3.2).toFixed(2)) : undefined;
-  const trigger: StrategyAdvice["exitStop"]["trigger"] = snapshot.dailyPhase === "breakdown" ? "intraday" : "close";
+  const selectedPlan = assessment.opportunity?.plan;
+  const structuralStop = selectedPlan?.stopBasis === "volatility" ? undefined : assessment.riskPlan.stop;
+  const atrStop = selectedPlan ? (selectedPlan.stopBasis === "volatility" ? selectedPlan.stop : undefined)
+    : atr ? Number((snapshot.price - atr * 3.2).toFixed(2)) : undefined;
+  const trigger: StrategyAdvice["exitStop"]["trigger"] = selectedPlan?.stopTrigger
+    ?? (snapshot.dailyPhase === "breakdown" ? "intraday" : "close");
   const exitStop: StrategyAdvice["exitStop"] = {
     structuralStop,
     atrStop,

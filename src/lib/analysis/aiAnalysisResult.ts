@@ -1,5 +1,9 @@
 import type { EvidenceSnapshot, ScenarioStatus, TradeLevelKind } from "./evidence";
 import type { ScoreDetail } from "./scoring";
+import { currentTrend, DECISION_VERSION, forecastEvent, planIsExecutable } from "./opportunities";
+import type { CandidateTradePlan, ForecastEvent, OpportunityAssessment } from "./opportunities";
+import { generateLocalReport } from "./fallbackReport";
+import { localEvidenceText } from "./localEvidenceText";
 
 export type AiMarketOutlook = "bullish" | "neutral" | "bearish";
 
@@ -9,6 +13,10 @@ export interface AiScoreReason {
 }
 
 export interface AiEntryAssessment {
+  decisionVersion?: string;
+  currentTrend?: ReturnType<typeof currentTrend>;
+  forecast?: ForecastEvent;
+  opportunity?: OpportunityAssessment;
   source: "ai";
   outlook: AiMarketOutlook;
   finalScore: number;
@@ -17,7 +25,7 @@ export interface AiEntryAssessment {
   leftStatus: ScenarioStatus;
   rightStatus: ScenarioStatus;
   activeSetup: "left" | "right" | "none";
-  riskPlan: {
+  riskPlan: Partial<CandidateTradePlan> & {
     stop?: number;
     target?: number;
     rewardRisk?: number;
@@ -44,6 +52,7 @@ export interface AiStrategyAdvice {
 }
 
 export interface AiAnalysisResult {
+  normalized?: boolean;
   overview: string;
   technicalAnalysis: string;
   strategyCommentary: string;
@@ -297,12 +306,46 @@ function normalizedAdviceText(
 function normalizeUnsafeActions(
   assessment: AiEntryAssessment,
   strategy: AiStrategyAdvice,
-  language: AnalysisLanguage
+  language: AnalysisLanguage,
+  snapshot: EvidenceSnapshot,
 ): void {
-  // A long entry is not executable while the same assessment calls the outlook bearish.
-  const hasCompleteRiskPlan = assessment.riskPlan.stop !== undefined
+  // A weak current trend is not a veto. A forecast for this exact trade horizon
+  // must still be consistent with the proposed long action.
+  const selected = assessment.opportunity;
+  const completeRisk = assessment.riskPlan.stop !== undefined
     && assessment.riskPlan.target !== undefined
-    && assessment.outlook !== "bearish";
+    && (assessment.riskPlan.rewardRisk ?? 0) >= 1.2;
+  const candidateRisk = !snapshot.tradePlans || Boolean(selected && planIsExecutable(selected.plan));
+  const priceConfirmed = !snapshot.tradePlans || selected?.plan.priceConfirmed === true;
+  const dataReady = !snapshot.tradePlans || snapshot.dataQuality.dailySamples >= 35;
+  const directionConsistent = !(assessment.forecast && assessment.outlook === "bearish");
+  const readyExceptClose = completeRisk && candidateRisk && priceConfirmed && dataReady && directionConsistent;
+  const hasCompleteRiskPlan = readyExceptClose && (!snapshot.tradePlans || snapshot.dataQuality.dailyBarComplete);
+  const why = language === "en" ? {
+    price: "Price confirmation is missing; remain on watch.", data: "Daily history is insufficient; remain on watch.",
+    direction: "The forecast is bearish for this same horizon; a confirmed long entry would contradict it.",
+    close: "The daily bar is incomplete; wait for the close before acting.",
+    mismatch: "The selected plan, setup status and proposed action do not agree; remain on watch.",
+  } : language === "ja" ? {
+    price: "価格確認が不足しています。監視を続けます。", data: "日足履歴が不足しています。監視を続けます。",
+    direction: "同じ期間の予測が弱気のため、買いエントリー確認とは矛盾します。",
+    close: "日足が未確定です。行動前に終値を待ちます。",
+    mismatch: "選択した計画・状態・行動が一致していません。監視を続けます。",
+  } : language === "zh-TW" ? {
+    price: "尚缺價格確認，繼續觀察。", data: "日線歷史樣本不足，繼續觀察。",
+    direction: "同一期限的方向預測偏空，與確認做多入場矛盾。", close: "日K尚未完成，等待收盤後再執行。",
+    mismatch: "選中方案、機會狀態與建議動作不一致，繼續觀察。",
+  } : {
+    price: "尚缺价格确认，继续观察。", data: "日线历史样本不足，继续观察。",
+    direction: "同一期限的方向预测偏空，与确认做多入场矛盾。", close: "日K尚未完成，等待收盘后再执行。",
+    mismatch: "选中方案、机会状态与建议动作不一致，继续观察。",
+  };
+  const correctionText = (side: "left" | "right") => [
+    !completeRisk || !candidateRisk ? normalizedAdviceText(language, side) : undefined,
+    !priceConfirmed ? why.price : undefined, !dataReady ? why.data : undefined,
+    !directionConsistent ? why.direction : undefined,
+    !snapshot.dataQuality.dailyBarComplete ? why.close : undefined,
+  ].filter(Boolean).join(" ") || why.mismatch;
   const leftActionable = hasCompleteRiskPlan
     && assessment.activeSetup === "left"
     && assessment.leftStatus === "triggered"
@@ -313,24 +356,24 @@ function normalizeUnsafeActions(
     && strategy.rightAdd.action === "add_on_retest";
 
   if (assessment.leftStatus === "triggered" && !leftActionable) {
-    assessment.leftStatus = "watch";
+    assessment.leftStatus = !snapshot.dataQuality.dailyBarComplete && readyExceptClose ? "provisional" : "watch";
   }
   if (assessment.rightStatus === "triggered" && !rightActionable) {
-    assessment.rightStatus = "watch";
+    assessment.rightStatus = !snapshot.dataQuality.dailyBarComplete && readyExceptClose ? "provisional" : "watch";
   }
 
   if (!leftActionable && (assessment.activeSetup === "left" || strategy.leftEntry.action === "probe")) {
     if (assessment.activeSetup === "left") assessment.activeSetup = "none";
     if (strategy.leftEntry.action === "probe") {
       strategy.leftEntry.action = "wait";
-      strategy.leftEntry.text = normalizedAdviceText(language, "left");
+      strategy.leftEntry.text = correctionText("left");
     }
   }
   if (!rightActionable && (assessment.activeSetup === "right" || strategy.rightAdd.action === "add_on_retest")) {
     if (assessment.activeSetup === "right") assessment.activeSetup = "none";
     if (strategy.rightAdd.action === "add_on_retest") {
       strategy.rightAdd.action = "wait_breakout";
-      strategy.rightAdd.text = normalizedAdviceText(language, "right");
+      strategy.rightAdd.text = correctionText("right");
     }
   }
   if (assessment.riskPlan.stop === undefined && strategy.holder.action === "hold_protect") {
@@ -338,13 +381,14 @@ function normalizeUnsafeActions(
     strategy.holder.text = normalizedAdviceText(language, "holder");
   }
 
-  // The left-side chance precedes the right-side chance, so once one side is
-  // confirmed the other cannot still describe a different moment of the cycle.
-  if (assessment.rightStatus === "triggered" && assessment.leftStatus === "watch") {
-    assessment.leftStatus = "too_late";
-  }
-  if (assessment.leftStatus === "triggered" && ["triggered", "too_late"].includes(assessment.rightStatus)) {
-    assessment.rightStatus = "not_formed";
+  if (selected) {
+    if (selected.status !== "invalidated") {
+      selected.status = selected.plan.side === "left" ? assessment.leftStatus : assessment.rightStatus;
+    }
+    if (selected.status !== "triggered") {
+      assessment.finalScore = Math.min(assessment.finalScore, selected.status === "provisional" ? 4.2 : 3.2);
+      selected.score = assessment.finalScore;
+    }
   }
 }
 
@@ -378,20 +422,74 @@ export function validateAiAnalysisResult(
     finalScore: numberInRange(score.finalScore, "scoreAssessment.finalScore", 0, 5),
     confidence: normalizedConfidence(score.confidence),
     confidenceReason: visibleText(score.confidenceReason, "scoreAssessment.confidenceReason", validEvidenceIds),
-    leftStatus: oneOf(score.leftStatus, "scoreAssessment.leftStatus", ["not_formed", "watch", "triggered", "too_late"]),
-    rightStatus: oneOf(score.rightStatus, "scoreAssessment.rightStatus", ["not_formed", "watch", "triggered", "too_late"]),
+    leftStatus: oneOf(score.leftStatus, "scoreAssessment.leftStatus", ["not_formed", "watch", "provisional", "triggered", "too_late"]),
+    rightStatus: oneOf(score.rightStatus, "scoreAssessment.rightStatus", ["not_formed", "watch", "provisional", "triggered", "too_late"]),
     activeSetup: oneOf(score.activeSetup, "scoreAssessment.activeSetup", ["left", "right", "none"]),
     riskPlan: validateRiskPlan(score.riskPlan, snapshot),
     reasons,
   };
+  if (snapshot.tradePlans) {
+    const selected = snapshot.tradePlans.find(plan => plan.id === score.selectedPlanId);
+    if (score.selectedPlanId != null && !selected) throw new Error("Unknown selectedPlanId");
+    assessment.decisionVersion = DECISION_VERSION;
+    assessment.currentTrend = currentTrend(snapshot);
+    assessment.forecast = forecastEvent(snapshot, selected?.horizon ?? 10);
+    // Prices always come from one frozen candidate, never independently mixed levels.
+    assessment.riskPlan = selected ? { ...selected } : {};
+    if (selected) {
+      assessment.opportunity = { kind: selected.kind, horizon: selected.horizon, score: assessment.finalScore,
+        status: oneOf(score.opportunityStatus ?? (selected.side === "left" ? score.leftStatus : score.rightStatus),
+          "scoreAssessment.opportunityStatus", ["not_formed", "watch", "provisional", "triggered", "too_late", "invalidated"]),
+        plan: { ...selected }, reasons: reasons.map(reason => reason.text) };
+      const opportunityStatus = assessment.opportunity.status === "invalidated" ? "not_formed" : assessment.opportunity.status;
+      if (selected.side === "left") assessment.leftStatus = opportunityStatus;
+      else assessment.rightStatus = opportunityStatus;
+      if (assessment.activeSetup !== "none" && assessment.activeSetup !== selected.side) assessment.activeSetup = "none";
+    }
+  }
   const strategyAdvice = validateStrategyAdvice(result.strategyAdvice, validEvidenceIds);
-  normalizeUnsafeActions(assessment, strategyAdvice, language);
+  const before = JSON.stringify({ assessment, strategyAdvice });
+  const decisionState = () => JSON.stringify({
+    left: assessment.leftStatus, right: assessment.rightStatus,
+    active: assessment.activeSetup, opportunity: assessment.opportunity?.status,
+    strategyAdvice,
+  });
+  const decisionBefore = decisionState();
+  normalizeUnsafeActions(assessment, strategyAdvice, language, snapshot);
+  const normalized = before !== JSON.stringify({ assessment, strategyAdvice });
+  const decisionChanged = decisionBefore !== decisionState();
   validateDecisionConsistency(assessment, strategyAdvice);
 
+  // Once a safety correction changes the decision, old model prose is no longer
+  // authoritative. Replace all free-form sections together, not just a badge.
+  const correctedText = language === "en"
+    ? "Execution consistency checks corrected the proposed decision. The final status and risk plan below take precedence. Model confidence is not a trading win rate."
+    : language === "ja"
+      ? "執行条件の整合性確認により判断を修正しました。以下の最終状態とリスク計画を優先します。モデルの確信度は取引勝率ではありません。"
+      : language === "zh-TW"
+        ? "執行一致性校驗修正了原判斷，以下最終狀態與風險方案為準。模型置信度不等於交易勝率。"
+        : "执行一致性校验修正了原判断，以下最终状态与风险方案为准。模型置信度不等于交易胜率。";
+
+  const correctedReport = decisionChanged ? generateLocalReport({ snapshot,
+    entryAssessment: assessment, strategyAdvice }, language) : undefined;
+  if (decisionChanged) {
+    assessment.confidenceReason = correctedText;
+    // Old reasons may still authorize the rejected action. Retain their grounded
+    // evidence, but regenerate the explanation without the stale recommendation.
+    assessment.reasons = [{ evidenceIds: [], text: correctedText }, ...assessment.reasons.map(reason => ({
+      evidenceIds: reason.evidenceIds,
+      text: reason.evidenceIds.map(id => snapshot.items.find(item => item.id === id))
+        .filter((item): item is EvidenceSnapshot["items"][number] => Boolean(item))
+        .map(item => localEvidenceText(item, language)).join("\n") || correctedText,
+    }))];
+    if (assessment.opportunity) assessment.opportunity.reasons = assessment.reasons.map(reason => reason.text);
+  }
+
   return {
-    overview: visibleText(result.overview, "overview", validEvidenceIds),
-    technicalAnalysis: visibleText(result.technicalAnalysis, "technicalAnalysis", validEvidenceIds),
-    strategyCommentary: visibleText(result.strategyCommentary, "strategyCommentary", validEvidenceIds),
+    normalized,
+    overview: correctedReport ? `${correctedText}\n\n${correctedReport.overview}` : visibleText(result.overview, "overview", validEvidenceIds),
+    technicalAnalysis: correctedReport ? correctedReport.technicalAnalysis : visibleText(result.technicalAnalysis, "technicalAnalysis", validEvidenceIds),
+    strategyCommentary: correctedReport ? correctedReport.recommendation : visibleText(result.strategyCommentary, "strategyCommentary", validEvidenceIds),
     scoreAssessment: assessment,
     strategyAdvice,
   };

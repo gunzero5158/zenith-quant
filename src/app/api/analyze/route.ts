@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createHash, randomUUID } from "node:crypto";
 import YahooFinance from "yahoo-finance2";
 import { Candle, IchimokuResult } from "@/lib/analysis/indicators";
 import { VolumeAnalysisResult } from "@/lib/analysis/volumeForce";
@@ -51,7 +52,7 @@ import { runSequentialProviderChain } from "@/lib/analysis/providerCircuitBreake
 import { getMarketDataPriority, MarketDataProvider } from "@/lib/analysis/marketDataPriority";
 import { canUseMockMarketData, DEFAULT_ANALYSIS_MODE, isAnalysisMode } from "@/lib/analysis/analysisMode";
 import { fetchYahooJsonViaWindows } from "@/lib/analysis/windowsHttpFallback";
-import { buildAiNativeAnalystPrompt } from "@/lib/analysis/aiNativeAnalysisPrompt";
+import { AI_NATIVE_SYSTEM_BOUNDARY, buildAiNativeAnalystPrompt } from "@/lib/analysis/aiNativeAnalysisPrompt";
 import { validateAiAnalysisResult, toLegacyAiScoreDetail } from "@/lib/analysis/aiAnalysisResult";
 import { composeAiNativeReport } from "@/lib/analysis/aiNativeReportComposition";
 import {
@@ -129,6 +130,7 @@ interface CacheEntry {
     volumeAnalysis: VolumeAnalysisResult;
     snapshot: EvidenceSnapshot;
     entryAssessment: EntryAssessment;
+    legacyComparison: EntryAssessment;
     strategyAdvice: StrategyAdvice;
     isMock?: boolean;
     dataSource?: 'yahoo' | 'yahoo-chart' | 'eastmoney' | 'tonghuashun' | 'kabutan' | 'tencent' | 'twelve-data' | 'fmp' | 'provider' | 'mock';
@@ -672,6 +674,7 @@ export async function POST(request: Request) {
           volumeAnalysis: engine.daily.volume,
           snapshot: engine.snapshot,
           entryAssessment: engine.entryAssessment,
+          legacyComparison: engine.legacyComparison,
           strategyAdvice: engine.strategyAdvice,
           isMock,
           dataSource,
@@ -706,6 +709,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: message }, { status: 503 });
     }
 
+    const decisionMetadata = {
+      legacyComparison: techData.legacyComparison,
+      decisionId: randomUUID(),
+      decisionTime: new Date().toISOString(),
+      snapshotId: createHash("sha256").update(JSON.stringify({
+        symbol: cleanSymbol, source: techData.dataSource,
+        daily: techData.dailyCandles, weekly: techData.weeklyCandles,
+        dailyComplete: techData.snapshot.dataQuality.dailyBarComplete,
+        weeklyComplete: techData.snapshot.dataQuality.weeklyBarComplete,
+      })).digest("hex"),
+    };
+
     if (analysisMode === "ai-native") {
 
       try {
@@ -716,7 +731,7 @@ export async function POST(request: Request) {
           language: effectiveLang,
           currencySymbol,
         });
-        const reportText = await generateLLMReport(prompt, llmConfig!);
+        const reportText = await generateLLMReport(prompt, llmConfig!, AI_NATIVE_SYSTEM_BOUNDARY);
         const parsed = parseLLMJsonResponse<unknown>(reportText);
         const aiResult = validateAiAnalysisResult(
           parsed,
@@ -726,6 +741,7 @@ export async function POST(request: Request) {
         const report = composeAiNativeReport(aiResult, effectiveLang);
 
         return NextResponse.json({
+          ...decisionMetadata,
           symbol: cleanSymbol,
           companyName: techData.companyName,
           companyNameEn: techData.companyNameEn,
@@ -780,7 +796,7 @@ export async function POST(request: Request) {
         const readings = resolveJevReadings(readingResponse.answers, bareRequest);
         const jevRequest = withJevReadings(bareRequest, readings);
         const primaryResponse = await requestJevDecision(jevRequest.state, jevRequest.primaryQuestions, jevConfig!);
-        const primaryDecision = resolveJevPrimaryDecision(primaryResponse.answers);
+        const primaryDecision = resolveJevPrimaryDecision(primaryResponse.answers, jevRequest);
         const followUp = buildJevFollowUpRequest(jevRequest, primaryDecision);
         const jevResponse = await requestJevDecision(followUp.state, followUp.questions, jevConfig!);
         const decision = resolveJevDecision(primaryDecision, jevResponse.answers, jevRequest, readings);
@@ -804,6 +820,7 @@ export async function POST(request: Request) {
         const report = composeAiNativeReport(aiResult, effectiveLang);
 
         return NextResponse.json({
+          ...decisionMetadata,
           symbol: cleanSymbol,
           companyName: techData.companyName,
           companyNameEn: techData.companyNameEn,
@@ -959,6 +976,7 @@ export async function POST(request: Request) {
     const responseScore = toLegacyScoreDetail(finalAssessment);
 
     return NextResponse.json({
+      ...decisionMetadata,
       symbol: cleanSymbol,
       companyName: techData.companyName,
       companyNameEn: techData.companyNameEn,

@@ -44,14 +44,14 @@ export function buildEvidenceAnalystPrompt(input: AnalysisPromptInput): string {
     },
   };
   const outputLanguage = targetLanguage(input.language);
-  return `You are a senior quantitative technical analyst. Review the immutable technical facts below for a 5-20 trading-day swing decision.
+  return `You are a senior quantitative technical analyst. Review the immutable technical facts for the selected opportunity and its declared trading-day horizon.
 Output language: ${outputLanguage}.
 Write every user-visible string in that language, including headings, explanations, strategy commentary, score-review reasons, conflicts, and change conditions. Indicator abbreviations such as MACD, KDJ, RSI, EMA, BOLL, ATR, CMF, OBV, and VPVR may remain unchanged.
 
 Do not recalculate MACD, KDJ, RSI, EMA, BOLL, Ichimoku, ATR, Fibonacci, TD Sequential, classical patterns, candlesticks, volume, CMF, OBV, VPVR, Elliott Wave, or Chanlun. Use the supplied event timing and provisional daily/weekly status.
 The 0-5 rule score measures current new-entry attractiveness, not trend strength. Holder, left entry, right add, and exit/stop are separate strategies.
 You may adjust the rule score by at most +/-0.5. A nonzero adjustment must cite existing evidence IDs and cannot exceed hardCap.
-Independently classify the likely 5-20 trading-day price trend as bullish, neutral, or bearish. Use neutral for a range-bound or materially mixed outlook. This outlook is separate from entry attractiveness and score adjustment.
+Independently classify the exact forecast event in ruleAssessment.forecast as bullish, neutral, or bearish: bullish means the close at the declared horizon strictly exceeds upperPrice; bearish means it is strictly below lowerPrice; neutral means between these boundaries inclusive. Current trend is separate background information. A weak weekly trend can coexist with a short rebound; do not mistake rebound confirmation for a medium-term reversal. Explain disagreement with the local opportunity as a risk, not an unannounced change to its executable status.
 Evidence IDs may appear only in scoreReview.reasons[].evidenceIds. They are machine-readable references, not analyst language.
 Never include evidence IDs in overview, technicalAnalysis, strategyCommentary, score-review reason text, conflicts, or change conditions. Refer to indicators and facts in plain language instead.
 
@@ -59,7 +59,7 @@ Writing requirements:
 - Synthesize the evidence into an analyst view. Do not translate or enumerate the raw evidence list.
 - Review every supplied indicator and pattern internally. Omit categories that have no distinctive or actionable information, and combine evidence that supports the same conclusion.
 - Never omit confirmed or recent trigger events such as a golden/death cross, divergence, breakout/breakdown, volume confirmation, active classical pattern, or active candlestick pattern.
-- For every included category, state its current fact or value, its plain-language meaning, and its effect on the 5-20 trading-day decision. Mention event timing and provisional status when they materially change confidence.
+- For every included category, state its current fact or value, its plain-language meaning, and its effect at the declared forecast horizon. Mention event timing and provisional status when they materially change confidence.
 - The overview must contain 2-3 short paragraphs covering the bull/bear view, trend quality, current price position, main opportunity, and main risk. Do not repeat the Rule/AI/Final score breakdown already shown in the interface.
 - The technicalAnalysis must use concise Markdown headings and bullets. Organize only the meaningful findings among trend and multi-timeframe structure; support/resistance, Fibonacci, VPVR and ATR; MACD/KDJ/RSI; volume/CMF/OBV; Ichimoku; classical and candlestick patterns; TD Sequential; Elliott Wave; and Chanlun.
 - The strategyCommentary should add context or change conditions without repeating the supplied four-part holder, left-entry, right-add, and exit/stop strategy verbatim.

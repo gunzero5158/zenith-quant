@@ -15,6 +15,7 @@ import {
 } from "../jevDecision";
 import { buildJevReadingsSection } from "../jevReadingsReport";
 import { buildJevReportPrompt, mergeJevDecisionWithReport } from "../jevReportPrompt";
+import { buildTradePlans } from "../opportunities";
 
 const snapshot: EvidenceSnapshot = {
   version: "2.0",
@@ -145,6 +146,57 @@ function followUpAnswers(overrides: Record<string, unknown> = {}) {
 
 const request = buildJevDecisionRequest({ snapshot, dailyCandles: candles, weeklyCandles: candles });
 
+describe("Jev opportunity contract across the three batches and shared validator", () => {
+  const input = { ...snapshot, tradePlans: buildTradePlans(snapshot).map(plan => ({ ...plan, priceConfirmed: true })),
+    dataQuality: { ...snapshot.dataQuality, dailyBarComplete: true } };
+  const current = buildJevDecisionRequest({ snapshot: input, dailyCandles: candles, weeklyCandles: candles });
+  const rebound = input.tradePlans[0];
+  const primary = () => resolveJevPrimaryDecision(primaryAnswers({ outlook: choice("bearish"),
+    setupStage: choice("left_triggered"), selectedPlan: choice(rebound.id) }), current);
+  const follow = (forecast = "bullish") => ({ entryQuality: { type: "score", score: 3.5, confidence: 0.6 },
+    holderAction: choice("hold"), forecast: choice(forecast, { bullish: 0.6, neutral: 0.3, bearish: 0.1 }) });
+
+  it("asks a whole-plan choice then an exact-horizon forecast without separate stop/target calls", () => {
+    expect(current.primaryQuestions.selectedPlan.type).toBe("choice");
+    const next = buildJevFollowUpRequest(current, primary());
+    expect(Object.keys(next.questions).sort()).toEqual(["entryQuality", "forecast", "holderAction"]);
+    expect(next.questions.forecast.instructions).toContain("5 complete trading days");
+  });
+
+  it("keeps a bearish-background rebound intact through report merge and shared checks", () => {
+    const decision = resolveJevDecision(primary(), follow(), current);
+    expect(decision.activeSetup).toBe("left");
+    expect(decision.outlook).toBe("bullish");
+    expect(decision.forecast?.horizon).toBe(5);
+    const cite = { evidenceIds: ["daily.ema.bullish"], text: "Short rebound while the weekly trend remains weak." };
+    const merged = mergeJevDecisionWithReport(decision, { overview: cite.text, technicalAnalysis: cite.text,
+      strategyCommentary: cite.text, reasons: [cite], strategyTexts: { holder: cite, leftEntry: cite, rightAdd: cite, exitStop: cite } }, "en");
+    const result = validateAiAnalysisResult(merged, input, "en");
+    expect(result.scoreAssessment.activeSetup).toBe("left");
+    expect(result.scoreAssessment.opportunity?.kind).toBe("rebound");
+    expect(result.scoreAssessment.riskPlan.stop).toBe(rebound.stop);
+    expect(result.scoreAssessment.currentTrend?.weekly).toBe("bearish");
+    expect(result.normalized).toBe(false);
+  });
+
+  it("rejects a long action when the forecast for that same horizon is bearish", () => {
+    expect(resolveJevDecision(primary(), follow("bearish"), current).activeSetup).toBe("none");
+  });
+  it("requires a price event even when Jev chooses an executable risk plan", () => {
+    const decision = resolveJevDecision(primary(), follow(), { ...current,
+      candidatePlans: current.candidatePlans?.map(plan => ({ ...plan, priceConfirmed: false })) });
+    expect(decision.activeSetup).toBe("none");
+    expect(decision.leftEntryAction).toBe("wait");
+  });
+
+  it("marks an unfinished daily trigger provisional", () => {
+    const decision = resolveJevDecision(primary(), follow(), { ...current, dailyBarComplete: false });
+    expect(decision.leftStatus).toBe("provisional");
+    expect(decision.leftEntryAction).toBe("wait");
+    expect(decision.activeSetup).toBe("none");
+  });
+});
+
 function decide(primary: Record<string, unknown> = {}, followUp: Record<string, unknown> = {}) {
   return resolveJevDecision(resolveJevPrimaryDecision(primaryAnswers(primary)), followUpAnswers(followUp), request);
 }
@@ -208,7 +260,7 @@ describe("Jev decision request", () => {
     const section = buildJevReadingsSection(readings, snapshot, "zh-CN");
     expect(section).toContain("### Jev 逐项判读");
     expect(section).toContain("- 日线 头肩顶 · 经典形态形成中：**偏空** 80%");
-    expect(section).toContain("- 日线 ATR rising：**中性** 80%");
+    expect(section).toContain("- 日线 ATR上升：**中性** 80%");
     expect(section).toContain("**偏空** 60%");
     expect(section).not.toContain("规则标签");
     expect(section).toContain("偏多 1 项、中性 1 项、偏空 2 项。");
@@ -242,7 +294,7 @@ describe("Jev decision resolution", () => {
       finalScore: 3.5,
       confidence: 0.43,
       setupStage: "right_triggered",
-      leftStatus: "too_late",
+      leftStatus: "not_formed",
       rightStatus: "triggered",
       activeSetup: "right",
       leftEntryAction: "not_applicable",
@@ -259,7 +311,7 @@ describe("Jev decision resolution", () => {
     const stages = ["none", "breakdown", "left_watch", "left_triggered", "range_watch", "rebound_underway", "right_watch", "right_triggered", "extended"];
     for (const stage of stages) {
       const decision = decide({ setupStage: choice(stage) });
-      if (decision.rightStatus === "triggered") expect(decision.leftStatus).toBe("too_late");
+      if (decision.rightStatus === "triggered") expect(decision.leftStatus).toBe("not_formed");
       if (decision.leftStatus === "triggered") expect(decision.rightStatus).toBe("not_formed");
       expect(decision.activeSetup === "left").toBe(decision.leftEntryAction === "probe");
       expect(decision.activeSetup === "right").toBe(decision.rightAddAction === "add_on_retest");
@@ -291,15 +343,15 @@ describe("Jev decision resolution", () => {
     expect(thin.adjustments.join(" ")).toContain("reward-to-risk");
   });
 
-  it("does not keep an executable long entry under a bearish outlook", () => {
+  it("does not veto a rebound merely because the current background is bearish", () => {
     const decision = decide({
       outlook: choice("bearish", { bullish: 0.1, neutral: 0.2, bearish: 0.7 }),
       setupStage: choice("left_triggered"),
     });
-    expect(decision.setupStage).toBe("left_watch");
-    expect(decision.leftStatus).toBe("watch");
-    expect(decision.leftEntryAction).toBe("wait");
-    expect(decision.activeSetup).toBe("none");
+    expect(decision.setupStage).toBe("left_triggered");
+    expect(decision.leftStatus).toBe("triggered");
+    expect(decision.leftEntryAction).toBe("probe");
+    expect(decision.activeSetup).toBe("left");
   });
 
   it("rejects answers outside the declared options", () => {
@@ -320,7 +372,7 @@ describe("Jev decision resolution", () => {
       strategyTexts: { holder: { ...cite, action: "exit" }, leftEntry: cite, rightAdd: cite, exitStop: cite },
     }, "zh-CN");
     const result = validateAiAnalysisResult(merged, snapshot, "zh-CN");
-    expect(result.scoreAssessment).toMatchObject({ outlook: "bullish", finalScore: 3.5, activeSetup: "right", leftStatus: "too_late" });
+    expect(result.scoreAssessment).toMatchObject({ outlook: "bullish", finalScore: 3.5, activeSetup: "right", leftStatus: "not_formed" });
     expect(result.scoreAssessment.riskPlan).toMatchObject({ stop: 95, target: 110, rewardRisk: 2 });
     expect(result.strategyAdvice.holder.action).toBe("hold_protect");
     expect(result.strategyAdvice.holder.text).toBe("说明");

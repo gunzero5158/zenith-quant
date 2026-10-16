@@ -25,15 +25,16 @@ function completedBars(input: DataQualityInput, timestamp: number): {
 
   const dailyBarComplete = !latestDailyDate
     ? false
-    : latestDailyDate !== now.dateKey
+    : latestDailyDate < now.dateKey
       ? true
-      : !weekend && afterClose;
+      : latestDailyDate === now.dateKey && !weekend && afterClose;
 
   const weeklyBarComplete = !latestWeeklyDate
     ? false
-    : latestWeeklyDate !== currentWeek
+    : getWeekStart(latestWeeklyDate) < currentWeek
       ? true
-      : weekend || (now.weekday === "Fri" && afterClose);
+      : getWeekStart(latestWeeklyDate) === currentWeek &&
+        (weekend || (now.weekday === "Fri" && afterClose));
 
   return { dailyBarComplete, weeklyBarComplete };
 }

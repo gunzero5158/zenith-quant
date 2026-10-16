@@ -63,4 +63,23 @@ describe("evidence-based local report", () => {
     expect(japanese).toContain("新規・左側:");
     expect(japanese).not.toContain("持仓");
   });
+  it("includes the selected opportunity, horizon and missing entry conditions", () => {
+    const fixture = reportFixture();
+    const report = generateLocalReport(fixture, "en");
+    expect(report.overview).toContain("trading days");
+    expect(report.overview).toContain("Price confirmation is missing");
+    expect(report.recommendation).toContain("First target");
+  });
+  it("localizes section headings and incomplete-bar warnings", () => {
+    const fixture = reportFixture();
+    fixture.snapshot.dataQuality.warnings = ["当前周K未完成，周线信号为暂定信号"];
+    const english = generateLocalReport(fixture, "en").technicalAnalysis;
+    const japanese = generateLocalReport(fixture, "ja").technicalAnalysis;
+    expect(english).toContain("#### Momentum");
+    expect(english).toContain("weekly signals are provisional");
+    expect(english).not.toContain("动量指标");
+    expect(japanese).toContain("#### モメンタム");
+    expect(japanese).toContain("週足シグナルは暫定");
+    expect(japanese).not.toContain("暂无有效证据");
+  });
 });

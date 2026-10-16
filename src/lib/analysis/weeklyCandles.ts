@@ -35,13 +35,17 @@ export function buildWeeklyCandles(dailyCandles: Candle[]): Candle[] {
 export function mergeCurrentWeekFromDaily(providerWeekly: Candle[], dailyCandles: Candle[]): Candle[] {
   const rebuiltWeeks = buildWeeklyCandles(dailyCandles);
   const currentWeek = rebuiltWeeks.at(-1);
-  if (!currentWeek) return [...providerWeekly];
-
-  const currentWeekKey = toIsoDateKey(currentWeek.date);
-  return [
-    ...providerWeekly.filter((candle) => toIsoDateKey(candle.date) !== currentWeekKey),
-    currentWeek,
-  ].sort((left, right) => toIsoDateKey(left.date).localeCompare(toIsoDateKey(right.date)));
+  // Providers label weekly snapshots by either the first or last session.
+  // Normalize before replacing; summing duplicates would double-count volume.
+  const weeks = new Map<string, Candle>();
+  for (const candle of [...providerWeekly].sort((a, b) =>
+    toIsoDateKey(a.date).localeCompare(toIsoDateKey(b.date)))) {
+    const key = getWeekStart(candle.date);
+    weeks.set(key, { ...candle, date: key });
+  }
+  if (currentWeek) weeks.set(getWeekStart(currentWeek.date), currentWeek);
+  return [...weeks.values()].sort((left, right) =>
+    toIsoDateKey(left.date).localeCompare(toIsoDateKey(right.date)));
 }
 
 export function toIsoDateKey(value: Candle["date"]): string {

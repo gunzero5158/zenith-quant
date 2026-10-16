@@ -52,7 +52,9 @@ describe("AI-native analyst prompt", () => {
     expect(prompt).not.toContain('"scoreCap":3.2');
     expect(prompt).not.toContain('"direction"');
     expect(prompt).toContain('"state":"bullish"');
-    expect(prompt).toContain("leftStatus must be too_late or not_formed");
+    expect(prompt).toContain("A right-side opportunity does not require a preceding left-side opportunity");
+    expect(prompt).toContain("selectedPlanId");
+    expect(prompt).toContain('"forecastEvents"');
     expect(prompt).not.toContain("ruleScore");
     expect(prompt).not.toContain("hardCap");
   });

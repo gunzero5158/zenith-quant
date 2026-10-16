@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EvidenceSnapshot } from "../evidence";
 import { toLegacyAiScoreDetail, validateAiAnalysisResult } from "../aiAnalysisResult";
+import { buildTradePlans } from "../opportunities";
 
 const snapshot: EvidenceSnapshot = {
   version: "2.0",
@@ -152,6 +153,20 @@ describe("AI-native analysis result validation", () => {
     expect(() => validateAiAnalysisResult(value, snapshot)).toThrow(/unknown evidence/i);
   });
 
+  it("preserves the full analysis when only a watch score is capped", () => {
+    const input = { ...snapshot, tradePlans: buildTradePlans(snapshot) };
+    const value = validResult();
+    Object.assign(value.scoreAssessment, { selectedPlanId: input.tradePlans[0].id,
+      opportunityStatus: "watch", leftStatus: "watch", activeSetup: "none", finalScore: 4.5 });
+    value.strategyAdvice.leftEntry.action = "wait";
+    const result = validateAiAnalysisResult(value, input, "en");
+    expect(result.normalized).toBe(true);
+    expect(result.scoreAssessment.finalScore).toBe(3.2);
+    expect(result.overview).toBe(value.overview);
+    expect(result.technicalAnalysis).toBe(value.technicalAnalysis);
+    expect(result.strategyCommentary).toBe(value.strategyCommentary);
+  });
+
   it("rejects invalid strategy actions instead of silently replacing them", () => {
     const value = validResult();
     value.strategyAdvice.holder.action = "buy_more";
@@ -185,7 +200,15 @@ describe("AI-native analysis result validation", () => {
     expect(result.strategyAdvice.leftEntry.action).toBe("wait");
     expect(result.strategyAdvice.leftEntry.text).toMatch(/No validated stop-target pair/);
     expect(result.scoreAssessment.finalScore).toBe(3.75);
-    expect(result.overview).toBe(value.overview);
+    expect(result.normalized).toBe(true);
+    expect(result.overview).not.toBe(value.overview);
+    expect(result.technicalAnalysis).not.toBe(value.technicalAnalysis);
+    expect(result.strategyCommentary).not.toBe(value.strategyCommentary);
+    expect(result.technicalAnalysis).toContain("#### Momentum");
+    expect(result.technicalAnalysis).toContain("MACD");
+    expect(result.scoreAssessment.confidenceReason).not.toBe(value.scoreAssessment.confidenceReason);
+    expect(result.scoreAssessment.reasons[0].text).toContain("consistency checks");
+    expect(result.strategyCommentary).toContain("No validated stop-target pair");
   });
 
   it("downgrades hold protection when no grounded stop is available", () => {
@@ -224,7 +247,7 @@ describe("AI-native analysis result validation", () => {
     expect(result.strategyAdvice.rightAdd.action).toBe("wait_breakout");
   });
 
-  it("does not leave the left side watching once the right side is confirmed", () => {
+  it("does not invent a missed left-side entry when the right side confirms", () => {
     const value = validResult();
     value.scoreAssessment.leftStatus = "watch";
     value.scoreAssessment.rightStatus = "triggered";
@@ -234,17 +257,42 @@ describe("AI-native analysis result validation", () => {
 
     const result = validateAiAnalysisResult(value, snapshot);
     expect(result.scoreAssessment.rightStatus).toBe("triggered");
-    expect(result.scoreAssessment.leftStatus).toBe("too_late");
+    expect(result.scoreAssessment.leftStatus).toBe("watch");
   });
 
   it("does not keep an executable long entry under a bearish outlook", () => {
     const value = validResult();
     value.scoreAssessment.outlook = "bearish";
 
-    const result = validateAiAnalysisResult(value, snapshot);
+    const input = { ...snapshot, tradePlans: buildTradePlans(snapshot) };
+    const result = validateAiAnalysisResult({ ...value, scoreAssessment: { ...value.scoreAssessment,
+      selectedPlanId: input.tradePlans[0].id } }, input);
     expect(result.scoreAssessment.activeSetup).toBe("none");
     expect(result.scoreAssessment.leftStatus).toBe("watch");
     expect(result.strategyAdvice.leftEntry.action).toBe("wait");
+  });
+
+  it("preserves a rebound with a bearish weekly trend and a constructive short forecast", () => {
+    const input = { ...snapshot, weeklyRegime: "bearish" as const, tradePlans: buildTradePlans(snapshot) };
+    input.tradePlans[0].priceConfirmed = true; // This fixture represents an already confirmed price event.
+    const value = validResult();
+    const result = validateAiAnalysisResult({ ...value, scoreAssessment: { ...value.scoreAssessment,
+      selectedPlanId: input.tradePlans[0].id } }, input);
+    expect(result.scoreAssessment.activeSetup).toBe("left");
+    expect(result.scoreAssessment.currentTrend?.weekly).toBe("bearish");
+    expect(result.scoreAssessment.forecast?.horizon).toBe(5);
+    expect(result.scoreAssessment.riskPlan.stop).toBe(input.tradePlans[0].stop);
+    expect(result.normalized).toBe(false);
+  });
+
+  it("does not label missing price confirmation as a missing stop-target pair", () => {
+    const input = { ...snapshot, tradePlans: buildTradePlans(snapshot) };
+    const value = validResult();
+    const result = validateAiAnalysisResult({ ...value, scoreAssessment: { ...value.scoreAssessment,
+      selectedPlanId: input.tradePlans[0].id } }, input, "en");
+    expect(result.scoreAssessment.activeSetup).toBe("none");
+    expect(result.strategyAdvice.leftEntry.text).toContain("Price confirmation is missing");
+    expect(result.strategyAdvice.leftEntry.text).not.toContain("No validated stop-target pair");
   });
 
   it("removes internal evidence IDs from every user-visible string", () => {

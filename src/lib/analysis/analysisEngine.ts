@@ -1,7 +1,7 @@
 import { analyzeChanLun } from "./chanlun";
 import { detectCandlestickPatterns } from "./candlestickPatterns";
 import { buildDataQuality } from "./dataQuality";
-import { buildEvidenceSnapshot, TechnicalFrameEvidence } from "./evidenceBuilder";
+import { buildEvidenceSnapshot, buildLegacyComparisonSnapshot, EvidenceBuilderInput, TechnicalFrameEvidence } from "./evidenceBuilder";
 import { generateLocalReport, StructuredReport } from "./fallbackReport";
 import {
   calculateATR,
@@ -14,7 +14,7 @@ import {
   Candle,
 } from "./indicators";
 import { analyzePatterns, calculateTDSequential } from "./patterns";
-import { calculateEntryAssessment, EntryAssessment, ScoreDetail, toLegacyScoreDetail } from "./scoring";
+import { calculateEntryAssessment, calculateLegacyEntryAssessment, EntryAssessment, ScoreDetail, toLegacyScoreDetail } from "./scoring";
 import { buildStrategyAdvice, StrategyAdvice } from "./strategyAdvice";
 import { calculateSupportResistance } from "./supportResistance";
 import {
@@ -30,6 +30,7 @@ import { analyzePriceVolume } from "./volumeForce";
 import { analyzeWaveTheory } from "./waveTheory";
 import { mergeCurrentWeekFromDaily, toIsoDateKey } from "./weeklyCandles";
 import { EvidenceSnapshot } from "./evidence";
+import { buildPriceActionFacts, buildTradePlans, forecastEvent } from "./opportunities";
 
 export interface AnalysisEngineInput {
   symbol: string;
@@ -60,6 +61,7 @@ export interface AnalysisEngineResult {
   weekly: CalculatedFrame;
   snapshot: EvidenceSnapshot;
   entryAssessment: EntryAssessment;
+  legacyComparison: EntryAssessment;
   legacyScore: ScoreDetail;
   strategyAdvice: StrategyAdvice;
   localReport: StructuredReport;
@@ -159,7 +161,15 @@ export function runAnalysisEngine(input: AnalysisEngineInput): AnalysisEngineRes
     { ema20: daily.ema20 }
   );
 
-  const snapshot = buildEvidenceSnapshot({
+  // Event anchors must be calculated without the bar being tested.
+  const priorIndex = dailyCandles.length - 2;
+  const priorLevels = priorIndex >= 0 ? calculateSupportResistance(
+    dailyCandles.slice(0, -1), dailyCandles[priorIndex].close,
+    daily.ema20[priorIndex], daily.ema60[priorIndex], daily.boll.upper[priorIndex], daily.boll.lower[priorIndex],
+  ).typedLevels ?? [] : [];
+  const priceAction = buildPriceActionFacts(dailyCandles, priorLevels, latestFinite(daily.atr), dataQuality.dailyBarComplete);
+  const evidenceInput: EvidenceBuilderInput = {
+    priceAction,
     symbol: input.symbol,
     price,
     dataQuality,
@@ -183,11 +193,39 @@ export function runAnalysisEngine(input: AnalysisEngineInput): AnalysisEngineRes
       state: wave.currentWave,
       direction: wave.waveScoreContribution > 0 ? "bullish" : wave.waveScoreContribution < 0 ? "bearish" : "neutral",
       description: wave.waveDescription,
+      points: wave.wavePoints.map(point => ({ price: point.price, date: dailyCandles[point.index].date })),
     },
     volumeProfile: supportResistance.volumeProfile,
     levels: supportResistance.typedLevels ?? [],
-  });
+  };
+  const snapshot = buildEvidenceSnapshot(evidenceInput);
+  snapshot.tradePlans = buildTradePlans(snapshot, dailyCandles);
   const entryAssessment = calculateEntryAssessment(snapshot);
+  const legacySnapshot = buildLegacyComparisonSnapshot(evidenceInput);
+  const legacyComparison = calculateLegacyEntryAssessment(legacySnapshot);
+  legacyComparison.decisionVersion = "rules-0.6.0-paired";
+  // The evaluation horizon is matched for this experiment, not an old forecast.
+  legacyComparison.forecast = forecastEvent(snapshot, entryAssessment.forecast!.horizon);
+  const oldSide = legacyComparison.activeSetup === "none"
+    ? legacyComparison.pathScores.left >= legacyComparison.pathScores.right ? "left" : "right"
+    : legacyComparison.activeSetup;
+  const oldKind = oldSide === "right" ? "breakout" : legacySnapshot.dailyPhase === "pullback" ? "pullback" : "rebound";
+  const oldRisk = legacyComparison.riskPlan;
+  legacyComparison.opportunity = {
+    kind: oldKind, horizon: legacyComparison.forecast.horizon, score: legacyComparison.finalScore,
+    status: oldSide === "left" ? legacyComparison.leftStatus : legacyComparison.rightStatus,
+    reasons: legacyComparison.reasons,
+    plan: {
+      id: `legacy:${input.symbol}:${dataQuality.latestDailyDate}`, kind: oldKind, side: oldSide,
+      horizon: legacyComparison.forecast.horizon, generatedAt: input.asOf,
+      anchorKnownAt: dataQuality.latestDailyDate ?? input.asOf, entry: price,
+      priceConfirmed: legacyComparison.activeSetup !== "none", ...oldRisk,
+      stopBasis: "structure", stopTrigger: legacySnapshot.dailyPhase === "breakdown" ? "intraday" : "close",
+      minimumStopDistance: 0,
+      maxEntry: oldRisk.stop !== undefined && oldRisk.target !== undefined ? (oldRisk.target + 1.2 * oldRisk.stop) / 2.2 : price,
+      expiresAfterBars: legacyComparison.forecast.horizon, evidenceIds: [],
+    },
+  };
   const legacyScore = toLegacyScoreDetail(entryAssessment);
   const strategyAdvice = buildStrategyAdvice(snapshot, entryAssessment, input.language);
   const localReport = generateLocalReport({ snapshot, entryAssessment, strategyAdvice }, input.language ?? "zh-CN");
@@ -198,6 +236,7 @@ export function runAnalysisEngine(input: AnalysisEngineInput): AnalysisEngineRes
     weekly,
     snapshot,
     entryAssessment,
+    legacyComparison,
     legacyScore,
     strategyAdvice,
     localReport,

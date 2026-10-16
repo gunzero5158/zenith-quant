@@ -2,6 +2,7 @@ import { DataQuality, ScenarioStatus } from "./evidence";
 import { EntryAssessment } from "./scoring";
 import { AiEntryAssessment } from "./aiAnalysisResult";
 import type { JevDecision, JevSetupStage } from "./jevDecision";
+import { opportunityPresentation } from "./opportunityPresentation";
 
 type SupportedLanguage = "zh-CN" | "zh-TW" | "en" | "ja";
 
@@ -52,6 +53,7 @@ const LABELS: Record<SupportedLanguage, PresentationLabels> = {
 };
 
 export interface EntryScorePresentation {
+  opportunity?: ReturnType<typeof opportunityPresentation>;
   finalLabel: string;
   leftLabel: string;
   rightLabel: string;
@@ -79,6 +81,7 @@ export function buildEntryScorePresentation(
 ): EntryScorePresentation {
   const normalized = language === "zh-TW" || language === "en" || language === "ja" ? language : "zh-CN";
   const labels = LABELS[normalized];
+  const opportunity = assessment.decisionVersion ? opportunityPresentation(assessment, normalized) : undefined;
   const statusParts: string[] = [];
   if (dataQuality) {
     statusParts.push(formatDataAsOf(dataQuality.asOf));
@@ -87,7 +90,8 @@ export function buildEntryScorePresentation(
   }
   if (isAiEntryAssessment(assessment)) {
     return {
-      finalLabel: labels.ai,
+      opportunity,
+      finalLabel: opportunity?.label ?? labels.ai,
       leftLabel: labels.left,
       rightLabel: labels.right,
       finalText: assessment.finalScore.toFixed(1),
@@ -103,7 +107,8 @@ export function buildEntryScorePresentation(
   }
 
   return {
-    finalLabel: labels.final,
+    opportunity,
+    finalLabel: opportunity?.label ?? labels.final,
     leftLabel: labels.left,
     rightLabel: labels.right,
     finalText: assessment.finalScore.toFixed(1),

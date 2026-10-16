@@ -4,7 +4,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Download, RefreshCw, Trash2, Upload, X } from "lucide-react";
 import type { EffectiveLanguage } from "@/lib/i18n/translations";
 import { validationLabels } from "@/lib/validation/labels";
-import { evaluateOutcome, GroupStat, jevCalibration, OutcomeCandle, summarizeTrack } from "@/lib/validation/outcomes";
+import { evaluateOutcome, GroupStat, jevCalibration, OutcomeCandle, summarizeGroups, validationMarket } from "@/lib/validation/outcomes";
+import { DEFAULT_COSTS, withDailyTradability } from "@/lib/validation/executionPolicy";
+import { executionLabels } from "@/lib/validation/executionLabels";
 import {
   isValidationRecord,
   loadValidationRecords,
@@ -12,7 +14,6 @@ import {
   saveValidationRecords,
   VALIDATION_HORIZONS,
   ValidationRecord,
-  ValidationTrack,
 } from "@/lib/validation/records";
 
 interface ValidationPanelProps {
@@ -22,7 +23,6 @@ interface ValidationPanelProps {
   onClose: () => void;
 }
 
-const TRACKS: ValidationTrack[] = ["rule", "rule-ai", "ai-native", "jev-ai"];
 const RECENT_LIMIT = 100;
 // Outcomes only change when a new daily bar closes, so a recent evaluation is reused.
 const REEVALUATE_AFTER_MS = 6 * 60 * 60 * 1000;
@@ -34,6 +34,8 @@ function needsEvaluation(record: ValidationRecord, now: number): boolean {
 
 export default function ValidationPanel({ language, upColor, downColor, onClose }: ValidationPanelProps) {
   const t = validationLabels(language);
+  const e = executionLabels(language);
+  const [costs, setCosts] = useState(DEFAULT_COSTS);
   const [records, setRecords] = useState<ValidationRecord[]>(() => loadValidationRecords());
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [notice, setNotice] = useState("");
@@ -48,7 +50,7 @@ export default function ValidationPanel({ language, upColor, downColor, onClose 
   const refreshOutcomes = useCallback(async (force: boolean) => {
     const now = Date.now();
     const current = loadValidationRecords();
-    const symbols = [...new Set(current.filter((record) => (force ? !record.outcome?.complete : needsEvaluation(record, now))).map((record) => record.symbol))];
+    const symbols = [...new Set(current.filter((record) => force || needsEvaluation(record, now)).map((record) => record.symbol))];
     if (symbols.length === 0) return;
 
     setNotice("");
@@ -64,8 +66,15 @@ export default function ValidationPanel({ language, upColor, downColor, onClose 
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ symbol, language, analysisMode: "rule-ai", useFallback: true }),
         });
-        const data = await res.json() as { dailyCandles?: OutcomeCandle[]; isMock?: boolean };
-        if (res.ok && !data.isMock && Array.isArray(data.dailyCandles)) candlesBySymbol.set(symbol, data.dailyCandles);
+        const data = await res.json() as { dailyCandles?: Array<OutcomeCandle & { volume?: number }>; isMock?: boolean;
+          dataQuality?: { latestDailyDate?: string; dailyBarComplete?: boolean } };
+        if (res.ok && !data.isMock && Array.isArray(data.dailyCandles)) {
+          const lastDate = data.dataQuality?.latestDailyDate?.slice(0, 10);
+          candlesBySymbol.set(symbol, data.dailyCandles.map(candle => ({ ...withDailyTradability(candle),
+            complete: Boolean(lastDate && (String(candle.date).slice(0, 10) < lastDate
+              || (String(candle.date).slice(0, 10) === lastDate && data.dataQuality?.dailyBarComplete === true))),
+          })));
+        }
         else failed += 1;
       } catch {
         failed += 1;
@@ -76,12 +85,12 @@ export default function ValidationPanel({ language, upColor, downColor, onClose 
     // Reload before writing so an analysis logged during the refresh is not overwritten.
     persist(loadValidationRecords().map((record) => {
       const candles = candlesBySymbol.get(record.symbol);
-      if (!candles || record.outcome?.complete) return record;
-      return { ...record, outcome: evaluateOutcome(record, candles, Date.now()) ?? record.outcome };
+      if (!candles || (!force && record.outcome?.complete)) return record;
+      return { ...record, outcome: evaluateOutcome(record, candles, Date.now(), costs) ?? record.outcome };
     }));
     setProgress(null);
     if (failed > 0) setNotice(validationLabels(language).refreshFailed(failed));
-  }, [language, persist]);
+  }, [language, persist, costs]);
 
   useEffect(() => {
     if (autoRefreshedRef.current) return;
@@ -89,8 +98,12 @@ export default function ValidationPanel({ language, upColor, downColor, onClose 
     void refreshOutcomes(false);
   }, [refreshOutcomes]);
 
-  const stats = useMemo(() => TRACKS.map((track) => summarizeTrack(track, records)), [records]);
-  const calibration = useMemo(() => jevCalibration(records), [records]);
+  const stats = useMemo(() => summarizeGroups(records), [records]);
+  const calibration = useMemo(() => stats.filter(stat => stat.track === "jev-ai").map(stat => ({
+    label: `${stat.version} · ${stat.model ?? "Jev"} · ${stat.market} · ${stat.horizon}d`,
+    buckets: jevCalibration(records.filter(record => record.trackVersion === stat.version && record.model === stat.model
+      && record.forecast?.horizon === stat.horizon && validationMarket(record.symbol) === stat.market), stat.version),
+  })), [records, stats]);
 
   const exportRecords = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(records, null, 1)], { type: "application/json" }));
@@ -107,7 +120,7 @@ export default function ValidationPanel({ language, upColor, downColor, onClose 
       const parsed: unknown = JSON.parse(await file.text());
       if (!Array.isArray(parsed) || !parsed.every(isValidationRecord)) throw new Error("invalid");
       // Existing records win so an import never discards a newer local outcome.
-      persist(mergeValidationRecords(parsed, loadValidationRecords()));
+      persist(mergeValidationRecords(loadValidationRecords(), parsed));
       setNotice("");
     } catch {
       setNotice(t.importFailed);
@@ -135,6 +148,19 @@ export default function ValidationPanel({ language, upColor, downColor, onClose 
           <button type="button" aria-label={t.close} onClick={onClose} style={styles.iconBtn}><X size={18} /></button>
         </div>
         <p style={styles.intro}>{t.intro}</p>
+        <details style={{ marginBottom: 12, color: "#d1d4dc" }}>
+          <summary style={{ cursor: "pointer" }}>{e.title} · {e.detail}</summary>
+          <p style={styles.note}>{e.note}</p>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            <label>{e.costs} <input type="number" min={0} max={1000} step={1} value={costs.roundTripCostBps}
+              onChange={event => setCosts(previous => ({ ...previous, roundTripCostBps: Math.max(0, Math.min(1000, Number(event.target.value) || 0)) }))}
+              style={{ width: 80, padding: 8 }} /></label>
+            <label>{e.slippage} <input type="number" min={0} max={1000} step={1} value={costs.slippageBpsPerSide}
+              onChange={event => setCosts(previous => ({ ...previous, slippageBpsPerSide: Math.max(0, Math.min(1000, Number(event.target.value) || 0)) }))}
+              style={{ width: 80, padding: 8 }} /></label>
+          </div>
+          <p style={styles.note}>{e.updated}</p>
+        </details>
 
         <div style={styles.toolbar}>
           <button type="button" onClick={() => void refreshOutcomes(true)} disabled={progress !== null || records.length === 0} style={styles.primaryBtn}>
@@ -172,8 +198,8 @@ export default function ValidationPanel({ language, upColor, downColor, onClose 
                 </thead>
                 <tbody>
                   {stats.map((stat) => (
-                    <tr key={stat.track}>
-                      <td style={styles.tdName}>{t.tracks[stat.track]}</td>
+                    <tr key={`${stat.track}|${stat.version}|${stat.model}|${stat.horizon}|${stat.market}`}>
+                      <td style={styles.tdName}>{t.tracks[stat.track]}<br /><small>{stat.version} · {stat.model ?? "rule"} · {stat.market} · {stat.horizon}d</small></td>
                       <td style={styles.td}>{stat.total}</td>
                       <td style={styles.td}>{stat.evaluated}</td>
                       <td style={styles.td}>{rate(stat.outlookHitRate)} <span style={styles.muted}>({stat.outlookJudged})</span></td>
@@ -190,6 +216,30 @@ export default function ValidationPanel({ language, upColor, downColor, onClose 
             </div>
             <p style={styles.note}>{t.summaryNote} {t.smallSample}</p>
 
+            <h4 style={styles.sectionTitle}>{e.title}</h4>
+            <div style={styles.tableWrap}>
+              <table style={styles.table}>
+                <thead><tr>{[t.track, e.triggerRate, e.count, e.netR, e.netReturn, e.sensitivity,
+                  e.status.not_triggered, e.status.open, e.status.timeout, e.status.skipped, e.status.ambiguous, e.status.unverifiable]
+                  .map(label => <th key={label} style={styles.th}>{label}</th>)}</tr></thead>
+                <tbody>{stats.map(stat => <tr key={`${stat.track}|${stat.version}|${stat.model}|${stat.horizon}|${stat.market}`}>
+                  <td style={styles.tdName}>{t.tracks[stat.track]}<br /><small>{stat.version} · {stat.model ?? "rule"} · {stat.market} · {stat.horizon}d</small></td>
+                  <td style={styles.td}>{rate(stat.execution.triggerRate)}</td>
+                  <td style={styles.td}>{stat.execution.resolved}</td>
+                  <td style={styles.td}>{stat.execution.averageNetR?.toFixed(2) ?? "—"}</td>
+                  <td style={styles.td}>{signed(stat.execution.averageNetReturnPct)}</td>
+                  <td style={styles.td}>{stat.execution.zeroCostR?.toFixed(2) ?? "—"} / {stat.execution.doubledCostR?.toFixed(2) ?? "—"}</td>
+                  <td style={styles.td}>{stat.execution.not_triggered}</td>
+                  <td style={styles.td}>{stat.plan.open}</td>
+                  <td style={styles.td}>{stat.plan.timeout}</td>
+                  <td style={styles.td}>{stat.execution.skipped}</td>
+                  <td style={styles.td}>{stat.execution.ambiguous}</td>
+                  <td style={styles.td}>{stat.execution.unverifiable}</td>
+                </tr>)}</tbody>
+              </table>
+            </div>
+            <p style={styles.note}>{e.note}</p>
+
             <h4 style={styles.sectionTitle}>{t.calibrationTitle}</h4>
             <div style={styles.tableWrap}>
               <table style={styles.table}>
@@ -197,14 +247,14 @@ export default function ValidationPanel({ language, upColor, downColor, onClose 
                   <tr>{[t.statedBucket, t.samples, t.statedAverage, t.actualUp].map((heading) => <th key={heading} style={styles.th}>{heading}</th>)}</tr>
                 </thead>
                 <tbody>
-                  {calibration.map((bucket) => (
-                    <tr key={bucket.label}>
-                      <td style={styles.tdName}>{bucket.label}</td>
+                  {calibration.flatMap(group => group.buckets.map((bucket) => (
+                    <tr key={`${group.label}|${bucket.label}`}>
+                      <td style={styles.tdName}>{group.label}<br />{bucket.label}</td>
                       <td style={styles.td}>{bucket.count}</td>
                       <td style={styles.td}>{rate(bucket.statedProbability)}</td>
                       <td style={styles.td}>{rate(bucket.actualUpRate)}</td>
                     </tr>
-                  ))}
+                  )))}
                 </tbody>
               </table>
             </div>
@@ -236,7 +286,11 @@ export default function ValidationPanel({ language, upColor, downColor, onClose 
                           {typeof record.outcome?.returns[horizon] === "number" ? signed(record.outcome.returns[horizon]) : <span style={styles.muted}>{t.pending}</span>}
                         </td>
                       ))}
-                      <td style={styles.td}>{record.outcome?.plan ? t.planResults[record.outcome.plan] : "—"}</td>
+                      <td style={styles.td} title={record.outcome?.execution?.reason}>
+                        {record.outcome?.execution ? e.status[record.outcome.execution.status]
+                          : record.outcome?.plan ? t.planResults[record.outcome.plan] : "—"}
+                        {record.outcome?.execution?.netR !== undefined && <small> {record.outcome.execution.netR.toFixed(2)}R</small>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

@@ -1,3 +1,5 @@
+import type { CandidateTradePlan, PriceActionFacts } from "./opportunities";
+
 export const SIGNAL_FAMILIES = [
   "ema",
   "boll",
@@ -70,6 +72,7 @@ export type TradeLevelSource =
   | "vpvr"
   | "fibonacci"
   | "pattern"
+  | "price_action"
   | "atr";
 
 export interface TradeLevel {
@@ -90,6 +93,8 @@ export interface EvidenceSnapshot {
   levels: TradeLevel[];
   weeklyRegime: "bullish" | "neutral" | "bearish";
   dailyPhase: "base" | "pullback" | "breakout" | "extended" | "breakdown" | "range";
+  priceAction?: PriceActionFacts;
+  tradePlans?: CandidateTradePlan[];
 }
 
 const score = (

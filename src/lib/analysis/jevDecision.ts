@@ -1,13 +1,15 @@
 import type { Candle } from "./indicators";
 import type { EvidenceDirection, EvidenceSnapshot, ScenarioStatus, SignalFamily, Timeframe, TradeLevel } from "./evidence";
 import type { AiMarketOutlook, AiStrategyAdvice } from "./aiAnalysisResult";
+import { forecastEvent, planIsExecutable } from "./opportunities";
+import type { CandidateTradePlan, ForecastEvent } from "./opportunities";
 
 // Jev (TypeSafe System One) answers typed questions with calibrated
 // probabilities instead of prose. It is weak at arithmetic and degrades with
 // irrelevant context, so the state below carries named categories computed in
 // code, and every price is offered as an enumerated candidate, never generated.
 
-export type JevSetupStatus = Exclude<ScenarioStatus, "provisional">;
+export type JevSetupStatus = ScenarioStatus;
 type HolderAction = AiStrategyAdvice["holder"]["action"];
 type LeftEntryAction = AiStrategyAdvice["leftEntry"]["action"];
 type RightAddAction = AiStrategyAdvice["rightAdd"]["action"];
@@ -72,6 +74,10 @@ export interface JevDisagreement {
 }
 
 export interface JevDecisionRequest {
+  candidatePlans?: CandidateTradePlan[];
+  forecastEvents?: ForecastEvent[];
+  dailyBarComplete?: boolean;
+  dailySamples?: number;
   price: number;
   state: Record<string, unknown>;
   signals: JevSignalRef[];
@@ -93,6 +99,7 @@ export type JevSetupStage =
   | "extended";
 
 export interface JevPrimaryDecision {
+  selectedPlanId?: string;
   outlook: AiMarketOutlook;
   outlookProbabilities: Record<AiMarketOutlook, number>;
   confidence: number;
@@ -102,6 +109,8 @@ export interface JevPrimaryDecision {
 }
 
 export interface JevDecision {
+  selectedPlanId?: string;
+  forecast?: ForecastEvent;
   outlook: AiMarketOutlook;
   outlookProbabilities: Record<AiMarketOutlook, number>;
   finalScore: number;
@@ -140,15 +149,14 @@ interface SetupStageDefinition {
   withoutEntry?: JevSetupStage;
 }
 
-// Left and right status are one judgment, not two: a trade develops from the
-// left-side chance to the right-side chance, so each stage fixes a coherent pair.
+// A stage describes the selected opportunity, not a mandatory left-to-right history.
 const SETUP_STAGES: Record<JevSetupStage, SetupStageDefinition> = {
   none: {
     description: "No setup: price is not near meaningful support, shows no reversal signals, and is not near a breakout.",
     left: "not_formed", right: "not_formed", leftAction: "not_applicable", rightAction: "wait_breakout",
   },
   breakdown: {
-    description: "Breakdown: support has failed or the structure is clearly bearish; no long setup exists until a new base forms.",
+    description: "Breakdown: a previously identified support or invalidation level has actually failed and no recovery is confirmed. Bearish moving averages alone do not establish this event.",
     left: "not_formed", right: "not_formed", leftAction: "not_applicable", rightAction: "wait_breakout",
   },
   left_watch: {
@@ -169,12 +177,12 @@ const SETUP_STAGES: Record<JevSetupStage, SetupStageDefinition> = {
     left: "too_late", right: "not_formed", leftAction: "not_applicable", rightAction: "wait_breakout",
   },
   right_watch: {
-    description: "Right-side developing: price is pressing against a breakout level or the trend is improving, but the breakout or its retest is not confirmed. The dip entry has passed.",
-    left: "too_late", right: "watch", leftAction: "not_applicable", rightAction: "wait_breakout",
+    description: "Right-side developing: price is pressing against a specific breakout level, but the breakout or its retest is not confirmed. No prior left-side opportunity is required.",
+    left: "not_formed", right: "watch", leftAction: "not_applicable", rightAction: "wait_breakout",
   },
   right_triggered: {
-    description: "Right-side executable: the breakout or trend continuation is confirmed and price is still close enough to the breakout area to enter. The dip entry has passed.",
-    left: "too_late", right: "triggered", leftAction: "not_applicable", rightAction: "add_on_retest",
+    description: "Right-side executable: the breakout or trend continuation is confirmed and price is still close enough to the breakout area to enter. No prior left-side opportunity is required.",
+    left: "not_formed", right: "triggered", leftAction: "not_applicable", rightAction: "add_on_retest",
     withoutEntry: "right_watch",
   },
   extended: {
@@ -345,6 +353,9 @@ export function buildJevDecisionRequest(input: {
     task: "Technical-analysis evidence for one stock, used to judge a long-only swing trade over the next 5-20 trading days.",
     symbol: snapshot.symbol,
     currentPrice: snapshot.price,
+    candidatePlans: snapshot.tradePlans,
+    forecastEvents: [forecastEvent(snapshot, 5), forecastEvent(snapshot, 10)],
+    priceEvents: snapshot.priceAction,
     priceAction: {
       last5DailyBars: priceAction(dailyCandles, 5, 6) ?? "unknown",
       last20DailyBars: priceAction(dailyCandles, 20, 12) ?? "unknown",
@@ -364,7 +375,7 @@ export function buildJevDecisionRequest(input: {
   const primaryQuestions: Record<string, JevQuestion> = {
     outlook: {
       type: "choice",
-      instructions: "Based on `evidence` (each item carries its own `reading`) and `priceAction`, what is the most likely price direction of this stock over the next 5-20 trading days?",
+      instructions: "Describe the current trend background from evidence and priceAction. This is NOT the future return forecast and does not veto a countertrend rebound.",
       criteria: {
         bullish: "Evidence across trend, momentum, volume and structure favors higher prices.",
         neutral: "Evidence is mixed or range-bound; there is no clear directional edge.",
@@ -373,14 +384,24 @@ export function buildJevDecisionRequest(input: {
     },
     setupStage: {
       type: "choice",
-      instructions: "A long swing trade develops in order: first a left-side chance (buying weakness near support before the reversal is confirmed), later a right-side chance (buying strength after a breakout or trend confirmation). Which single stage describes this stock right now?",
+      instructions: "Assess rebound, trend pullback and breakout opportunities independently. Which stage describes the best current opportunity? Weak weekly trend alone does not forbid a short rebound; oversold readings and high disagreement alone do not confirm one. Require price improvement and an independent supporting change for an executable entry. Do not invent a previous left-side opportunity to justify a right-side one.",
       criteria: Object.fromEntries(
         (Object.keys(SETUP_STAGES) as JevSetupStage[]).map((stage) => [stage, SETUP_STAGES[stage].description])
       ),
     },
   };
 
-  return { price: snapshot.price, state, signals, readingQuestions, primaryQuestions, stopCandidates, targetCandidates };
+  if (snapshot.tradePlans) primaryQuestions.selectedPlan = {
+    type: "choice",
+    instructions: "Choose the complete candidate plan that best represents the opportunity you are assessing, including a watch candidate if not yet executable. Do not mix stop and target across candidates. Choose none if no opportunity is relevant.",
+    criteria: { ...Object.fromEntries(snapshot.tradePlans.map(plan => [plan.id,
+      `${plan.kind}: ${plan.horizon} trading days; entry ${plan.entry}, stop ${plan.stop ?? "missing"} (${plan.stopBasis}), first target ${plan.target ?? "missing"}, reward/risk ${plan.rewardRisk?.toFixed(2) ?? "unknown"}, price confirmation ${plan.priceConfirmed}.`])),
+      none: "No relevant opportunity." },
+  };
+
+  return { price: snapshot.price, state, signals, readingQuestions, primaryQuestions, stopCandidates, targetCandidates,
+    candidatePlans: snapshot.tradePlans, forecastEvents: [forecastEvent(snapshot, 5), forecastEvent(snapshot, 10)],
+    dailyBarComplete: snapshot.dataQuality.dailyBarComplete, dailySamples: snapshot.dataQuality.dailySamples };
 }
 
 export function resolveJevReadings(
@@ -429,9 +450,13 @@ export function buildJevFollowUpRequest(
   primary: JevPrimaryDecision
 ): { state: Record<string, unknown>; questions: Record<string, JevQuestion> } {
   const pct = (value: number) => `${Math.round(value * 100)}%`;
+  const selected = request.candidatePlans?.find(plan => plan.id === primary.selectedPlanId);
+  const forecast = request.forecastEvents?.find(event => event.horizon === (selected?.horizon ?? 10));
   const state = {
     ...request.state,
     decisionsSoFar: {
+      selectedPlan: selected ?? "none",
+      forecastEvent: forecast,
       outlook: `${primary.outlook} (probabilities: bullish ${pct(primary.outlookProbabilities.bullish)}, neutral ${pct(primary.outlookProbabilities.neutral)}, bearish ${pct(primary.outlookProbabilities.bearish)})`,
       setupStage: SETUP_STAGES[primary.setupStage].description,
     },
@@ -443,12 +468,12 @@ export function buildJevFollowUpRequest(
       type: "score",
       instructions: `How attractive is opening a new long position in this stock right now? Trend direction and entry quality are different judgments: a strong uptrend can still be a poor entry if price is extended. ${consistent}`,
       criteria: [
-        "No defensible long case: evidence is clearly bearish or the structure is broken.",
+        "No defensible opportunity: the selected setup is absent or invalidated.",
         "Poor entry: mostly negative evidence, or price is badly located with no usable support.",
         "Below average: some constructive evidence but outweighed by risks or a missing setup.",
         "No clear edge to slightly favorable: balanced evidence, a setup is forming but unconfirmed.",
-        "Good entry: evidence agrees across several families and timeframes, with a defined nearby support.",
-        "Exceptional entry: strong agreement across timeframes, confirmed trigger, close stop and open upside.",
+        "Good entry: price confirmation and an independent improvement support the selected opportunity with adequate reward/risk; a short rebound need not have bullish weekly trend.",
+        "Exceptional entry: confirmed opportunity, defensible stop outside normal noise, realistic first target and strong opportunity-specific evidence.",
       ],
     },
     holderAction: {
@@ -470,6 +495,18 @@ export function buildJevFollowUpRequest(
       },
     },
   };
+
+  if (request.candidatePlans) {
+    questions.forecast = {
+      type: "choice", instructions: `Judge ONLY the declared forecast event: at the close ${forecast?.horizon ?? 10} complete trading days after the reference bar. This is separate from the current trend background. Use the numerical boundaries in decisionsSoFar.forecastEvent.`,
+      criteria: { bullish: `Closing price strictly above ${forecast?.upperPrice}.`,
+        neutral: `Closing price between ${forecast?.lowerPrice} and ${forecast?.upperPrice}, inclusive.`,
+        bearish: `Closing price strictly below ${forecast?.lowerPrice}.` },
+    };
+    // Stop, target, horizon and stop trigger are one frozen candidate contract.
+    delete questions.stopTrigger;
+    return { state, questions };
+  }
 
   if (request.stopCandidates.length > 0) {
     questions.stopLevel = {
@@ -558,18 +595,15 @@ export function summarizeDisagreement(readings: JevReading[]): JevDisagreement {
   };
 }
 
-export function resolveJevPrimaryDecision(rawAnswers: unknown): JevPrimaryDecision {
+export function resolveJevPrimaryDecision(rawAnswers: unknown, request?: Pick<JevDecisionRequest, "candidatePlans">): JevPrimaryDecision {
   const answers = answerMap(rawAnswers);
   const adjustments: string[] = [];
   const outlook = choiceAnswer(answers, "outlook", ["bullish", "neutral", "bearish"] as const);
   const stage = choiceAnswer(answers, "setupStage", Object.keys(SETUP_STAGES) as JevSetupStage[]);
 
-  let setupStage = stage.choice;
-  const waitingStage = SETUP_STAGES[setupStage].withoutEntry;
-  if (outlook.choice === "bearish" && waitingStage) {
-    adjustments.push(`Setup stage lowered from ${setupStage} to ${waitingStage}: a long entry is not executable while the outlook is bearish.`);
-    setupStage = waitingStage;
-  }
+  const setupStage = stage.choice;
+  const selection = request?.candidatePlans ? choiceAnswer(answers, "selectedPlan",
+    [...request.candidatePlans.map(plan => plan.id), "none"]).choice : undefined;
 
   const probability = (option: AiMarketOutlook) => outlook.probabilities[option] ?? 0;
   return {
@@ -579,13 +613,14 @@ export function resolveJevPrimaryDecision(rawAnswers: unknown): JevPrimaryDecisi
     setupStage,
     stageConfidence: stage.confidence,
     adjustments,
+    selectedPlanId: selection === "none" ? undefined : selection,
   };
 }
 
 export function resolveJevDecision(
   primary: JevPrimaryDecision,
   rawFollowUpAnswers: unknown,
-  request: Pick<JevDecisionRequest, "price" | "stopCandidates" | "targetCandidates">,
+  request: Pick<JevDecisionRequest, "price" | "stopCandidates" | "targetCandidates" | "candidatePlans" | "forecastEvents" | "dailyBarComplete" | "dailySamples">,
   readings: JevReading[] = []
 ): JevDecision {
   const answers = answerMap(rawFollowUpAnswers);
@@ -596,16 +631,27 @@ export function resolveJevDecision(
     throw new Error('Jev answer "entryQuality" is missing a numeric score');
   }
   let holderAction = choiceAnswer(answers, "holderAction", ["hold", "hold_protect", "reduce", "exit"] as const).choice;
-  const stopTrigger = choiceAnswer(answers, "stopTrigger", ["close", "intraday"] as const).choice;
+  const selected = request.candidatePlans?.find(plan => plan.id === primary.selectedPlanId);
+  const forecast = request.forecastEvents?.find(event => event.horizon === (selected?.horizon ?? 10));
+  const future = request.candidatePlans ? choiceAnswer(answers, "forecast", ["bullish", "neutral", "bearish"] as const) : undefined;
+  const stopTrigger = request.candidatePlans ? selected?.stopTrigger ?? "close"
+    : choiceAnswer(answers, "stopTrigger", ["close", "intraday"] as const).choice;
 
-  const stop = candidatePrice(answers, "stopLevel", request.stopCandidates);
-  let target = candidatePrice(answers, "targetLevel", request.targetCandidates);
+  const stop = request.candidatePlans ? selected?.stop : candidatePrice(answers, "stopLevel", request.stopCandidates);
+  let target = request.candidatePlans ? selected?.target : candidatePrice(answers, "targetLevel", request.targetCandidates);
   if (stop === undefined && target !== undefined) {
     target = undefined;
     adjustments.push("Dropped the target because no defensible stop was selected.");
   }
 
   let setupStage = primary.setupStage;
+  if (request.candidatePlans && SETUP_STAGES[setupStage].withoutEntry) {
+    if (!selected || !selected.priceConfirmed || !planIsExecutable(selected) || (request.dailySamples ?? 0) < 35 || future?.choice === "bearish") {
+      adjustments.push("Entry deferred: price confirmation, complete risk plan, valid data and same-horizon forecast must be consistent.");
+      setupStage = SETUP_STAGES[setupStage].withoutEntry!;
+    } else if (selected.side === "left") setupStage = "left_triggered";
+    else setupStage = "right_triggered";
+  }
   const waitingStage = SETUP_STAGES[setupStage].withoutEntry;
   if (waitingStage && (stop === undefined || target === undefined)) {
     adjustments.push(`Setup stage lowered from ${setupStage} to ${waitingStage}: an executable entry needs both a stop and a target.`);
@@ -625,25 +671,28 @@ export function resolveJevDecision(
   }
 
   const stage = SETUP_STAGES[setupStage];
+  const provisional = Boolean(request.candidatePlans && !request.dailyBarComplete && stage.withoutEntry);
   return {
-    outlook: primary.outlook,
-    outlookProbabilities: primary.outlookProbabilities,
+    selectedPlanId: selected?.id,
+    forecast,
+    outlook: future?.choice ?? primary.outlook,
+    outlookProbabilities: future ? { bullish: future.probabilities.bullish ?? 0, neutral: future.probabilities.neutral ?? 0, bearish: future.probabilities.bearish ?? 0 } : primary.outlookProbabilities,
     // Jev documents its score magnitudes as weakly calibrated between levels,
     // so the rating is reported in half-point steps rather than false decimals.
     finalScore: Math.round(Math.min(5, Math.max(0, entry.score)) * 2) / 2,
-    confidence: primary.confidence,
+    confidence: future?.confidence ?? primary.confidence,
     scoreConfidence: typeof entry.confidence === "number" && Number.isFinite(entry.confidence)
       ? Math.min(1, Math.max(0, entry.confidence))
       : 0,
     disagreement: summarizeDisagreement(readings),
     setupStage,
     stageConfidence: primary.stageConfidence,
-    leftStatus: stage.left,
-    rightStatus: stage.right,
-    activeSetup: stage.left === "triggered" ? "left" : stage.right === "triggered" ? "right" : "none",
+    leftStatus: provisional && stage.left === "triggered" ? "provisional" : stage.left,
+    rightStatus: provisional && stage.right === "triggered" ? "provisional" : stage.right,
+    activeSetup: provisional ? "none" : stage.left === "triggered" ? "left" : stage.right === "triggered" ? "right" : "none",
     holderAction,
-    leftEntryAction: stage.leftAction,
-    rightAddAction: stage.rightAction,
+    leftEntryAction: provisional && stage.leftAction === "probe" ? "wait" : stage.leftAction,
+    rightAddAction: provisional && stage.rightAction === "add_on_retest" ? "wait_breakout" : stage.rightAction,
     stopTrigger,
     stop,
     target,
@@ -660,16 +709,16 @@ export function jevConfidenceReason(decision: JevDecision, language: AnalysisLan
   const d = decision.disagreement;
   if (language === "en") {
     const level = { low: "low", medium: "moderate", high: "high" }[d.level];
-    return `Jev calibrated probabilities: bullish ${pct(p.bullish)}, neutral ${pct(p.neutral)}, bearish ${pct(p.bearish)}. Entry-score confidence ${pct(decision.scoreConfidence)}. Signal readings: ${d.bullish} bullish, ${d.neutral} neutral, ${d.bearish} bearish, so disagreement is ${level}${d.timeframesOppose ? "; daily and weekly lean in opposite directions" : ""}.`;
+    return `Jev model probabilities (not validated trading win rates): bullish ${pct(p.bullish)}, neutral ${pct(p.neutral)}, bearish ${pct(p.bearish)}. Entry-score confidence ${pct(decision.scoreConfidence)}. Signal readings: ${d.bullish} bullish, ${d.neutral} neutral, ${d.bearish} bearish, so disagreement is ${level}${d.timeframesOppose ? "; daily and weekly lean in opposite directions" : ""}.`;
   }
   if (language === "ja") {
     const level = { low: "小さい", medium: "中程度", high: "大きい" }[d.level];
-    return `Jev の較正済み確率：強気 ${pct(p.bullish)}、中立 ${pct(p.neutral)}、弱気 ${pct(p.bearish)}。エントリー評価の確信度 ${pct(decision.scoreConfidence)}。指標別判定は強気 ${d.bullish}、中立 ${d.neutral}、弱気 ${d.bearish} で、強弱の対立は${level}${d.timeframesOppose ? "。日足と週足の向きが逆です" : ""}。`;
+    return `Jev のモデル確率（検証済み取引勝率ではありません）：強気 ${pct(p.bullish)}、中立 ${pct(p.neutral)}、弱気 ${pct(p.bearish)}。エントリー評価の確信度 ${pct(decision.scoreConfidence)}。指標別判定は強気 ${d.bullish}、中立 ${d.neutral}、弱気 ${d.bearish} で、強弱の対立は${level}${d.timeframesOppose ? "。日足と週足の向きが逆です" : ""}。`;
   }
   if (language === "zh-TW") {
     const level = { low: "低", medium: "中", high: "高" }[d.level];
-    return `Jev 校準機率：看多 ${pct(p.bullish)}、震盪 ${pct(p.neutral)}、看空 ${pct(p.bearish)}。入場評分置信度 ${pct(decision.scoreConfidence)}。逐項判讀：偏多 ${d.bullish} 項、中性 ${d.neutral} 項、偏空 ${d.bearish} 項，多空分歧${level}${d.timeframesOppose ? "；日線與週線方向相反" : ""}。`;
+    return `Jev 模型機率（非已驗證交易勝率）：看多 ${pct(p.bullish)}、震盪 ${pct(p.neutral)}、看空 ${pct(p.bearish)}。入場評分置信度 ${pct(decision.scoreConfidence)}。逐項判讀：偏多 ${d.bullish} 項、中性 ${d.neutral} 項、偏空 ${d.bearish} 項，多空分歧${level}${d.timeframesOppose ? "；日線與週線方向相反" : ""}。`;
   }
   const level = { low: "低", medium: "中", high: "高" }[d.level];
-  return `Jev 校准概率：看多 ${pct(p.bullish)}、震荡 ${pct(p.neutral)}、看空 ${pct(p.bearish)}。入场评分置信度 ${pct(decision.scoreConfidence)}。逐项判读：偏多 ${d.bullish} 项、中性 ${d.neutral} 项、偏空 ${d.bearish} 项，多空分歧${level}${d.timeframesOppose ? "；日线与周线方向相反" : ""}。`;
+  return `Jev 模型概率（非已验证交易胜率）：看多 ${pct(p.bullish)}、震荡 ${pct(p.neutral)}、看空 ${pct(p.bearish)}。入场评分置信度 ${pct(decision.scoreConfidence)}。逐项判读：偏多 ${d.bullish} 项、中性 ${d.neutral} 项、偏空 ${d.bearish} 项，多空分歧${level}${d.timeframesOppose ? "；日线与周线方向相反" : ""}。`;
 }

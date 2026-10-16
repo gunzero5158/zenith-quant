@@ -169,5 +169,39 @@ const LABELS: Record<EffectiveLanguage, ValidationLabels> = {
 };
 
 export function validationLabels(language: EffectiveLanguage): ValidationLabels {
-  return LABELS[language] ?? LABELS["zh-CN"];
+  const updates = {
+    "zh-CN": {
+      intro: "保存每次原始决策，按3/5/10/20个完整交易日对照走势；按声明期限判断方向。版本、模型、市场和期限分别统计，同日重复分析不增加主样本。记录仅保存在当前浏览器，旧记录保留但缺少口径信息时不计入新统计。",
+      summaryTitle: "分组结果（各自声明的期限）",
+      summaryNote: "方向命中按预测时保存的涨跌边界判断。均值仅用于描述样本，不能单凭看多组高于总体就认定有预测能力。未收盘样本、缺失快照及旧版不完整记录不参与可比统计。",
+      smallSample: "样本量、市场覆盖和独立性不足时不作效果结论，不能把模型概率当作已验证胜率。",
+      calibrationNote: "对照同一期限、同一涨幅边界：看多概率70%，指超过预测时保存的上边界，而非只要上涨。需结合样本量评估。",
+      planResults: { target: "止盈", stop: "止损", open: "进行中", timeout: "到期退出" },
+    },
+    "zh-TW": {
+      intro: "保存每次原始決策，按3/5/10/20個完整交易日對照走勢；依聲明期限判斷方向。版本、模型、市場和期限分別統計，同日重複分析不增加主樣本。記錄只在目前瀏覽器，舊版資料不足時不納入新統計。",
+      summaryTitle: "分組結果（各自聲明的期限）",
+      summaryNote: "方向命中依預測時保存的漲跌邊界判定。均值僅描述樣本，不能單憑看多組高於整體就認定有預測能力。未收盤、缺少快照和不完整舊記錄不納入可比統計。",
+      smallSample: "樣本量、市場覆蓋及獨立性不足時不作效果結論；模型機率不是已驗證勝率。",
+      calibrationNote: "對照相同期限及漲幅邊界：看多機率指超過預測時保存的上邊界，而非只要上漲。需結合樣本量評估。",
+      planResults: { target: "止盈", stop: "止損", open: "進行中", timeout: "到期退出" },
+    },
+    en: {
+      intro: "Original decisions are retained and checked after 3/5/10/20 closed trading bars. Direction is judged at its declared horizon. Versions, models, markets and horizons are grouped separately; repeated daily runs do not add primary samples. Records stay in this browser. Incomplete legacy records remain readable but are excluded from comparable statistics.",
+      summaryTitle: "Grouped results at each declared horizon",
+      summaryNote: "Hits use the price boundaries saved at prediction time. Averages describe samples; a bullish subgroup outperforming the overall mean alone does not establish predictive value. Unclosed bars, missing snapshots and incomplete legacy records are excluded.",
+      smallSample: "Insufficient sample size, market coverage or independence prevents effectiveness conclusions. Model probabilities are not validated win rates.",
+      calibrationNote: "Compare the same horizon and event: bullish probability means exceeding the saved upper price boundary, not merely any positive return. Interpret with sample counts.",
+      planResults: { target: "Target", stop: "Stop", open: "Open", timeout: "Horizon exit" },
+    },
+    ja: {
+      intro: "元の判断を保存し、3・5・10・20取引日の確定足で照合します。方向は指定期限で判定。バージョン・モデル・市場・期限別に集計し、同日の繰り返し分析は主標本を増やしません。記録はこのブラウザのみ。情報不足の旧記録は閲覧用に保持します。",
+      summaryTitle: "指定期限ごとのグループ集計",
+      summaryNote: "的中は予測時の価格境界で判定します。平均は標本の記述であり、強気群が全体平均を上回るだけでは予測能力の証明になりません。未確定足・欠落スナップショット・不完全な旧記録は比較集計から除外します。",
+      smallSample: "標本数・市場範囲・独立性が不足する場合は効果を断定しません。モデル確率は検証済み勝率ではありません。",
+      calibrationNote: "同じ期限・事象で照合します。強気確率は保存した上限価格を超える確率であり、単なる上昇ではありません。標本数と併せて評価します。",
+      planResults: { target: "利確", stop: "損切り", open: "進行中", timeout: "期限決済" },
+    },
+  };
+  return { ...(LABELS[language] ?? LABELS["zh-CN"]), ...(updates[language] ?? updates["zh-CN"]) };
 }

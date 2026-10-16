@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { EvidenceItem, EvidenceSnapshot, TradeLevel } from "../evidence";
-import { calculateEntryAssessment } from "../scoring";
+// Freeze the prior scoring contract as the paired experiment baseline.
+// Current opportunity behavior is covered separately in opportunities.test.ts.
+import { calculateLegacyEntryAssessment as calculateEntryAssessment } from "../scoring";
 
 function evidence(
   id: string,
@@ -65,7 +67,7 @@ function snapshot(overrides: Partial<EvidenceSnapshot> = {}): EvidenceSnapshot {
   };
 }
 
-describe("gated entry assessment", () => {
+describe("frozen legacy gated entry assessment", () => {
   it("rates a healthy pullback above an expired breakout", () => {
     const healthy = calculateEntryAssessment(snapshot());
     const expired = calculateEntryAssessment(snapshot({

@@ -1,6 +1,10 @@
 import { EntryAssessment } from "./scoring";
-import { EvidenceItem, EvidenceSnapshot, SIGNAL_CATALOG, SignalFamily } from "./evidence";
+import { EvidenceItem, EvidenceSnapshot, SIGNAL_CATALOG } from "./evidence";
 import { StrategyAdvice } from "./strategyAdvice";
+import { opportunityPresentation } from "./opportunityPresentation";
+import { planIsExecutable } from "./opportunities";
+import { reportFamily, reportSection, reportCommon } from "./localReportLabels";
+import { evidenceState, localEvidenceText } from "./localEvidenceText";
 
 export interface StructuredReport {
   overview: string;
@@ -10,59 +14,12 @@ export interface StructuredReport {
 
 export interface LocalReportInput {
   snapshot: EvidenceSnapshot;
-  entryAssessment: EntryAssessment;
+  entryAssessment: Pick<EntryAssessment, "opportunity" | "currentTrend">;
   strategyAdvice: StrategyAdvice;
 }
 
-const FAMILY_LABELS: Record<SignalFamily, string> = {
-  ema: "EMA",
-  boll: "BOLL",
-  ichimoku: "一目均衡表",
-  macd: "MACD",
-  kdj: "KDJ",
-  rsi: "RSI14",
-  atr: "ATR",
-  volume: "量价",
-  cmf: "CMF",
-  obv: "OBV",
-  vpvr: "VPVR",
-  horizontal: "水平支撑阻力",
-  fibonacci: "斐波那契",
-  classicalPattern: "经典形态",
-  candlestick: "K线组合",
-  tdSequential: "神奇九转",
-  elliottWave: "艾略特波浪",
-  chanlun: "缠论",
-};
-
 export function localizedState(item: EvidenceItem, lang: string): string {
-  if (lang !== "zh-CN" && lang !== "zh-TW" && lang !== "zh-HK") {
-    return `${FAMILY_LABELS[item.family]} ${item.state}`;
-  }
-
-  const states: Record<string, string> = {
-    golden_cross: "金叉",
-    death_cross: "死叉",
-    bullish: "多头",
-    bearish: "空头",
-    neutral: "中性/暂无触发",
-    insufficient: "样本不足",
-    bottom_divergence: "底背离",
-    top_divergence: "顶背离",
-    near_trigger: "接近触发",
-    confirmed: "已确认",
-    failed: "已失效",
-    forming: "形成中",
-    building: "进行中",
-    completed: "完成9",
-  };
-  const state = states[item.state]
-    ?? (item.state.startsWith("up_")
-      ? `上穿${item.state.slice(3)}`
-      : item.state.startsWith("down_")
-        ? `下穿${item.state.slice(5)}`
-        : item.state);
-  return `${FAMILY_LABELS[item.family]}${state}`;
+  return evidenceState(item, lang);
 }
 
 function reportLabels(lang: string) {
@@ -100,38 +57,92 @@ function localizedPriceText(snapshot: EvidenceSnapshot, lang: string): string {
 }
 
 export function generateLocalReport(input: LocalReportInput, lang: string = "zh-CN"): StructuredReport {
-  const { snapshot, strategyAdvice } = input;
+  const { snapshot, strategyAdvice, entryAssessment } = input;
   const labels = reportLabels(lang);
-  const overview = `### ${labels.overview}\n${localizedPriceText(snapshot, lang)}${localizedMarketContext(snapshot, lang)}`;
+  const opportunity = opportunityPresentation(entryAssessment, lang);
+  const plan = entryAssessment.opportunity?.plan;
+  const status = entryAssessment.opportunity?.status;
+  const messages = lang === "en" ? {
+    price: "Price confirmation is missing; oversold readings alone do not confirm an entry.",
+    risk: "The stop and first target do not yet define an executable risk-reward plan.",
+    close: "Wait for the daily close; the current signal is provisional.",
+    watch: "Keep this on watch until independent improvement and entry conditions agree.",
+    invalid: "This opportunity is invalidated; a new setup requires fresh confirmation.",
+    late: "The entry window has passed; do not chase using the old plan.",
+    ready: "Conditions are confirmed for this horizon. Respect the stop and expiry; confirmation does not guarantee a profit.",
+  } : lang === "ja" ? {
+    price: "価格の確認が不足しています。売られ過ぎだけではエントリー確認になりません。",
+    risk: "損切りと第一目標の組み合わせは、まだ実行可能な損益条件を満たしていません。",
+    close: "日足終値の確認を待ちます。現在のシグナルは暫定です。",
+    watch: "独立した改善根拠とエントリー条件がそろうまで監視を続けます。",
+    invalid: "この機会は無効です。新たな機会には新しい確認が必要です。",
+    late: "エントリー機会は経過しています。以前の計画で追いかけません。",
+    ready: "この期間の条件は確認済みです。損切りと期限を守ります。確認は利益を保証しません。",
+  } : lang === "zh-TW" || lang === "zh-HK" ? {
+    price: "尚缺價格確認，超賣本身不構成入場確認。",
+    risk: "止損與首個目標尚未構成可執行的風險收益方案。",
+    close: "等待日線收盤確認，當前訊號仍屬暫定。",
+    watch: "繼續觀察，等待獨立改善證據與入場條件同時成立。",
+    invalid: "本次機會已失效，新機會需要新的確認，不能沿用舊結論。",
+    late: "已錯過本次低風險入場區間，不沿用舊方案追價。",
+    ready: "本期限內的條件已確認，仍須遵守止損與有效期；確認不代表收益保證。",
+  } : {
+    price: "尚缺价格确认，超卖本身不构成入场确认。",
+    risk: "止损与首个目标尚未构成可执行的风险收益方案。",
+    close: "等待日线收盘确认，当前信号仍属暂定。",
+    watch: "继续观察，等待独立改善证据与入场条件同时成立。",
+    invalid: "本次机会已失效，新机会需要新的确认，不能沿用旧结论。",
+    late: "已错过本次低风险入场区间，不沿用旧方案追价。",
+    ready: "本期限内的条件已确认，仍须遵守止损与有效期；确认不代表收益保证。",
+  };
+  const conditions = status === "invalidated" ? [messages.invalid]
+    : status === "too_late" ? [messages.late]
+      : status === "triggered" ? [messages.ready]
+        : [!plan?.priceConfirmed ? messages.price : undefined,
+          !planIsExecutable(plan) ? messages.risk : undefined,
+          !snapshot.dataQuality.dailyBarComplete ? messages.close : undefined,
+          messages.watch].filter(Boolean);
+  const overview = [`### ${labels.overview}`,
+    `${localizedPriceText(snapshot, lang)}${localizedMarketContext(snapshot, lang)}`,
+    opportunity.trend, opportunity.opportunity, ...conditions,
+  ].filter(Boolean).join("\n\n");
   const recommendation = [
     `### ${labels.recommendation}`,
     `- ${labels.holder}: ${strategyAdvice.holder.text}`,
     `- ${labels.left}: ${strategyAdvice.leftEntry.text}`,
     `- ${labels.right}: ${strategyAdvice.rightAdd.text}`,
     `- ${labels.exit}: ${strategyAdvice.exitStop.text}`,
-  ].join("\n");
+    opportunity.plan,
+  ].filter(Boolean).join("\n");
 
   const sections: string[] = [`### ${labels.technical}`];
+  const common = reportCommon(lang);
   const orderedSections = [...new Set(SIGNAL_CATALOG.map((definition) => definition.reportSection))];
   for (const section of orderedSections) {
-    sections.push(`\n#### ${section}`);
+    sections.push(`\n#### ${reportSection(section, lang)}`);
     const families = SIGNAL_CATALOG
       .filter((definition) => definition.reportSection === section)
       .map((definition) => definition.family);
     for (const family of families) {
       const familyItems = snapshot.items.filter((candidate) => candidate.family === family);
       if (familyItems.length === 0) {
-        sections.push(`- ${FAMILY_LABELS[family]}：暂无有效证据。`);
+        sections.push(`- ${reportFamily(family, lang)}：${common.missing}`);
         continue;
       }
       for (const evidence of familyItems) {
-        const provisional = evidence.provisional ? "（未完成K线，暂定）" : "";
-        sections.push(`- ${localizedState(evidence, lang)}${provisional}：${evidence.description}`);
+        const provisional = evidence.provisional ? common.provisional : "";
+        const timeframe = evidence.timeframe === "weekly" ? common.weekly : common.daily;
+        sections.push(`- ${timeframe} ${localizedState(evidence, lang)}${provisional}：${localEvidenceText(evidence, lang)}`);
       }
     }
   }
   if (snapshot.dataQuality.warnings.length > 0) {
-    sections.push(`\n#### 数据状态\n${snapshot.dataQuality.warnings.map((warning) => `- ${warning}`).join("\n")}`);
+    const warningTranslations: Record<string, string> = {
+      "行情快照时间无效": common.invalidTime,
+      "当前日K未完成，日线触发为暂定信号": common.dailyPending,
+      "当前周K未完成，周线信号为暂定信号": common.weeklyPending,
+    };
+    sections.push(`\n#### ${common.quality}\n${snapshot.dataQuality.warnings.map((warning) => `- ${warningTranslations[warning] ?? warning}`).join("\n")}`);
   }
   return { overview, recommendation, technicalAnalysis: sections.join("\n") };
 }

@@ -2,19 +2,24 @@
 // later be compared with what the price actually did. Records live in the
 // browser (this deployment has no database) and can be exported as JSON.
 
+import type { CandidateTradePlan, ForecastEvent, OpportunityAssessment } from "../analysis/opportunities";
+import { DECISION_VERSION } from "../analysis/opportunities";
+import type { ExecutionOutcome, ExecutionPolicy } from "./tradeExecution";
+import { executionPolicyFor } from "./executionPolicy";
+
 export type ValidationTrack = "rule" | "rule-ai" | "ai-native" | "jev-ai";
 export type ValidationOutlook = "bullish" | "neutral" | "bearish";
 
 // Bump a track's version whenever its decision logic changes, so results from
 // different logic are never pooled into one statistic.
 export const TRACK_VERSIONS: Record<ValidationTrack, string> = {
-  rule: "2026-08",
-  "rule-ai": "2026-08",
-  "ai-native": "2026-09-21",
-  "jev-ai": "2026-09-21",
+  rule: DECISION_VERSION,
+  "rule-ai": DECISION_VERSION,
+  "ai-native": DECISION_VERSION,
+  "jev-ai": DECISION_VERSION,
 };
 
-export const VALIDATION_HORIZONS = [5, 10, 20] as const;
+export const VALIDATION_HORIZONS = [3, 5, 10, 20] as const;
 export type ValidationHorizon = (typeof VALIDATION_HORIZONS)[number];
 
 export interface ValidationOutcome {
@@ -30,9 +35,12 @@ export interface ValidationOutcome {
   planBars?: number;
   /** True once the longest horizon has elapsed; the record is then final. */
   complete: boolean;
+  execution?: ExecutionOutcome;
+  costSensitivity?: { zero: ExecutionOutcome; doubled: ExecutionOutcome };
 }
 
 export interface ValidationRecord {
+  schemaVersion?: 2;
   id: string;
   symbol: string;
   companyName?: string;
@@ -56,9 +64,19 @@ export interface ValidationRecord {
   stop?: number;
   target?: number;
   outcome?: ValidationOutcome;
+  snapshotId?: string;
+  decisionId?: string;
+  dataSource?: string;
+  dailyBarComplete?: boolean;
+  forecast?: ForecastEvent;
+  opportunity?: OpportunityAssessment;
+  executionPolicy?: ExecutionPolicy;
 }
 
 interface AssessmentLike {
+  decisionVersion?: string;
+  forecast?: ForecastEvent;
+  opportunity?: OpportunityAssessment;
   finalScore: number;
   ruleScore?: number;
   outlook?: ValidationOutlook;
@@ -66,7 +84,7 @@ interface AssessmentLike {
   leftStatus: string;
   rightStatus: string;
   activeSetup: "left" | "right" | "none";
-  riskPlan?: { stop?: number; target?: number };
+  riskPlan?: Partial<CandidateTradePlan>;
 }
 
 export interface AnalysisLike {
@@ -74,18 +92,23 @@ export interface AnalysisLike {
   companyName?: string;
   price: number;
   isMock?: boolean;
+  snapshotId?: string;
+  decisionId?: string;
+  decisionTime?: string;
+  dataSource?: string;
   isLLMUsed: boolean;
   analysisMode?: "rule-ai" | "ai-native" | "jev-ai";
   entryAssessment?: AssessmentLike;
   ruleBaseline?: AssessmentLike;
+  legacyComparison?: AssessmentLike;
   jevDecision?: { outlookProbabilities?: Record<ValidationOutlook, number>; setupStage?: string };
-  dataQuality?: { latestDailyDate?: string };
+  dataQuality?: { latestDailyDate?: string; dailyBarComplete?: boolean; asOf?: string };
   dailyCandles: Array<{ date: unknown }>;
   indicators?: { atr?: number[] };
 }
 
 export function barDateOf(value: unknown): string {
-  return String(value).slice(0, 10);
+  return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
 }
 
 function record(
@@ -97,13 +120,24 @@ function record(
 ): ValidationRecord {
   const barDate = barDateOf(analysis.dataQuality?.latestDailyDate ?? analysis.dailyCandles.at(-1)?.date ?? "");
   const atr = analysis.indicators?.atr?.at(-1);
+  const trackVersion = assessment.decisionVersion ?? TRACK_VERSIONS[track];
+  const decisionTime = analysis.decisionTime ? Date.parse(analysis.decisionTime) : analyzedAt;
+  const decisionId = analysis.decisionId ?? `${decisionTime}`;
   return {
-    id: `${analysis.symbol}|${track}|${barDate}`,
+    schemaVersion: 2,
+    id: `${analysis.symbol}|${track}|${trackVersion}|${barDate}|${decisionId}`,
     symbol: analysis.symbol,
     companyName: analysis.companyName,
     track,
-    trackVersion: TRACK_VERSIONS[track],
-    analyzedAt,
+    trackVersion,
+    analyzedAt: decisionTime,
+    decisionId,
+    snapshotId: analysis.snapshotId,
+    dataSource: analysis.dataSource,
+    dailyBarComplete: analysis.dataQuality?.dailyBarComplete,
+    forecast: assessment.forecast,
+    opportunity: assessment.opportunity,
+    executionPolicy: executionPolicyFor(analysis.symbol),
     barDate,
     price: analysis.price,
     atrPct: typeof atr === "number" && Number.isFinite(atr) && analysis.price > 0
@@ -128,6 +162,9 @@ export function recordsFromAnalysis(analysis: AnalysisLike, analyzedAt: number, 
   if (analysis.isMock || !assessment || !(analysis.price > 0) || analysis.dailyCandles.length === 0) return [];
   const mode = analysis.analysisMode ?? "rule-ai";
   const records: ValidationRecord[] = [];
+  if (analysis.legacyComparison) {
+    records.push(record(analysis, "rule", analysis.legacyComparison, analyzedAt));
+  }
 
   if (mode === "rule-ai") {
     records.push(record(analysis, "rule", { ...assessment, finalScore: assessment.ruleScore ?? assessment.finalScore }, analyzedAt));
@@ -180,17 +217,26 @@ export function saveValidationRecords(records: ValidationRecord[]): boolean {
   }
 }
 
-/**
- * Re-analyzing the same stock on the same bar replaces that day's record for
- * the track, so one trading day contributes one sample per stock and track.
- * The rule baseline is deterministic for a closed bar, so an existing one is kept
- * together with any outcome already evaluated for it.
- */
+/** Decisions are immutable. Refreshing outcomes is a separate operation. */
 export function mergeValidationRecords(existing: ValidationRecord[], incoming: ValidationRecord[]): ValidationRecord[] {
   const merged = new Map(existing.map((item) => [item.id, item]));
   for (const item of incoming) {
     const previous = merged.get(item.id);
-    merged.set(item.id, previous?.outcome && previous.price === item.price ? { ...item, outcome: previous.outcome } : item);
+    if (!previous) merged.set(item.id, item);
   }
   return [...merged.values()].sort((left, right) => right.analyzedAt - left.analyzedAt);
+}
+
+/** First completed-bar decision per day, model and version is the primary sample.
+ * All other runs remain available for audit/export, not extra statistical votes.
+ */
+export function primarySamples(records: ValidationRecord[], track: ValidationTrack, version = TRACK_VERSIONS[track]): ValidationRecord[] {
+  const samples = new Map<string, ValidationRecord>();
+  for (const record of [...records].sort((a, b) => a.analyzedAt - b.analyzedAt)) {
+    if (record.track !== track || record.trackVersion !== version || record.schemaVersion !== 2
+      || !record.snapshotId || !record.forecast || record.dailyBarComplete !== true) continue;
+    const key = `${record.symbol}|${record.barDate}|${record.model ?? "rule"}|${record.forecast.horizon}`;
+    if (!samples.has(key)) samples.set(key, record);
+  }
+  return [...samples.values()];
 }

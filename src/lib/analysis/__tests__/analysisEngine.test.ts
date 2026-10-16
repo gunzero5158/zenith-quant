@@ -69,7 +69,11 @@ describe("pure analysis engine", () => {
     expect(prompt).toContain("Never omit confirmed or recent trigger events");
     expect(prompt).toContain("current fact or value");
     expect(prompt).toContain("plain-language meaning");
-    expect(prompt).toContain("5-20 trading-day decision");
+    expect(prompt).toContain("declared forecast horizon");
+    expect(prompt).toContain("strictly exceeds upperPrice");
+    expect(result.legacyComparison.decisionVersion).toBe("rules-0.6.0-paired");
+    expect(result.legacyComparison.forecast).toEqual(result.entryAssessment.forecast);
+    expect(result.legacyComparison.opportunity?.plan.entry).toBe(result.snapshot.price);
     expect(prompt).toContain("Evidence IDs may appear only in scoreReview.reasons[].evidenceIds");
     expect(prompt).toContain('"outlook": "neutral"');
     expect(prompt).toContain("Never include evidence IDs in overview, technicalAnalysis, strategyCommentary");
