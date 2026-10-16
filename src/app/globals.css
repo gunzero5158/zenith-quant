@@ -50,15 +50,12 @@
 .decision-opportunity-title strong { font-size: 18px; color: var(--text-bright); }
 .decision-status { border: 1px solid var(--border-color); border-radius: 6px; padding: 2px 8px; color: var(--primary-gold); }
 .decision-secondary { color: #a8b5c7; font-size: 13px; }
-.decision-plan { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; column-gap: 24px; border: 1px solid var(--border-color); border-radius: 10px; padding: 0 16px; background: var(--panel-bg); font-size: 14px; line-height: 1.65; }
-.decision-plan > details:first-child { order: 2; }
-.decision-plan > details:last-child { order: 1; }
-.decision-plan > p { grid-column: 1 / -1; order: 0; }
-.decision-warning { padding: 12px 0; color: #f5cf85; }
-.decision-grid summary { cursor: pointer; min-height: 44px; display: list-item; align-content: center; }
-.decision-grid summary:focus-visible { outline: 2px solid var(--primary-blue); outline-offset: 3px; }
-.decision-grid details[open] { padding-bottom: 12px; }
-.decision-plan p { overflow-wrap: anywhere; }
+.model-outlook { border-top: 1px solid var(--border-color); padding-top: 8px; width: 100%; line-height: 1.5; }
+.model-outlook strong { color: var(--text-bright); }
+.strategy-risk-context { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.strategy-risk-context:empty { display: none; }
+.strategy-risk-context p { margin-bottom: 8px; }
+.strategy-risk-warning { color: #f5cf85; }
 @media (max-width: 1100px) {
   .decision-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
   .decision-card { grid-column: span 2; }
@@ -67,7 +64,6 @@
 @media (max-width: 600px) {
   .decision-grid { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .decision-card, .decision-score, .decision-opportunity { grid-column: 1; padding: 14px; }
-  .decision-plan { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Reset & Base Styles */

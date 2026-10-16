@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.2 - 2026-10-16
+
+### Changed
+- Merge model outlook and certainty into the existing opportunity/trend card in all three modes. Move risk conditions into the strategy area and remove the separate disclosure panel.
+
+### Fixed
+- Retain up to fifteen analysis results per mode instead of six results shared across all modes. Recover quota-limited writes by evicting older analysis caches only, and keep recent results in memory when persistent storage is unavailable.
+- Use the same market-session cache policy for all modes: ten minutes during trading, completed-session reuse while closed, and refresh at the next open. Remove the extra A-share quote comparison that could unexpectedly trigger another model call.
+- Coalesce repeated clicks on an in-progress analysis, isolate history timestamps by mode, and prevent quote-storage failures from breaking analysis completion.
+
+### Validation
+- 430 tests cover cache mode isolation, expiry boundaries, session transitions, quota recovery, and blocked storage. Live model calls and browser interaction require separate acceptance.
+
 ## 0.7.1 - 2026-10-16
 
 ### Fixed

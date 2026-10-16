@@ -107,14 +107,7 @@ export function isAnalysisCacheReusableByTime(
   cacheTimestamp: number,
   nowTimestamp = Date.now()
 ): boolean {
-  if (!Number.isFinite(cacheTimestamp) || !Number.isFinite(nowTimestamp)) return false;
-  if (cacheTimestamp > nowTimestamp) return false;
-
-  if (isMarketTrading(symbol, nowTimestamp)) {
-    return nowTimestamp - cacheTimestamp <= ACTIVE_MARKET_ANALYSIS_MAX_AGE_MS;
-  }
-
-  return isSameMarketDate(symbol, cacheTimestamp, nowTimestamp);
+  return isMarketDataCacheReusable(symbol, cacheTimestamp, nowTimestamp);
 }
 
 export function isMarketDataCacheReusable(

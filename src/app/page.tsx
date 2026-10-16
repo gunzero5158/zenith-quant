@@ -8,6 +8,7 @@ import SettingsModal from "@/components/SettingsModal";
 import MarkdownBlock from "@/components/MarkdownBlock";
 import WelcomeScreen from "@/components/WelcomeScreen";
 import PromoFooter from "@/components/PromoFooter";
+import ModelOutlook from "@/components/ModelOutlook";
 import { LLMConfig } from "@/lib/analysis/llmProxy";
 import { formatMarketPrice, getMarketCurrencySymbol, normalizeManualSymbolInput } from "@/lib/analysis/market";
 import { Candle, IchimokuResult } from "@/lib/analysis/indicators";
@@ -24,9 +25,7 @@ import {
   ANALYSIS_CACHE_VERSION,
   isAnalysisCacheCompatible,
   isAnalysisCacheReusableByTime,
-  isAShareAnalysisCacheReusable,
   isAShareSymbol,
-  isMarketTrading,
 } from "@/lib/analysis/analysisCache";
 import { DataQuality, ScenarioStatus } from "@/lib/analysis/evidence";
 import { buildEntryScorePresentation, buildJevScorePresentation } from "@/lib/analysis/presentation";
@@ -41,6 +40,7 @@ import {
   isAppLanguage,
 } from "@/lib/i18n/translations";
 import { styles } from "./pageStyles";
+import { createReportCacheStore } from "@/lib/analysis/reportCacheStore";
 
 // Keep lightweight-charts out of the initial bundle
 const StockChart = dynamic(() => import("@/components/StockChart"), { ssr: false });
@@ -141,6 +141,10 @@ async function fetchQuoteMap(symbols: string, signal?: AbortSignal): Promise<Rec
   );
 }
 const getErrorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
+const persistWatchlistQuotes = (quotes: Record<string, WatchQuote>) => {
+  try { localStorage.setItem("watchlistQuotes", JSON.stringify(quotes)); }
+  catch { console.warn("Quote storage unavailable; keeping displayed quotes in memory."); }
+};
 
 const subscribeMounted = () => () => undefined;
 const getClientMountedSnapshot = () => true;
@@ -163,75 +167,14 @@ const setCookie = (name: string, value: string, days = 365) => {
   document.cookie = `${name}=${encodeURIComponent(value)}${expires}; path=/`;
 };
 
-// ----------------------------------------------------
-// Analysis result localStorage cache with a simple LRU cap.
-// A recency index (most recent first) is kept under
-// `zenith_analysis_index`; entries beyond the cap are evicted.
-// ----------------------------------------------------
-const ANALYSIS_CACHE_LIMIT = 6;
-const ANALYSIS_CACHE_INDEX_KEY = "zenith_analysis_index";
 const ANALYSIS_TIMESTAMPS_KEY = "zenith_analysis_timestamps";
-const analysisCacheId = (symbol: string, mode: AnalysisMode) => `${mode}:${symbol}`;
-const analysisCacheKey = (id: string) => `zenith_analysis_${id}`;
-
-const readAnalysisCacheIndex = (): string[] => {
-  try {
-    const raw = localStorage.getItem(ANALYSIS_CACHE_INDEX_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (Array.isArray(parsed)) {
-      return parsed.filter((item): item is string => typeof item === "string");
-    }
-  } catch (e) {
-    console.error("Read analysis cache index failed:", e);
-  }
-  return [];
-};
-
-// Move `symbol` to the front of the recency index and evict overflow entries
-const touchAnalysisCache = (symbol: string, mode: AnalysisMode) => {
-  try {
-    const id = analysisCacheId(symbol, mode);
-    const updated = [id, ...readAnalysisCacheIndex().filter((item) => item !== id)];
-    for (const evicted of updated.slice(ANALYSIS_CACHE_LIMIT)) {
-      localStorage.removeItem(analysisCacheKey(evicted));
-    }
-    localStorage.setItem(ANALYSIS_CACHE_INDEX_KEY, JSON.stringify(updated.slice(0, ANALYSIS_CACHE_LIMIT)));
-  } catch (e) {
-    console.error("Update analysis cache index failed:", e);
-  }
-};
-
-const readAnalysisCache = (symbol: string, mode: AnalysisMode): AnalysisCacheEntry | null => {
-  try {
-    const cachedStr = localStorage.getItem(analysisCacheKey(analysisCacheId(symbol, mode)));
-    if (!cachedStr) return null;
-    return JSON.parse(cachedStr) as AnalysisCacheEntry;
-  } catch (e) {
-    console.error("Cache parse error", e);
-    return null;
-  }
-};
-
+const reportCache = createReportCacheStore<AnalysisCacheEntry>(() => localStorage);
+const readAnalysisCache = reportCache.read;
+const touchAnalysisCache = reportCache.touch;
+const removeAnalysisCache = reportCache.remove;
 const writeAnalysisCache = (symbol: string, mode: AnalysisMode, entry: AnalysisCacheEntry) => {
-  try {
-    localStorage.setItem(analysisCacheKey(analysisCacheId(symbol, mode)), JSON.stringify(entry));
-    touchAnalysisCache(symbol, mode);
-  } catch (e) {
-    console.error("Failed to save cache", e);
-  }
-};
-
-const removeAnalysisCache = (symbol: string, mode: AnalysisMode) => {
-  try {
-    const id = analysisCacheId(symbol, mode);
-    localStorage.removeItem(analysisCacheKey(id));
-    localStorage.setItem(
-      ANALYSIS_CACHE_INDEX_KEY,
-      JSON.stringify(readAnalysisCacheIndex().filter((item) => item !== id))
-    );
-  } catch (e) {
-    console.error("Failed to remove cache", e);
+  if (!reportCache.write(symbol, mode, entry)) {
+    console.warn("Analysis retained in memory; browser storage is unavailable or full.");
   }
 };
 
@@ -303,6 +246,7 @@ export default function Home() {
 
   const lastRequestedSymbolRef = useRef("");
   const analyzeAbortRef = useRef<AbortController | null>(null);
+  const analyzeRequestKeyRef = useRef("");
   const currentRequestSymbolRef = useRef("");
   const watchlistHydratedRef = useRef(false);
   const suggestionQueryRef = useRef("");
@@ -315,11 +259,13 @@ export default function Home() {
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [watchlistQuotes, setWatchlistQuotes] = useState<Record<string, WatchQuote>>({});
   const [analysisTimestamps, setAnalysisTimestamps] = useState<Record<string, number>>({});
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>(DEFAULT_ANALYSIS_MODE);
 
   const recordAnalysisTimestamp = useCallback((symbol: string, timestamp: number) => {
-    setAnalysisTimestamps((previous) => ({ ...previous, [symbol]: timestamp }));
-    writeAnalysisTimestamps({ ...readAnalysisTimestamps(), [symbol]: timestamp });
-  }, []);
+    const key = `${analysisMode}:${symbol}`;
+    setAnalysisTimestamps((previous) => ({ ...previous, [key]: timestamp }));
+    writeAnalysisTimestamps({ ...readAnalysisTimestamps(), [key]: timestamp });
+  }, [analysisMode]);
 
   const syncAnalysisQuoteToWatchlist = useCallback((data: StockAnalysisData, symbol: string) => {
     setWatchlistQuotes((previous) => {
@@ -329,7 +275,7 @@ export default function Home() {
         changePercent: data.changePercent,
         isMock: data.isMock,
       });
-      localStorage.setItem("watchlistQuotes", JSON.stringify(updated));
+      persistWatchlistQuotes(updated);
       return updated;
     });
   }, []);
@@ -353,7 +299,6 @@ export default function Home() {
   const [isValidationOpen, setIsValidationOpen] = useState(false);
   const [appLanguage, setAppLanguage] = useState<AppLanguage>("auto");
   const [useFallback, setUseFallback] = useState(true);
-  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>(DEFAULT_ANALYSIS_MODE);
 
   const getEffectiveLang = (): EffectiveLanguage => {
     if (!mounted) return "zh-CN"; // SSR and first hydration render must be identical to avoid mismatch
@@ -504,11 +449,11 @@ export default function Home() {
       const timestamps = readAnalysisTimestamps();
       let changed = false;
       for (const symbol of symbols) {
-        if (timestamps[symbol]) continue;
-        const cached = readAnalysisCache(symbol, analysisMode)
-          ?? readAnalysisCache(symbol, DEFAULT_ANALYSIS_MODE);
+        const key = `${analysisMode}:${symbol}`;
+        if (timestamps[key]) continue;
+        const cached = readAnalysisCache(symbol, analysisMode);
         if (cached?.timestamp && Number.isFinite(cached.timestamp)) {
-          timestamps[symbol] = cached.timestamp;
+          timestamps[key] = cached.timestamp;
           changed = true;
         }
       }
@@ -528,7 +473,7 @@ export default function Home() {
       try {
         const newQuotes = await fetchQuoteMap(watchlistKey);
         setWatchlistQuotes(newQuotes);
-        localStorage.setItem("watchlistQuotes", JSON.stringify(newQuotes));
+        persistWatchlistQuotes(newQuotes);
       } catch (e) {
         console.error("Fetch watchlist quotes failed:", e);
       }
@@ -547,6 +492,9 @@ export default function Home() {
     const config = overrideConfig ?? llmConfig;
     const jev = overrideJevConfig ?? jevConfig;
     const requestLang = resolveEffectiveLanguage(appLanguage);
+    const requestKey = `${analysisMode}:${requestedSymbol}:${requestLang}`;
+    if (!isForce && analyzeRequestKeyRef.current === requestKey && analyzeAbortRef.current
+      && !analyzeAbortRef.current.signal.aborted) return;
     currentRequestSymbolRef.current = requestedSymbol;
 
     if (!isForce) {
@@ -559,46 +507,16 @@ export default function Home() {
         try {
           const cachedData = cachedObj.data;
           const nowTimestamp = Date.now();
-          const marketTrading = isMarketTrading(requestedSymbol, nowTimestamp);
 
           if (cachedData.isMock) {
             removeAnalysisCache(requestedSymbol, analysisMode);
           } else {
-            let canReuseCache = isAnalysisCacheReusableByTime(
+            const canReuseCache = isAnalysisCacheReusableByTime(
               requestedSymbol,
               cachedObj.timestamp,
               nowTimestamp
             );
 
-            if (canReuseCache && !marketTrading && isAShareSymbol(requestedSymbol)) {
-              canReuseCache = false;
-              try {
-                const latestQuotes = await fetchQuoteMap(requestedSymbol);
-                if (currentRequestSymbolRef.current !== requestedSymbol) return;
-
-                const latestQuote = latestQuotes[requestedSymbol.toUpperCase()];
-                if (latestQuote) {
-                  setWatchlistQuotes((previous) => {
-                    const updated = { ...previous, [requestedSymbol]: latestQuote };
-                    localStorage.setItem("watchlistQuotes", JSON.stringify(updated));
-                    return updated;
-                  });
-
-                  canReuseCache = isAShareAnalysisCacheReusable({
-                    symbol: requestedSymbol,
-                    cacheTimestamp: cachedObj.timestamp,
-                    nowTimestamp: Date.now(),
-                    cachedQuote: {
-                      price: cachedData.price,
-                      change: cachedData.changePercent,
-                    },
-                    latestQuote,
-                  });
-                }
-              } catch (e) {
-                console.warn("Validate A-share analysis cache failed:", e);
-              }
-            }
 
             if (!canReuseCache) {
               removeAnalysisCache(requestedSymbol, analysisMode);
@@ -634,6 +552,7 @@ export default function Home() {
     analyzeAbortRef.current?.abort();
     const controller = new AbortController();
     analyzeAbortRef.current = controller;
+    analyzeRequestKeyRef.current = requestKey;
     currentRequestSymbolRef.current = requestedSymbol;
 
     setStockData(null);
@@ -656,7 +575,7 @@ export default function Home() {
           };
           setWatchlistQuotes((previous) => {
             const updated = { ...previous, [requestedSymbol]: latestQuote };
-            localStorage.setItem("watchlistQuotes", JSON.stringify(updated));
+            persistWatchlistQuotes(updated);
             return updated;
           });
         }
@@ -728,6 +647,8 @@ export default function Home() {
       alert(`${requestT.queryError}: ${e.message || e}`);
     } finally {
       if (analyzeAbortRef.current === controller) {
+        analyzeAbortRef.current = null;
+        analyzeRequestKeyRef.current = "";
         setLoading(false);
       }
     }
@@ -859,6 +780,7 @@ export default function Home() {
     setWatchlist((prev) => prev.filter((item) => item !== sym));
     const timestamps = readAnalysisTimestamps();
     delete timestamps[sym];
+    for (const mode of ANALYSIS_MODES) delete timestamps[`${mode}:${sym}`];
     writeAnalysisTimestamps(timestamps);
     setAnalysisTimestamps(timestamps);
   };
@@ -914,7 +836,6 @@ export default function Home() {
   const jevPresentation = stockData?.analysisMode === "jev-ai" && stockData.jevDecision?.outlookProbabilities
     ? buildJevScorePresentation(stockData.jevDecision, effectiveLang)
     : null;
-  const outlookColor = { bullish: upColor, neutral: "#787b86", bearish: downColor };
 
   const scenarioTone = (status: ScenarioStatus): React.CSSProperties => ({
     color: status === "triggered" ? "#089981" : status === "provisional" ? "#2962ff" : status === "too_late" ? "#f23645" : status === "watch" ? "#fbbf24" : "#787b86",
@@ -1121,7 +1042,7 @@ export default function Home() {
             {watchlist.map((sym) => {
               const quote = watchlistQuotes[sym];
               const isUp = quote ? quote.change >= 0 : true;
-              const analysisTimestamp = analysisTimestamps[sym];
+              const analysisTimestamp = analysisTimestamps[`${analysisMode}:${sym}`];
               const formattedAnalysisTime = analysisTimestamp
                 ? formatAnalysisTimestamp(analysisTimestamp, effectiveLang)
                 : "";
@@ -1281,6 +1202,7 @@ export default function Home() {
                       </div>
                       <span>{scorePresentation.opportunity.trend}</span>
                       <span className="decision-secondary">{scorePresentation.opportunity.horizon} · {scorePresentation.opportunity.action}</span>
+                      <ModelOutlook score={scorePresentation} jev={jevPresentation} language={effectiveLang} />
                     </div>
                   )}
 
@@ -1306,56 +1228,6 @@ export default function Home() {
                     </span>
                     <span className="decision-secondary">{effectiveLang === "en" ? "Historical volume peak, not a target" : effectiveLang === "ja" ? "過去の出来高集中点・目標ではありません" : "历史成交密集价，不等同于目标价"}</span>
                   </div>
-                  {scorePresentation?.opportunity && (
-                    <div className="decision-plan">
-                      <details style={{ fontSize: 12, lineHeight: 1.6 }}>
-                          <summary style={{ cursor: "pointer" }}>{scorePresentation.opportunity?.detailsLabel || (effectiveLang === "en" ? "Model details" : effectiveLang === "ja" ? "モデルの詳細" : "模型详情")}</summary>
-                        {jevPresentation ? (
-                          <>
-                            <div
-                              role="img"
-                              aria-label={jevPresentation.outlook.map((part) => `${part.label} ${part.percent}%`).join(", ")}
-                              style={styles.jevProbabilityBar}
-                            >
-                              {jevPresentation.outlook.filter((part) => part.percent > 0).map((part) => (
-                                <span key={part.key} style={{ width: `${part.percent}%`, backgroundColor: outlookColor[part.key] }} />
-                              ))}
-                            </div>
-                            <div style={styles.scoreBreakdownRow}>
-                              {jevPresentation.outlook.map((part) => (
-                                <span key={part.key} style={{ color: outlookColor[part.key] }}>{part.label} {part.percent}%</span>
-                              ))}
-                            </div>
-                            <div style={styles.scoreBreakdownRow}>
-                              {jevPresentation.stageLabel && jevPresentation.stageText && (
-                                <span>{jevPresentation.stageLabel} <strong style={{ color: "#d1d4dc" }}>{jevPresentation.stageText}</strong></span>
-                              )}
-                              {jevPresentation.conflictLabel && jevPresentation.conflictText && (
-                                <span>{jevPresentation.conflictLabel} {jevPresentation.conflictText}</span>
-                              )}
-                            </div>
-                          </>
-                        ) : (
-                        <div style={styles.scoreBreakdownRow}>
-                          {scorePresentation.confidenceLabel && scorePresentation.confidenceText && (
-                            <span>{scorePresentation.confidenceLabel} {scorePresentation.confidenceText}</span>
-                          )}
-                          {scorePresentation.outlookLabel && scorePresentation.outlookText && (
-                            <span>{scorePresentation.outlookLabel} {scorePresentation.outlookText}</span>
-                          )}
-                        </div>
-                        )}
-                        </details>
-                      {scorePresentation.opportunity.warning && <p className="decision-warning">{scorePresentation.opportunity.warning}</p>}
-                      {scorePresentation.opportunity.plan && (
-                        <details>
-                          <summary>{effectiveLang === "en" ? "Price conditions & risk boundaries" : effectiveLang === "ja" ? "価格条件とリスク境界" : "查看价格条件与风险边界"}</summary>
-                          <p className="decision-secondary">{scorePresentation.opportunity.planLabel}</p>
-                          <p>{scorePresentation.opportunity.plan}</p>
-                        </details>
-                      )}
-                    </div>
-                  )}
                 </div>
               </div>
 
@@ -1444,6 +1316,16 @@ export default function Home() {
                   <div className="recommendation-card" style={styles.recommendationCard}>
                     <div style={styles.cardHeader}>{t.strategyHeader}</div>
                     <div style={styles.cardBodyAutoScroll}>
+                      {scorePresentation?.opportunity && (
+                        <div className="strategy-risk-context">
+                          {scorePresentation.opportunity.warning && !stockData.reportRecommendation.includes(scorePresentation.opportunity.warning) && (
+                            <p className="strategy-risk-warning">{scorePresentation.opportunity.warning}</p>
+                          )}
+                          {scorePresentation.opportunity.plan && !stockData.reportRecommendation.includes(scorePresentation.opportunity.plan) && (
+                            <p><strong>{scorePresentation.opportunity.planLabel}：</strong>{scorePresentation.opportunity.plan}</p>
+                          )}
+                        </div>
+                      )}
                       <MarkdownBlock text={stockData.reportRecommendation} effectiveLang={effectiveLang} />
                     </div>
                   </div>
