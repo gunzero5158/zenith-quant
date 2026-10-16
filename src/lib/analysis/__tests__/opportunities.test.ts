@@ -4,6 +4,7 @@ import type { EvidenceItem, EvidenceSnapshot } from "../evidence";
 import { buildPriceActionFacts, buildTradePlans, planIsExecutable, priceActionEvidence } from "../opportunities";
 import { calculateEntryAssessment } from "../scoring";
 import { buildStrategyAdvice } from "../strategyAdvice";
+import { opportunityPresentation } from "../opportunityPresentation";
 
 function item(family: EvidenceItem["family"], values: EvidenceItem["values"], state = "neutral"): EvidenceItem {
   return { id: `daily.${family}.${state}`, family, values, state, timeframe: "daily", direction: "neutral",
@@ -28,6 +29,23 @@ function snapshot(overrides: Partial<EvidenceSnapshot> = {}): EvidenceSnapshot {
 }
 
 describe("opportunity decisions", () => {
+  it("rejects the reported 688048 path whose confirmation exceeds its first obstacle", () => {
+    const plan = { ...buildTradePlans(snapshot())[0], entry: 183.26, trigger: 195.8,
+      stop: 172.59, target: 189.79, maxEntry: 180.41, priceConfirmed: false };
+    expect(planIsExecutable(plan)).toBe(false);
+    const presentation = opportunityPresentation({ opportunity: {
+      kind: "rebound", status: "watch", horizon: 5, score: 1.6, plan, reasons: [],
+    } }, "zh-CN");
+    expect(presentation.warning).toContain("当前路径不成立");
+    expect(presentation.plan).toContain("首个阻力 189.79");
+    expect(presentation.plan).not.toContain("最高参考入场价");
+  });
+  it("evaluates an unconfirmed plan at confirmation price even when spot payoff is attractive", () => {
+    const plan = { ...buildTradePlans(snapshot())[0], entry: 99, trigger: 109,
+      stop: 94, target: 110, priceConfirmed: false };
+    expect(planIsExecutable(plan)).toBe(false);
+    expect(planIsExecutable({ ...plan, trigger: 101 })).toBe(true);
+  });
   it("allows a confirmed short rebound while keeping the bearish weekly background", () => {
     const result = calculateEntryAssessment(snapshot());
     expect(result.opportunity?.kind).toBe("rebound");

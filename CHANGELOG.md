@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.1 - 2026-10-16
+
+### Fixed
+- Evaluate unconfirmed opportunities at their required confirmation price, including reward/risk scoring. Reject paths whose first obstacle or viable entry range lies below confirmation; present their levels as observation candidates rather than executable trades.
+- Require rule-mode AI reports to acknowledge the selected status, plan, stop, and target. On mismatch, preserve technical synthesis but use the local summary and actions with a visible explanation. Clarify that oversold potential and nearby support do not authorize an entry or redefine its stop.
+- Distinguish missing horizontal support from other support types and clarify that VPVR POC is historical volume concentration, not automatically a target.
+
+### Changed
+- Replace the crowded upper-right score box with a full-width responsive decision summary: entry quality, opportunity/trend, and price-reference cards, with separate expandable risk conditions and model details.
+- Invalidate earlier cached analyses and derive the loading screen version from package metadata.
+
+### Validation
+- 422 tests, lint, and production build passed. Live 688048.SS analysis returned non-mock EastMoney data; model-generated prose still requires live-model acceptance.
+
 ## 0.7.0 - 2026-10-16
 
 ### Added

@@ -204,6 +204,12 @@ export function buildStrategyAdvice(
     trigger,
     text: exitStopText(normalizedLanguage, structuralStop, atrStop, trigger),
   };
+  if (selectedPlan && assessment.opportunity?.status !== "triggered") {
+    const note = normalizedLanguage === "en" ? "Candidate risk boundary only; no new entry is authorized. "
+      : normalizedLanguage === "ja" ? "候補のリスク境界です。新規エントリーは未承認です。"
+        : "以下仅为候选方案的风险边界，不代表已允许开仓。";
+    exitStop.text = note + exitStop.text;
+  }
 
   return { holder, leftEntry, rightAdd, exitStop };
 }

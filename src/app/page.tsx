@@ -1248,8 +1248,8 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="stats-grid" style={styles.statsContainer}>
-                  <div className="stat-item stat-item-score" style={styles.statItem}>
+                <div className="decision-grid">
+                  <div className="decision-card decision-score">
                     <span style={styles.statLabel} title={scorePresentation?.opportunity?.note}>{scorePresentation?.opportunity?.label || jevPresentation?.finalLabel || scorePresentation?.finalLabel || t.scoreLabel}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                       <div style={styles.statValue}>
@@ -1260,19 +1260,55 @@ export default function Home() {
                     </div>
                     {scorePresentation && stockData.entryAssessment && (
                       <>
-                        {scorePresentation.opportunity && (
-                          <div style={{ fontSize: 12, lineHeight: 1.6, color: "#d1d4dc", maxWidth: 340, whiteSpace: "normal" }}>
-                            <div>{scorePresentation.opportunity.trend}</div>
-                            <div>{scorePresentation.opportunity.opportunity}</div>
-                            {scorePresentation.opportunity.plan && (
-                              <details>
-                                <summary style={{ cursor: "pointer" }}>{effectiveLang === "en" ? "Entry & risk plan" : effectiveLang === "ja" ? "エントリーとリスク計画" : "入场与风险计划"}</summary>
-                                <div>{scorePresentation.opportunity.plan}</div>
-                              </details>
-                            )}
-                          </div>
-                        )}
-                        <details style={{ fontSize: 12, lineHeight: 1.6 }}>
+                        <div style={styles.scenarioRow}>
+                          <span style={{ ...styles.scenarioBadge, ...scenarioTone(stockData.entryAssessment.leftStatus) }}>
+                            {scorePresentation.leftLabel} {scorePresentation.leftText}
+                          </span>
+                          <span style={{ ...styles.scenarioBadge, ...scenarioTone(stockData.entryAssessment.rightStatus) }}>
+                            {scorePresentation.rightLabel} {scorePresentation.rightText}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {scorePresentation?.opportunity && (
+                    <div className="decision-card decision-opportunity">
+                      <span className="decision-label">{effectiveLang === "en" ? "Opportunity & trend" : effectiveLang === "ja" ? "機会とトレンド" : "机会与趋势"}</span>
+                      <div className="decision-opportunity-title">
+                        <strong>{scorePresentation.opportunity.kind}</strong>
+                        <span className="decision-status">{scorePresentation.opportunity.status}</span>
+                      </div>
+                      <span>{scorePresentation.opportunity.trend}</span>
+                      <span className="decision-secondary">{scorePresentation.opportunity.horizon} · {scorePresentation.opportunity.action}</span>
+                    </div>
+                  )}
+
+                  <div className="decision-card">
+                    <span style={styles.statLabel}>{t.supportLabel}</span>
+                    <span style={{ ...styles.statValue, color: "#089981" }}>
+                      {stockData.sr.horizontalSupports[0] ? `${stockData.currencySymbol || getMarketCurrencySymbol(stockData.symbol || activeSymbol)}${stockData.sr.horizontalSupports[0].toFixed(2)}` : (effectiveLang === "en" ? "Not identified" : effectiveLang === "ja" ? "未検出" : "未识别")}
+                    </span>
+                    <span className="decision-secondary">{effectiveLang === "en" ? "Horizontal levels only" : effectiveLang === "ja" ? "水平支持線のみ" : "仅指水平支撑，不含均线与筹码区"}</span>
+                  </div>
+
+                  <div className="decision-card">
+                    <span style={styles.statLabel}>{t.resistanceLabel}</span>
+                    <span style={{ ...styles.statValue, color: "#f23645" }}>
+                      {stockData.sr.horizontalResistances[0] ? `${stockData.currencySymbol || getMarketCurrencySymbol(stockData.symbol || activeSymbol)}${stockData.sr.horizontalResistances[0].toFixed(2)}` : t.noResistance}
+                    </span>
+                  </div>
+
+                  <div className="decision-card">
+                    <span style={styles.statLabel}>{t.pocLabel}</span>
+                    <span style={{ ...styles.statValue, color: "#fbbf24" }}>
+                      {stockData.currencySymbol || getMarketCurrencySymbol(stockData.symbol || activeSymbol)}{stockData.sr.volumePOC.toFixed(2)}
+                    </span>
+                    <span className="decision-secondary">{effectiveLang === "en" ? "Historical volume peak, not a target" : effectiveLang === "ja" ? "過去の出来高集中点・目標ではありません" : "历史成交密集价，不等同于目标价"}</span>
+                  </div>
+                  {scorePresentation?.opportunity && (
+                    <div className="decision-plan">
+                      <details style={{ fontSize: 12, lineHeight: 1.6 }}>
                           <summary style={{ cursor: "pointer" }}>{scorePresentation.opportunity?.detailsLabel || (effectiveLang === "en" ? "Model details" : effectiveLang === "ja" ? "モデルの詳細" : "模型详情")}</summary>
                         {jevPresentation ? (
                           <>
@@ -1310,44 +1346,16 @@ export default function Home() {
                         </div>
                         )}
                         </details>
-                        <div style={styles.scenarioRow}>
-                          <span style={{ ...styles.scenarioBadge, ...scenarioTone(stockData.entryAssessment.leftStatus) }}>
-                            {scorePresentation.leftLabel} {scorePresentation.leftText}
-                          </span>
-                          <span style={{ ...styles.scenarioBadge, ...scenarioTone(stockData.entryAssessment.rightStatus) }}>
-                            {scorePresentation.rightLabel} {scorePresentation.rightText}
-                          </span>
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  <div className="stat-divider" style={styles.statDivider} />
-
-                  <div className="stat-item" style={styles.statItem}>
-                    <span style={styles.statLabel}>{t.supportLabel}</span>
-                    <span style={{ ...styles.statValue, color: "#089981" }}>
-                      {stockData.sr.horizontalSupports[0] ? `${stockData.currencySymbol || getMarketCurrencySymbol(stockData.symbol || activeSymbol)}${stockData.sr.horizontalSupports[0].toFixed(2)}` : t.noSupport}
-                    </span>
-                  </div>
-
-                  <div className="stat-divider" style={styles.statDivider} />
-
-                  <div className="stat-item" style={styles.statItem}>
-                    <span style={styles.statLabel}>{t.resistanceLabel}</span>
-                    <span style={{ ...styles.statValue, color: "#f23645" }}>
-                      {stockData.sr.horizontalResistances[0] ? `${stockData.currencySymbol || getMarketCurrencySymbol(stockData.symbol || activeSymbol)}${stockData.sr.horizontalResistances[0].toFixed(2)}` : t.noResistance}
-                    </span>
-                  </div>
-
-                  <div className="stat-divider" style={styles.statDivider} />
-
-                  <div className="stat-item" style={styles.statItem}>
-                    <span style={styles.statLabel}>{t.pocLabel}</span>
-                    <span style={{ ...styles.statValue, color: "#fbbf24" }}>
-                      {stockData.currencySymbol || getMarketCurrencySymbol(stockData.symbol || activeSymbol)}{stockData.sr.volumePOC.toFixed(2)}
-                    </span>
-                  </div>
+                      {scorePresentation.opportunity.warning && <p className="decision-warning">{scorePresentation.opportunity.warning}</p>}
+                      {scorePresentation.opportunity.plan && (
+                        <details>
+                          <summary>{effectiveLang === "en" ? "Price conditions & risk boundaries" : effectiveLang === "ja" ? "価格条件とリスク境界" : "查看价格条件与风险边界"}</summary>
+                          <p className="decision-secondary">{scorePresentation.opportunity.planLabel}</p>
+                          <p>{scorePresentation.opportunity.plan}</p>
+                        </details>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

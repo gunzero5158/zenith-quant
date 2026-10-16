@@ -929,7 +929,7 @@ export async function POST(request: Request) {
           aiOutlook: aiScoreReview.review?.outlook,
           finalScore: aiScoreReview.finalScore,
         };
-        const composedReport = composeAiReport(parsed, localReport, effectiveLang, evidenceIds);
+        const composedReport = composeAiReport(parsed, localReport, effectiveLang, evidenceIds, finalAssessment);
         reportOverview = composedReport.overview;
         reportRecommendation = composedReport.recommendation;
         reportTechnical = composedReport.technicalAnalysis;

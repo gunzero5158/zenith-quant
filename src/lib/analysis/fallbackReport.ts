@@ -112,7 +112,8 @@ export function generateLocalReport(input: LocalReportInput, lang: string = "zh-
     `- ${labels.left}: ${strategyAdvice.leftEntry.text}`,
     `- ${labels.right}: ${strategyAdvice.rightAdd.text}`,
     `- ${labels.exit}: ${strategyAdvice.exitStop.text}`,
-    opportunity.plan,
+    opportunity.warning,
+    opportunity.plan ? `${opportunity.planLabel}: ${opportunity.plan}` : undefined,
   ].filter(Boolean).join("\n");
 
   const sections: string[] = [`### ${labels.technical}`];

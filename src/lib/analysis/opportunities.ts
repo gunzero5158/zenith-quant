@@ -1,7 +1,7 @@
 import type { EvidenceItem, EvidenceSnapshot, ScenarioStatus, TradeLevel } from "./evidence";
 import type { Candle } from "./indicators";
 
-export const DECISION_VERSION = "opportunities-1";
+export const DECISION_VERSION = "opportunities-2";
 export const MIN_ENTRY_REWARD_RISK = 1.2;
 export type OpportunityKind = "rebound" | "pullback" | "breakout";
 export type OpportunityStatus = ScenarioStatus | "invalidated";
@@ -238,8 +238,10 @@ export function buildTradePlans(snapshot: EvidenceSnapshot, candles: Candle[] = 
     const targetPrice = target ? roundPrice(target.price) : undefined;
     const risk = stop !== undefined ? snapshot.price - stop : undefined;
     const trigger = isBreakout ? breakoutLevel ?? targets.find(level => level.kind === "resistance")?.price
-      : anchor?.level ?? (facts?.localHighBreak ? facts.localTriggerHigh : facts?.previousHigh);
+      : anchor?.level ?? (facts?.higherLow ? facts.previousHigh : facts?.localTriggerHigh);
     const priceConfirmed = isBreakout ? Boolean(breakoutLevel && snapshot.price > breakoutLevel) : reversalConfirmed;
+    const evaluationEntry = !priceConfirmed && finitePositive(trigger) ? Math.max(snapshot.price, trigger) : snapshot.price;
+    const evaluationRisk = stop !== undefined ? evaluationEntry - stop : undefined;
     const confirmationAgeBars = !priceConfirmed ? undefined : isBreakout
       ? facts?.resistanceBroken ? 0
         : confirmedPattern && finitePositive(confirmedPattern.values?.triggerPrice) ? confirmedPattern.barsSince
@@ -260,7 +262,7 @@ export function buildTradePlans(snapshot: EvidenceSnapshot, candles: Candle[] = 
       confirmedAt, confirmationAgeBars,
       stop, stopSource, stopBasis,
       target: targetPrice, targetSource: target?.source,
-      rewardRisk: risk && targetPrice ? (targetPrice - snapshot.price) / risk : undefined,
+      rewardRisk: evaluationRisk && targetPrice ? (targetPrice - evaluationEntry) / evaluationRisk : undefined,
       stopDistancePct: risk ? risk / snapshot.price * 100 : undefined,
       stopTrigger: kind === "rebound" ? "intraday" : "close",
       minimumStopDistance: noiseFloor, maxEntry, expiresAfterBars: horizon,
@@ -276,9 +278,12 @@ export function buildTradePlans(snapshot: EvidenceSnapshot, candles: Candle[] = 
 
 export function planIsExecutable(plan: CandidateTradePlan | undefined, price = plan?.entry): boolean {
   if (!plan || !finitePositive(price) || !finitePositive(plan.stop) || !finitePositive(plan.target)) return false;
-  const risk = price - plan.stop;
-  return risk >= plan.minimumStopDistance * 0.99 && plan.target > price
-    && (plan.target - price) / risk >= MIN_ENTRY_REWARD_RISK;
+  // An unconfirmed plan must remain viable at its required confirmation price,
+  // not just at the cheaper price observed before confirmation.
+  const entry = !plan.priceConfirmed && finitePositive(plan.trigger) ? Math.max(price, plan.trigger) : price;
+  const risk = entry - plan.stop;
+  return risk >= plan.minimumStopDistance * 0.99 && plan.target > entry
+    && (plan.target - entry) / risk >= MIN_ENTRY_REWARD_RISK;
 }
 
 export function currentTrend(snapshot: EvidenceSnapshot): { daily: "bullish" | "bearish" | "neutral"; weekly: "bullish" | "bearish" | "neutral" } {

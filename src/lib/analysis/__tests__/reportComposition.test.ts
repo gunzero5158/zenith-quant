@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { composeAiReport } from "../reportComposition";
+import type { EntryAssessment } from "../scoring";
 
 const localReport = {
   overview: "### 入场评估\n本地综述",
@@ -8,6 +9,20 @@ const localReport = {
 };
 
 describe("AI report composition", () => {
+  it("retains technical synthesis but rejects actions with mismatched rule-plan boundaries", () => {
+    const assessment = { opportunity: { status: "watch", plan: { id: "rebound:test", stop: 172.59, target: 189.79 } } } as EntryAssessment;
+    const ai = { overview: "Buy near 181.60", strategyCommentary: "Stop at 181.60", technicalAnalysis: "Detailed technical interpretation",
+      decisionCheck: { status: "triggered", planId: "rebound:test", stop: 181.6, target: 189.79 } };
+    const result = composeAiReport(ai, localReport, "en", [], assessment);
+    expect(result.overview).toContain(localReport.overview);
+    expect(result.overview).not.toContain("Buy near");
+    expect(result.recommendation).not.toContain("181.60");
+    expect(result.technicalAnalysis).toBe(ai.technicalAnalysis);
+    const aligned = composeAiReport({ ...ai, overview: "Wait", decisionCheck: {
+      status: "watch", planId: "rebound:test", stop: 172.59, target: 189.79,
+    } }, localReport, "en", [], assessment);
+    expect(aligned.overview).toBe("Wait");
+  });
   it("removes machine evidence IDs from every user-visible AI field", () => {
     const report = composeAiReport({
       overview: "日线仍偏弱（`daily.ema.bearish`），反弹需要确认。",

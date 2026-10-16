@@ -68,7 +68,7 @@ describe("evidence-based local report", () => {
     const report = generateLocalReport(fixture, "en");
     expect(report.overview).toContain("trading days");
     expect(report.overview).toContain("Price confirmation is missing");
-    expect(report.recommendation).toContain("First target");
+    expect(report.recommendation).toContain("First obstacle");
   });
   it("localizes section headings and incomplete-bar warnings", () => {
     const fixture = reportFixture();

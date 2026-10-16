@@ -64,9 +64,14 @@ Writing requirements:
 - The technicalAnalysis must use concise Markdown headings and bullets. Organize only the meaningful findings among trend and multi-timeframe structure; support/resistance, Fibonacci, VPVR and ATR; MACD/KDJ/RSI; volume/CMF/OBV; Ichimoku; classical and candlestick patterns; TD Sequential; Elliott Wave; and Chanlun.
 - The strategyCommentary should add context or change conditions without repeating the supplied four-part holder, left-entry, right-add, and exit/stop strategy verbatim.
 - Use only supplied facts. Do not invent fundamentals, news, targets, or unseen price levels.
+- The selected opportunity status and supplied strategy actions are binding in ALL prose, including the overview. When status is watch, not_formed, provisional, too_late, or invalidated, do not recommend probing, buying, or entering at support. Explain what must change instead. Oversold potential is not an entry authorization.
+- A support level is not automatically the selected stop. Never replace the selected plan's stop with a nearby VPVR/BOLL support in prose. Distinguish support failure risk from the plan's actual stop.
+- Candidate plans can be infeasible: if an unconfirmed trigger is above the first target or maximum entry, explicitly say no executable path exists under the current levels. Do not present those numbers as a trade to execute, skip the first obstacle, or suggest buying below the trigger to fix reward/risk.
 
 Return JSON only with this shape:
+decisionCheck must copy the selected ruleAssessment.opportunity.status and plan id/stop/target exactly (null for absent prices). Do not round them. These values must also govern the overview and strategyCommentary.
 {
+  "decisionCheck": { "status": "watch", "planId": "copy selected plan id", "stop": null, "target": null },
   "overview": "string",
   "technicalAnalysis": "string",
   "strategyCommentary": "string",

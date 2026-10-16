@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import type { EffectiveLanguage } from "@/lib/i18n/translations";
+import { version } from "../../package.json";
 
 interface LoadingOverlayProps {
   symbol: string;
@@ -96,7 +97,7 @@ const getTerminalLogsForStep = (step: number, symbol: string) => {
   switch (step) {
     case 0:
       return [
-        `${time()} [SYSTEM] Initializing Zenith-Quant Engine v0.3.0...`,
+        `${time()} [SYSTEM] Initializing Zenith-Quant Engine v${version}...`,
         `${time()} [NET] Connecting to market server cluster...`,
         `${time()} [NET] Establishing WebSocket handshake with remote host...`,
         `${time()} [NET] Connection open. Protocol: secure wss/rest tunnel.`,
