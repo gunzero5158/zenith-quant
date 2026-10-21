@@ -57,5 +57,8 @@ describe("AI-native analyst prompt", () => {
     expect(prompt).toContain('"forecastEvents"');
     expect(prompt).not.toContain("ruleScore");
     expect(prompt).not.toContain("hardCap");
+    expect(prompt).not.toContain('"candidatePlans"');
+    expect(prompt).not.toContain('"tradePlans"');
+    expect(prompt).toContain("Before writing, form ONE coherent decision");
   });
 });

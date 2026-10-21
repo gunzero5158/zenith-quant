@@ -32,7 +32,8 @@ export function resolveJevEndpoint(baseUrl: string | undefined): string {
 export async function requestJevDecision(
   state: unknown,
   questions: Record<string, JevQuestion>,
-  config: JevConfig
+  config: JevConfig,
+  deadline = Date.now() + 100_000
 ): Promise<JevResponse> {
   if (!config.apiKey) {
     throw new Error("Missing API Key for Jev");
@@ -53,12 +54,14 @@ export async function requestJevDecision(
   };
 
   for (let attempt = 0; ; attempt++) {
-    const res = await fetchWithTimeout(url, init, "Jev", JEV_TIMEOUT_MS);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error("Jev request deadline exhausted");
+    const res = await fetchWithTimeout(url, init, "Jev", Math.min(JEV_TIMEOUT_MS, remaining));
     if (res.ok) {
       return parseUpstreamJson<JevResponse>("Jev", res);
     }
     const retryDelay = JEV_RETRY_DELAYS_MS[attempt];
-    if ((res.status === 429 || res.status === 529) && retryDelay !== undefined) {
+    if ((res.status === 429 || res.status === 529) && retryDelay !== undefined && Date.now() + retryDelay < deadline) {
       await new Promise((resolve) => setTimeout(resolve, retryDelay));
       continue;
     }

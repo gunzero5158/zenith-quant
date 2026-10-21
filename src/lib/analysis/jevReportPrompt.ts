@@ -1,6 +1,7 @@
 import { Candle } from "./indicators";
 import { EvidenceSnapshot } from "./evidence";
 import { JevDecision, jevConfidenceReason } from "./jevDecision";
+import { REPORT_CONSISTENCY_CONTRACT } from "./reportContract";
 
 interface JevReportPromptInput {
   snapshot: EvidenceSnapshot;
@@ -37,12 +38,14 @@ export function buildJevReportPrompt(input: JevReportPromptInput): string {
     weeklyRegime: omittedWeeklyRegime,
     dailyPhase: omittedDailyPhase,
     dataQuality: omittedDataQuality,
+    tradePlans: omittedTradePlans,
     ...objectiveSnapshot
   } = input.snapshot;
   void omittedScoreCap;
   void omittedWeeklyRegime;
   void omittedDailyPhase;
   void omittedDataQuality;
+  void omittedTradePlans;
 
   // As in LLM-native mode, the rule engine's bullish/bearish tags are withheld;
   // Jev's readings are the only interpretation the report builds on.
@@ -72,6 +75,7 @@ Output language: ${targetLanguage(input.language)}.
 Write every user-visible string in that language. Indicator abbreviations may remain unchanged.
 
 Division of labor:
+${REPORT_CONSISTENCY_CONTRACT}
 - A decision model (Jev) has already made every judgment in immutableDecision: the declared forecast event with probabilities, 0-5 entry attractiveness, opportunity status, actions, stop trigger, and stop/target prices. A weak current trend can coexist with a short rebound opportunity; do not confuse the horizons.
 - Your job is to explain those decisions with the supplied evidence so that a reader understands why they are reasonable, what would confirm them, and what would invalidate them.
 - Never change, soften, or contradict a decision. If the evidence contains a meaningful counter-argument, present it as a risk or as a condition that would change the view, not as a different conclusion.
@@ -92,9 +96,11 @@ Writing requirements:
 - strategyCommentary: most important confirmation and invalidation conditions without repeating the four strategy items.
 - reasons: 3-5 items explaining the finalScore and outlook.
 - strategyTexts: one short paragraph each, consistent with holderAction, leftEntryAction, rightAddAction, and stopTrigger.
+- currentTrend: summarize Jev's daily/weekly readings as bullish, neutral or bearish; this describes the current background, not the future forecast.
 
 Return JSON only:
 {
+  "currentTrend": { "daily": "neutral", "weekly": "neutral" },
   "overview": "string",
   "technicalAnalysis": "string",
   "strategyCommentary": "string",
@@ -138,6 +144,7 @@ export function mergeJevDecisionWithReport(
     strategyCommentary: report.strategyCommentary,
     scoreAssessment: {
       outlook: decision.outlook,
+      currentTrend: report.currentTrend,
       finalScore: decision.finalScore,
       confidence: decision.confidence,
       confidenceReason: jevConfidenceReason(decision, language),

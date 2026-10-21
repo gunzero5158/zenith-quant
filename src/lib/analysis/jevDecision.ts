@@ -1,8 +1,9 @@
 import type { Candle } from "./indicators";
 import type { EvidenceDirection, EvidenceSnapshot, ScenarioStatus, SignalFamily, Timeframe, TradeLevel } from "./evidence";
 import type { AiMarketOutlook, AiStrategyAdvice } from "./aiAnalysisResult";
-import { forecastEvent, planIsExecutable } from "./opportunities";
+import { forecastEvent } from "./opportunities";
 import type { CandidateTradePlan, ForecastEvent } from "./opportunities";
+import { REPORT_CONSISTENCY_CONTRACT } from "./reportContract";
 
 // Jev (TypeSafe System One) answers typed questions with calibrated
 // probabilities instead of prose. It is weak at arithmetic and degrades with
@@ -137,7 +138,6 @@ export interface JevDecision {
 
 const MAX_LEVEL_CANDIDATES = 8;
 const NO_LEVEL = "none";
-const MIN_EXECUTABLE_REWARD_RISK = 1.2;
 
 interface SetupStageDefinition {
   description: string;
@@ -350,10 +350,11 @@ export function buildJevDecisionRequest(input: {
   } satisfies JevQuestion]));
 
   const state = {
+    analysisContract: REPORT_CONSISTENCY_CONTRACT,
     task: "Technical-analysis evidence for one stock, used to judge a long-only swing trade over the next 5-20 trading days.",
     symbol: snapshot.symbol,
     currentPrice: snapshot.price,
-    candidatePlans: snapshot.tradePlans,
+    opportunityTypes: snapshot.tradePlans?.map(plan => ({id:plan.id, kind:plan.kind, horizon:plan.horizon})),
     forecastEvents: [forecastEvent(snapshot, 5), forecastEvent(snapshot, 10)],
     priceEvents: snapshot.priceAction,
     priceAction: {
@@ -393,9 +394,9 @@ export function buildJevDecisionRequest(input: {
 
   if (snapshot.tradePlans) primaryQuestions.selectedPlan = {
     type: "choice",
-    instructions: "Choose the complete candidate plan that best represents the opportunity you are assessing, including a watch candidate if not yet executable. Do not mix stop and target across candidates. Choose none if no opportunity is relevant.",
+    instructions: "Choose the opportunity type and horizon reference that best represents your judgment, including a watch candidate. Candidate confirmation flags and prices are references, not approval gates. Stop and target are selected independently in the next stage. Choose none if no opportunity is relevant.",
     criteria: { ...Object.fromEntries(snapshot.tradePlans.map(plan => [plan.id,
-      `${plan.kind}: ${plan.horizon} trading days; entry ${plan.entry}, stop ${plan.stop ?? "missing"} (${plan.stopBasis}), first target ${plan.target ?? "missing"}, reward/risk ${plan.rewardRisk?.toFixed(2) ?? "unknown"}, price confirmation ${plan.priceConfirmed}.`])),
+      `${plan.kind}: ${plan.horizon} trading days. Independently judge its status and select risk levels in the next step.`])),
       none: "No relevant opportunity." },
   };
 
@@ -455,7 +456,7 @@ export function buildJevFollowUpRequest(
   const state = {
     ...request.state,
     decisionsSoFar: {
-      selectedPlan: selected ?? "none",
+      selectedPlan: selected ? {id:selected.id, kind:selected.kind, horizon:selected.horizon} : "none",
       forecastEvent: forecast,
       outlook: `${primary.outlook} (probabilities: bullish ${pct(primary.outlookProbabilities.bullish)}, neutral ${pct(primary.outlookProbabilities.neutral)}, bearish ${pct(primary.outlookProbabilities.bearish)})`,
       setupStage: SETUP_STAGES[primary.setupStage].description,
@@ -503,9 +504,7 @@ export function buildJevFollowUpRequest(
         neutral: `Closing price between ${forecast?.lowerPrice} and ${forecast?.upperPrice}, inclusive.`,
         bearish: `Closing price strictly below ${forecast?.lowerPrice}.` },
     };
-    // Stop, target, horizon and stop trigger are one frozen candidate contract.
-    delete questions.stopTrigger;
-    return { state, questions };
+    // Keep separate level/trigger questions: the local candidate is not a binding trade.
   }
 
   if (request.stopCandidates.length > 0) {
@@ -630,48 +629,28 @@ export function resolveJevDecision(
   if (!entry || typeof entry.score !== "number" || !Number.isFinite(entry.score)) {
     throw new Error('Jev answer "entryQuality" is missing a numeric score');
   }
-  let holderAction = choiceAnswer(answers, "holderAction", ["hold", "hold_protect", "reduce", "exit"] as const).choice;
+  const holderAction = choiceAnswer(answers, "holderAction", ["hold", "hold_protect", "reduce", "exit"] as const).choice;
   const selected = request.candidatePlans?.find(plan => plan.id === primary.selectedPlanId);
   const forecast = request.forecastEvents?.find(event => event.horizon === (selected?.horizon ?? 10));
   const future = request.candidatePlans ? choiceAnswer(answers, "forecast", ["bullish", "neutral", "bearish"] as const) : undefined;
-  const stopTrigger = request.candidatePlans ? selected?.stopTrigger ?? "close"
-    : choiceAnswer(answers, "stopTrigger", ["close", "intraday"] as const).choice;
+  const stopTrigger = choiceAnswer(answers, "stopTrigger", ["close", "intraday"] as const).choice;
 
-  const stop = request.candidatePlans ? selected?.stop : candidatePrice(answers, "stopLevel", request.stopCandidates);
-  let target = request.candidatePlans ? selected?.target : candidatePrice(answers, "targetLevel", request.targetCandidates);
-  if (stop === undefined && target !== undefined) {
-    target = undefined;
-    adjustments.push("Dropped the target because no defensible stop was selected.");
+  const stop = candidatePrice(answers, "stopLevel", request.stopCandidates);
+  const target = candidatePrice(answers, "targetLevel", request.targetCandidates);
+  const setupStage = primary.setupStage;
+  const stage = SETUP_STAGES[setupStage];
+  if (stage.withoutEntry && request.candidatePlans && !selected) {
+    throw new Error("Jev active opportunity contradicts selectedPlan=none");
   }
-
-  let setupStage = primary.setupStage;
-  if (request.candidatePlans && SETUP_STAGES[setupStage].withoutEntry) {
-    if (!selected || !selected.priceConfirmed || !planIsExecutable(selected) || (request.dailySamples ?? 0) < 35 || future?.choice === "bearish") {
-      adjustments.push("Entry deferred: price confirmation, complete risk plan, valid data and same-horizon forecast must be consistent.");
-      setupStage = SETUP_STAGES[setupStage].withoutEntry!;
-    } else if (selected.side === "left") setupStage = "left_triggered";
-    else setupStage = "right_triggered";
-  }
-  const waitingStage = SETUP_STAGES[setupStage].withoutEntry;
-  if (waitingStage && (stop === undefined || target === undefined)) {
-    adjustments.push(`Setup stage lowered from ${setupStage} to ${waitingStage}: an executable entry needs both a stop and a target.`);
-    setupStage = waitingStage;
-  } else if (waitingStage && stop !== undefined && target !== undefined) {
-    // Jev cannot do arithmetic, so the payoff of its chosen pair is checked here
-    // against the same threshold the rule engine uses for an executable entry.
-    const rewardRisk = (target - request.price) / (request.price - stop);
-    if (!(rewardRisk >= MIN_EXECUTABLE_REWARD_RISK)) {
-      adjustments.push(`Setup stage lowered from ${setupStage} to ${waitingStage}: the chosen stop and target give a reward-to-risk of ${rewardRisk.toFixed(2)}, below ${MIN_EXECUTABLE_REWARD_RISK}.`);
-      setupStage = waitingStage;
-    }
+  if (stage.withoutEntry && (stop === undefined || target === undefined)) {
+    throw new Error("Jev entry action requires a stop and target; revise the model decision");
   }
   if (holderAction === "hold_protect" && stop === undefined) {
-    holderAction = "hold";
-    adjustments.push("Protective hold changed to hold: no defensible stop was selected.");
+    throw new Error("Jev protective hold requires a stop; revise the model decision");
   }
-
-  const stage = SETUP_STAGES[setupStage];
-  const provisional = Boolean(request.candidatePlans && !request.dailyBarComplete && stage.withoutEntry);
+  if (stage.withoutEntry && selected && ((stage.left === "triggered") !== (selected.side === "left"))) {
+    throw new Error("Jev stage and selected opportunity side contradict each other");
+  }
   return {
     selectedPlanId: selected?.id,
     forecast,
@@ -687,12 +666,12 @@ export function resolveJevDecision(
     disagreement: summarizeDisagreement(readings),
     setupStage,
     stageConfidence: primary.stageConfidence,
-    leftStatus: provisional && stage.left === "triggered" ? "provisional" : stage.left,
-    rightStatus: provisional && stage.right === "triggered" ? "provisional" : stage.right,
-    activeSetup: provisional ? "none" : stage.left === "triggered" ? "left" : stage.right === "triggered" ? "right" : "none",
+    leftStatus: stage.left,
+    rightStatus: stage.right,
+    activeSetup: stage.left === "triggered" ? "left" : stage.right === "triggered" ? "right" : "none",
     holderAction,
-    leftEntryAction: provisional && stage.leftAction === "probe" ? "wait" : stage.leftAction,
-    rightAddAction: provisional && stage.rightAction === "add_on_retest" ? "wait_breakout" : stage.rightAction,
+    leftEntryAction: stage.leftAction,
+    rightAddAction: stage.rightAction,
     stopTrigger,
     stop,
     target,

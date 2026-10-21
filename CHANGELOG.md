@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.0 - 2026-10-21
+
+### Changed
+- Isolate local fallback reports from all three AI report paths. Successful reports retain model-authored summaries, strategies and technical discussion without local template substitution.
+- Share a fact/condition/horizon consistency contract at generation time. Reject contradictory structured decisions instead of rewriting them; allow one model repair within the original timeout budget.
+- Keep rule-score arithmetic in rule+AI mode, but let the AI independently interpret facts and author its strategy. Remove rule-based score caps, entry downgrades and prose replacement from pure LLM and Jev report validation.
+- Remove locally injected strategy warnings from AI reports and invalidate old report caches so previously substituted reports are not reused.
+
+### Notes
+- Model judgment and prose consistency still require live acceptance; deterministic checks do not prove forecasts correct or exhaustively verify natural-language claims.
+
+## 0.7.3 - 2026-10-16
+
+### Changed
+- Compact the opportunity card across all modes: show status once, distinguish current daily/weekly conditions from the AI forecast horizon, and combine certainty with its non-win-rate label.
+- Remove empty status badges and redundant separators. Use the declared forecast horizon even when no opportunity is selected.
+
 ## 0.7.2 - 2026-10-16
 
 ### Changed

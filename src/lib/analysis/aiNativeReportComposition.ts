@@ -1,5 +1,6 @@
 import type { AiAnalysisResult } from "./aiAnalysisResult";
 import type { StructuredReport } from "./fallbackReport";
+import { composeAiReport } from "./reportComposition";
 
 const HEADINGS: Record<string, [string, string, string, string, string]> = {
   "zh-CN": ["持仓策略", "左侧入场", "右侧加仓", "退出与止损", "变化条件"],
@@ -10,15 +11,16 @@ const HEADINGS: Record<string, [string, string, string, string, string]> = {
 
 export function composeAiNativeReport(ai: AiAnalysisResult, language: string): StructuredReport {
   const headings = HEADINGS[language] ?? HEADINGS["zh-CN"];
+  const report = composeAiReport(ai);
   return {
-    overview: ai.overview,
+    overview: report.overview,
     recommendation: [
       `### ${headings[0]}\n${ai.strategyAdvice.holder.text}`,
       `### ${headings[1]}\n${ai.strategyAdvice.leftEntry.text}`,
       `### ${headings[2]}\n${ai.strategyAdvice.rightAdd.text}`,
       `### ${headings[3]}\n${ai.strategyAdvice.exitStop.text}`,
-      `### ${headings[4]}\n${ai.strategyCommentary}`,
+      `### ${headings[4]}\n${report.recommendation}`,
     ].join("\n\n"),
-    technicalAnalysis: ai.technicalAnalysis,
+    technicalAnalysis: report.technicalAnalysis,
   };
 }

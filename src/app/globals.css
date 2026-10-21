@@ -50,7 +50,7 @@
 .decision-opportunity-title strong { font-size: 18px; color: var(--text-bright); }
 .decision-status { border: 1px solid var(--border-color); border-radius: 6px; padding: 2px 8px; color: var(--primary-gold); }
 .decision-secondary { color: #a8b5c7; font-size: 13px; }
-.model-outlook { border-top: 1px solid var(--border-color); padding-top: 8px; width: 100%; line-height: 1.5; }
+.model-outlook { width: 100%; line-height: 1.5; overflow-wrap: anywhere; }
 .model-outlook strong { color: var(--text-bright); }
 .strategy-risk-context { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 .strategy-risk-context:empty { display: none; }

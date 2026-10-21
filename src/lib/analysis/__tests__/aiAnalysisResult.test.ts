@@ -95,227 +95,98 @@ function validResult() {
   };
 }
 
-describe("AI-native analysis result validation", () => {
-  it("preserves the AI judgment while deriving risk arithmetic locally", () => {
-    const result = validateAiAnalysisResult(validResult(), snapshot);
-
-    expect(result.scoreAssessment).toMatchObject({
-      source: "ai",
-      outlook: "bullish",
-      finalScore: 3.75,
-      riskPlan: {
-        stop: 95,
-        target: 112,
-        rewardRisk: 2.4,
-        stopDistancePct: 5,
-      },
-    });
-    expect(toLegacyAiScoreDetail(result.scoreAssessment)).toMatchObject({
-      totalScore: 3.75,
-      scoreReasons: ["Trend support is present while momentum is improving."],
-    });
-  });
-
-  it.each([-0.01, 5.01, Number.NaN])("rejects an out-of-range score: %s", (finalScore) => {
+describe("AI report fact and consistency validation", () => {
+  it("preserves model prose, score and judgment while deriving arithmetic", () => {
     const value = validResult();
-    value.scoreAssessment.finalScore = finalScore;
-    expect(() => validateAiAnalysisResult(value, snapshot)).toThrow(/finalScore/);
-  });
-
-  it.each([
-    [78, 0.78],
-    ["78%", 0.78],
-    ["0.78", 0.78],
-    [1, 1],
-  ])("normalizes common confidence format %s", (confidence, expected) => {
-    const value = validResult();
-    value.scoreAssessment.confidence = confidence as number;
-
-    expect(validateAiAnalysisResult(value, snapshot).scoreAssessment.confidence).toBe(expected);
-  });
-
-  it.each([-1, 101, "not-a-number"])('rejects invalid confidence: %s', (confidence) => {
-    const value = validResult();
-    value.scoreAssessment.confidence = confidence as number;
-
-    expect(() => validateAiAnalysisResult(value, snapshot)).toThrow(/confidence/);
-  });
-
-  it("rejects unknown evidence references", () => {
-    const value = validResult();
-    value.scoreAssessment.reasons[0].evidenceIds = ["invented.signal"];
-    expect(() => validateAiAnalysisResult(value, snapshot)).toThrow(/unknown evidence/i);
-  });
-
-  it("rejects strategy advice that is not grounded in supplied evidence", () => {
-    const value = validResult();
-    value.strategyAdvice.leftEntry.evidenceIds = ["invented.signal"];
-    expect(() => validateAiAnalysisResult(value, snapshot)).toThrow(/unknown evidence/i);
-  });
-
-  it("preserves the full analysis when only a watch score is capped", () => {
-    const input = { ...snapshot, tradePlans: buildTradePlans(snapshot) };
-    const value = validResult();
-    Object.assign(value.scoreAssessment, { selectedPlanId: input.tradePlans[0].id,
-      opportunityStatus: "watch", leftStatus: "watch", activeSetup: "none", finalScore: 4.5 });
-    value.strategyAdvice.leftEntry.action = "wait";
-    const result = validateAiAnalysisResult(value, input, "en");
-    expect(result.normalized).toBe(true);
-    expect(result.scoreAssessment.finalScore).toBe(3.2);
+    const result = validateAiAnalysisResult(value, snapshot);
     expect(result.overview).toBe(value.overview);
     expect(result.technicalAnalysis).toBe(value.technicalAnalysis);
     expect(result.strategyCommentary).toBe(value.strategyCommentary);
+    expect(result.strategyAdvice).toEqual(value.strategyAdvice);
+    expect(result.scoreAssessment.riskPlan).toMatchObject({stop:95,target:112,rewardRisk:2.4});
+    expect(toLegacyAiScoreDetail(result.scoreAssessment).totalScore).toBe(3.75);
   });
-
-  it("rejects invalid strategy actions instead of silently replacing them", () => {
-    const value = validResult();
-    value.strategyAdvice.holder.action = "buy_more";
-    expect(() => validateAiAnalysisResult(value, snapshot)).toThrow(/holder.action/);
+  it.each([-0.01, 5.01, Number.NaN])("rejects invalid score %s", finalScore => {
+    const value = validResult(); value.scoreAssessment.finalScore = finalScore;
+    expect(() => validateAiAnalysisResult(value, snapshot)).toThrow(/finalScore/);
   });
-
-  it.each([
-    ["stop above current price", { stop: 101, target: 112 }],
-    ["target below current price", { stop: 95, target: 99 }],
-    ["stop not in supplied levels", { stop: 94, target: 112 }],
-    ["target not in supplied levels", { stop: 95, target: 113 }],
-  ])("removes an unreasonable %s and downgrades the entry", (_name, riskPlan) => {
-    const value = validResult();
-    value.scoreAssessment.riskPlan = riskPlan;
-    const result = validateAiAnalysisResult(value, snapshot, "en");
-
-    expect(result.strategyAdvice.leftEntry.action).toBe("wait");
-    expect(result.scoreAssessment.activeSetup).toBe("none");
-    expect(result.scoreAssessment.leftStatus).toBe("watch");
-    expect(result.scoreAssessment.riskPlan.target).toBeUndefined();
-    expect(result.scoreAssessment.finalScore).toBe(3.75);
+  it.each([[78,0.78],["78%",0.78],["0.78",0.78],[1,1]])("normalizes confidence format %s", (confidence,expected) => {
+    const value = validResult(); value.scoreAssessment.confidence = confidence as number;
+    expect(validateAiAnalysisResult(value,snapshot).scoreAssessment.confidence).toBe(expected);
   });
-
-  it("downgrades an actionable entry when a grounded stop-target pair is incomplete", () => {
-    const value = validResult();
-    value.scoreAssessment.riskPlan = { stop: 95 } as { stop: number; target: number };
-    const result = validateAiAnalysisResult(value, snapshot, "en");
-
-    expect(result.scoreAssessment.activeSetup).toBe("none");
-    expect(result.scoreAssessment.leftStatus).toBe("watch");
-    expect(result.strategyAdvice.leftEntry.action).toBe("wait");
-    expect(result.strategyAdvice.leftEntry.text).toMatch(/No validated stop-target pair/);
-    expect(result.scoreAssessment.finalScore).toBe(3.75);
-    expect(result.normalized).toBe(true);
-    expect(result.overview).not.toBe(value.overview);
-    expect(result.technicalAnalysis).not.toBe(value.technicalAnalysis);
-    expect(result.strategyCommentary).not.toBe(value.strategyCommentary);
-    expect(result.technicalAnalysis).toContain("#### Momentum");
-    expect(result.technicalAnalysis).toContain("MACD");
-    expect(result.scoreAssessment.confidenceReason).not.toBe(value.scoreAssessment.confidenceReason);
-    expect(result.scoreAssessment.reasons[0].text).toContain("consistency checks");
-    expect(result.strategyCommentary).toContain("No validated stop-target pair");
+  it.each([-1,101,"not-a-number"])("rejects invalid confidence %s", confidence => {
+    const value = validResult(); value.scoreAssessment.confidence = confidence as number;
+    expect(() => validateAiAnalysisResult(value,snapshot)).toThrow(/confidence/);
   });
-
-  it("downgrades hold protection when no grounded stop is available", () => {
+  it("rejects fabricated evidence without substituting local prose", () => {
+    const value = validResult(); value.scoreAssessment.reasons[0].evidenceIds = ["invented"];
+    expect(() => validateAiAnalysisResult(value,snapshot)).toThrow(/Unknown evidence/);
+  });
+  it.each([{stop:101,target:112},{stop:95,target:99},{stop:94,target:112},{stop:95,target:113}])("rejects ungrounded prices %j", riskPlan => {
+    const value = validResult(); value.scoreAssessment.riskPlan = riskPlan;
+    const copy = structuredClone(value);
+    expect(() => validateAiAnalysisResult(value,snapshot)).toThrow(/riskPlan/);
+    expect(value).toEqual(copy);
+  });
+  it("rejects contradictory status/action and missing risk without changing the model response", () => {
+    const value = validResult(); value.scoreAssessment.leftStatus = "watch";
+    expect(() => validateAiAnalysisResult(value,snapshot)).toThrow(/triggered leftStatus/);
+    expect(value.strategyAdvice.leftEntry.action).toBe("probe");
+    const incomplete = validResult();
+    incomplete.scoreAssessment.riskPlan = {stop:95} as {stop:number;target:number};
+    expect(() => validateAiAnalysisResult(incomplete,snapshot)).toThrow(/both a grounded stop and target/);
+  });
+  it("rejects protective hold without stop rather than recommending hold locally", () => {
     const value = validResult();
-    value.scoreAssessment.activeSetup = "none";
-    value.scoreAssessment.riskPlan = {} as { stop: number; target: number };
+    Object.assign(value.scoreAssessment,{activeSetup:"none",leftStatus:"watch",riskPlan:{}});
     value.strategyAdvice.leftEntry.action = "wait";
-    const result = validateAiAnalysisResult(value, snapshot, "zh-CN");
-
-    expect(result.strategyAdvice.holder.action).toBe("hold");
-    expect(result.strategyAdvice.holder.text).toContain("缺少可验证的保护止损位");
+    expect(() => validateAiAnalysisResult(value,snapshot)).toThrow(/hold_protect/);
   });
-
-  it("downgrades contradictory setup status and strategy action", () => {
+  it("does not cap a model watch score or replace any text", () => {
     const value = validResult();
-    value.scoreAssessment.leftStatus = "watch";
-    const result = validateAiAnalysisResult(value, snapshot, "en");
-
-    expect(result.scoreAssessment.activeSetup).toBe("none");
-    expect(result.strategyAdvice.leftEntry.action).toBe("wait");
-  });
-
-  it("downgrades a confirmed right-side setup when it is not executable", () => {
-    const value = validResult();
-    value.scoreAssessment.leftStatus = "not_formed";
-    value.scoreAssessment.rightStatus = "triggered";
-    value.scoreAssessment.activeSetup = "right";
-    value.scoreAssessment.riskPlan = { stop: 95 } as { stop: number; target: number };
-    value.strategyAdvice.leftEntry.action = "not_applicable";
-    value.strategyAdvice.rightAdd.action = "add_on_retest";
-
-    const result = validateAiAnalysisResult(value, snapshot, "zh-CN");
-
-    expect(result.scoreAssessment.activeSetup).toBe("none");
-    expect(result.scoreAssessment.rightStatus).toBe("watch");
-    expect(result.strategyAdvice.rightAdd.action).toBe("wait_breakout");
-  });
-
-  it("does not invent a missed left-side entry when the right side confirms", () => {
-    const value = validResult();
-    value.scoreAssessment.leftStatus = "watch";
-    value.scoreAssessment.rightStatus = "triggered";
-    value.scoreAssessment.activeSetup = "right";
+    Object.assign(value.scoreAssessment,{leftStatus:"watch",activeSetup:"none",finalScore:4.5});
     value.strategyAdvice.leftEntry.action = "wait";
-    value.strategyAdvice.rightAdd.action = "add_on_retest";
-
-    const result = validateAiAnalysisResult(value, snapshot);
-    expect(result.scoreAssessment.rightStatus).toBe("triggered");
-    expect(result.scoreAssessment.leftStatus).toBe("watch");
-  });
-
-  it("does not keep an executable long entry under a bearish outlook", () => {
-    const value = validResult();
-    value.scoreAssessment.outlook = "bearish";
-
-    const input = { ...snapshot, tradePlans: buildTradePlans(snapshot) };
-    const result = validateAiAnalysisResult({ ...value, scoreAssessment: { ...value.scoreAssessment,
-      selectedPlanId: input.tradePlans[0].id } }, input);
-    expect(result.scoreAssessment.activeSetup).toBe("none");
-    expect(result.scoreAssessment.leftStatus).toBe("watch");
-    expect(result.strategyAdvice.leftEntry.action).toBe("wait");
-  });
-
-  it("preserves a rebound with a bearish weekly trend and a constructive short forecast", () => {
-    const input = { ...snapshot, weeklyRegime: "bearish" as const, tradePlans: buildTradePlans(snapshot) };
-    input.tradePlans[0].priceConfirmed = true; // This fixture represents an already confirmed price event.
-    const value = validResult();
-    const result = validateAiAnalysisResult({ ...value, scoreAssessment: { ...value.scoreAssessment,
-      selectedPlanId: input.tradePlans[0].id } }, input);
-    expect(result.scoreAssessment.activeSetup).toBe("left");
-    expect(result.scoreAssessment.currentTrend?.weekly).toBe("bearish");
-    expect(result.scoreAssessment.forecast?.horizon).toBe(5);
-    expect(result.scoreAssessment.riskPlan.stop).toBe(input.tradePlans[0].stop);
+    const result=validateAiAnalysisResult(value,{...snapshot,tradePlans:buildTradePlans(snapshot)});
+    expect(result.scoreAssessment.finalScore).toBe(4.5);
+    expect(result.technicalAnalysis).toBe(value.technicalAnalysis);
     expect(result.normalized).toBe(false);
   });
-
-  it("does not label missing price confirmation as a missing stop-target pair", () => {
-    const input = { ...snapshot, tradePlans: buildTradePlans(snapshot) };
-    const value = validResult();
-    const result = validateAiAnalysisResult({ ...value, scoreAssessment: { ...value.scoreAssessment,
-      selectedPlanId: input.tradePlans[0].id } }, input, "en");
-    expect(result.scoreAssessment.activeSetup).toBe("none");
-    expect(result.strategyAdvice.leftEntry.text).toContain("Price confirmation is missing");
-    expect(result.strategyAdvice.leftEntry.text).not.toContain("No validated stop-target pair");
+  it("allows a model plan despite provisional bars, local confirmation and reward-risk thresholds", () => {
+    const input = {...snapshot,price:110,tradePlans:buildTradePlans(snapshot),
+      dataQuality:{...snapshot.dataQuality,dailyBarComplete:false,dailySamples:20}};
+    const value=validResult();
+    Object.assign(value.scoreAssessment,{selectedPlanId:input.tradePlans[0].id});
+    const result=validateAiAnalysisResult(value,input);
+    expect(result.scoreAssessment.activeSetup).toBe("left");
+    expect(result.scoreAssessment.riskPlan.rewardRisk).toBe(0.13);
+    expect(result.scoreAssessment.finalScore).toBe(3.75);
+    expect(result.strategyAdvice.leftEntry.text).toBe(value.strategyAdvice.leftEntry.text);
   });
-
-  it("removes internal evidence IDs from every user-visible string", () => {
-    const value = validResult();
-    value.overview = "Trend support is improving (`daily.ema.trend`).";
-    value.technicalAnalysis = "### Momentum\nMACD is improving (`daily.macd.cross`).";
-    value.strategyCommentary = "Reassess if momentum weakens (`daily.macd.cross`).";
-    value.scoreAssessment.confidenceReason = "Agreement is visible in `daily.ema.trend`.";
-    value.scoreAssessment.reasons[0].text = "Trend and momentum agree (`daily.ema.trend`, `daily.macd.cross`).";
-    value.strategyAdvice.holder.text = "Hold with protection (`daily.ema.trend`).";
-    value.strategyAdvice.exitStop.text = "Exit if the setup fails (`daily.macd.cross`).";
-
-    const result = validateAiAnalysisResult(value, snapshot);
-    const visibleText = [
-      result.overview,
-      result.technicalAnalysis,
-      result.strategyCommentary,
-      result.scoreAssessment.confidenceReason,
-      result.scoreAssessment.reasons[0].text,
-      result.strategyAdvice.holder.text,
-      result.strategyAdvice.exitStop.text,
-    ].join("\n");
-
-    expect(visibleText).not.toMatch(/(?:daily|weekly)\./);
+  it("supports independent combinations of supplied levels without choosing a local plan", () => {
+    const value=validResult();
+    Object.assign(value.scoreAssessment,{opportunityKind:"rebound",horizon:5,selectedPlanId:null,
+      currentTrend:{daily:"bearish",weekly:"neutral"}});
+    const result=validateAiAnalysisResult(value,snapshot);
+    expect(result.scoreAssessment.opportunity?.plan.id).toBe("model:rebound");
+    expect(result.scoreAssessment.forecast?.horizon).toBe(5);
+    expect(result.scoreAssessment.currentTrend).toEqual({daily:"bearish",weekly:"neutral"});
+  });
+  it("preserves a target in an observation even if no stop has been selected", () => {
+    const value=validResult();
+    Object.assign(value.scoreAssessment,{activeSetup:"none",leftStatus:"watch",riskPlan:{target:112}});
+    value.strategyAdvice.leftEntry.action="wait"; value.strategyAdvice.holder.action="hold";
+    expect(validateAiAnalysisResult(value,snapshot).scoreAssessment.riskPlan.target).toBe(112);
+  });
+  it("rejects a horizon mismatch rather than silently relabeling the forecast", () => {
+    const value=validResult(); Object.assign(value.scoreAssessment,{opportunityKind:"rebound",horizon:10});
+    expect(() => validateAiAnalysisResult(value,snapshot)).toThrow(/horizon/);
+  });
+  it("rejects an active entry paired with an explicit no-opportunity conclusion", () => {
+    const value=validResult(); Object.assign(value.scoreAssessment,{opportunityKind:null});
+    expect(() => validateAiAnalysisResult(value,snapshot)).toThrow(/opportunityKind=null/);
+  });
+  it("removes machine IDs without rewriting the analysis", () => {
+    const value=validResult(); value.technicalAnalysis="MACD improving (`daily.macd.cross`).";
+    expect(validateAiAnalysisResult(value,snapshot).technicalAnalysis).toBe("MACD improving.");
   });
 });

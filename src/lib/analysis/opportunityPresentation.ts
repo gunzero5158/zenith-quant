@@ -4,7 +4,7 @@ import { planIsExecutable, roundPrice } from "./opportunities";
 
 const labels = {
   "zh-CN": { score: "入场参考", note: "当前机会的入场质量，不是上涨概率。", daily: "日线", weekly: "周线", days: "个交易日",
-    kind: { rebound: "短期反弹", pullback: "趋势回踩", breakout: "突破确认" },
+    kind: { rebound: "短期反弹", pullback: "趋势回踩", breakout: "突破机会" },
     trend: { bullish: "偏强", bearish: "偏弱", neutral: "震荡" },
     status: { not_formed: "未形成", watch: "观察", provisional: "待收盘确认", triggered: "确认", too_late: "过晚", invalidated: "失效" },
     trigger: "触发参考", stop: "失效止损", volatility: "波动止损", target: "首个目标", max: "最高参考入场价", details: "模型判断详情（非交易胜率）", none: "无可执行机会" },
@@ -25,7 +25,7 @@ const labels = {
     trigger: "発動参考値", stop: "無効化ストップ", volatility: "変動幅ストップ", target: "第一目標", max: "参考エントリー上限", details: "モデル判断の詳細（取引勝率ではありません）", none: "実行可能な機会なし" },
 };
 
-export function opportunityPresentation(assessment: Pick<EntryAssessment | AiEntryAssessment, "opportunity" | "currentTrend">, language: string) {
+export function opportunityPresentation(assessment: Pick<EntryAssessment | AiEntryAssessment, "opportunity" | "currentTrend" | "forecast">, language: string) {
   const t = labels[language === "en" || language === "ja" || language === "zh-TW" ? language : "zh-CN"];
   const opportunity = assessment.opportunity;
   const trend = assessment.currentTrend;
@@ -61,7 +61,7 @@ export function opportunityPresentation(assessment: Pick<EntryAssessment | AiEnt
     warning, planLabel: executable ? t.score : copy.candidate,
     kind: opportunity ? t.kind[opportunity.kind] : t.none,
     status: opportunity ? t.status[opportunity.status] : undefined,
-    horizon: opportunity ? `${opportunity.horizon} ${t.days}` : undefined,
+    horizon: (assessment.forecast?.horizon ?? opportunity?.horizon) ? `${assessment.forecast?.horizon ?? opportunity?.horizon} ${t.days}` : undefined,
     trend: trend ? `${t.daily} ${t.trend[trend.daily]} · ${t.weekly} ${t.trend[trend.weekly]}` : undefined,
     opportunity: opportunity ? `${t.kind[opportunity.kind]} · ${t.status[opportunity.status]} · ${opportunity.horizon} ${t.days}` : t.none,
     plan: plan ? [plan.trigger !== undefined ? `${t.trigger} ${roundPrice(plan.trigger)}` : undefined,

@@ -1198,10 +1198,9 @@ export default function Home() {
                       <span className="decision-label">{effectiveLang === "en" ? "Opportunity & trend" : effectiveLang === "ja" ? "機会とトレンド" : "机会与趋势"}</span>
                       <div className="decision-opportunity-title">
                         <strong>{scorePresentation.opportunity.kind}</strong>
-                        <span className="decision-status">{scorePresentation.opportunity.status}</span>
+                        {scorePresentation.opportunity.status && <span className="decision-status">{scorePresentation.opportunity.status}</span>}
                       </div>
-                      <span>{scorePresentation.opportunity.trend}</span>
-                      <span className="decision-secondary">{scorePresentation.opportunity.horizon} · {scorePresentation.opportunity.action}</span>
+                      {scorePresentation.opportunity.trend && <span className="decision-secondary">{effectiveLang === "en" ? "Current" : effectiveLang === "ja" ? "現状" : "当前"} · {scorePresentation.opportunity.trend}</span>}
                       <ModelOutlook score={scorePresentation} jev={jevPresentation} language={effectiveLang} />
                     </div>
                   )}
@@ -1316,7 +1315,7 @@ export default function Home() {
                   <div className="recommendation-card" style={styles.recommendationCard}>
                     <div style={styles.cardHeader}>{t.strategyHeader}</div>
                     <div style={styles.cardBodyAutoScroll}>
-                      {scorePresentation?.opportunity && (
+                      {!stockData.isLLMUsed && scorePresentation?.opportunity && (
                         <div className="strategy-risk-context">
                           {scorePresentation.opportunity.warning && !stockData.reportRecommendation.includes(scorePresentation.opportunity.warning) && (
                             <p className="strategy-risk-warning">{scorePresentation.opportunity.warning}</p>

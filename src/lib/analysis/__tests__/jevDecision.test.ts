@@ -154,12 +154,13 @@ describe("Jev opportunity contract across the three batches and shared validator
   const primary = () => resolveJevPrimaryDecision(primaryAnswers({ outlook: choice("bearish"),
     setupStage: choice("left_triggered"), selectedPlan: choice(rebound.id) }), current);
   const follow = (forecast = "bullish") => ({ entryQuality: { type: "score", score: 3.5, confidence: 0.6 },
+    stopLevel: choice("s2"), targetLevel: choice("t1"), stopTrigger: choice("intraday"),
     holderAction: choice("hold"), forecast: choice(forecast, { bullish: 0.6, neutral: 0.3, bearish: 0.1 }) });
 
-  it("asks a whole-plan choice then an exact-horizon forecast without separate stop/target calls", () => {
+  it("asks an opportunity reference then independent level choices and an exact-horizon forecast", () => {
     expect(current.primaryQuestions.selectedPlan.type).toBe("choice");
     const next = buildJevFollowUpRequest(current, primary());
-    expect(Object.keys(next.questions).sort()).toEqual(["entryQuality", "forecast", "holderAction"]);
+    expect(Object.keys(next.questions).sort()).toEqual(["entryQuality", "forecast", "holderAction", "stopLevel", "stopTrigger", "targetLevel"]);
     expect(next.questions.forecast.instructions).toContain("5 complete trading days");
   });
 
@@ -170,31 +171,26 @@ describe("Jev opportunity contract across the three batches and shared validator
     expect(decision.forecast?.horizon).toBe(5);
     const cite = { evidenceIds: ["daily.ema.bullish"], text: "Short rebound while the weekly trend remains weak." };
     const merged = mergeJevDecisionWithReport(decision, { overview: cite.text, technicalAnalysis: cite.text,
-      strategyCommentary: cite.text, reasons: [cite], strategyTexts: { holder: cite, leftEntry: cite, rightAdd: cite, exitStop: cite } }, "en");
+      currentTrend: {daily:"neutral",weekly:"bearish"}, strategyCommentary: cite.text, reasons: [cite], strategyTexts: { holder: cite, leftEntry: cite, rightAdd: cite, exitStop: cite } }, "en");
     const result = validateAiAnalysisResult(merged, input, "en");
     expect(result.scoreAssessment.activeSetup).toBe("left");
     expect(result.scoreAssessment.opportunity?.kind).toBe("rebound");
-    expect(result.scoreAssessment.riskPlan.stop).toBe(rebound.stop);
+    expect(result.scoreAssessment.riskPlan.stop).toBe(95);
     expect(result.scoreAssessment.currentTrend?.weekly).toBe("bearish");
     expect(result.normalized).toBe(false);
   });
 
-  it("rejects a long action when the forecast for that same horizon is bearish", () => {
-    expect(resolveJevDecision(primary(), follow("bearish"), current).activeSetup).toBe("none");
+  it("does not silently rewrite a model forecast or its action", () => {
+    expect(resolveJevDecision(primary(), follow("bearish"), current).activeSetup).toBe("left");
   });
-  it("requires a price event even when Jev chooses an executable risk plan", () => {
-    const decision = resolveJevDecision(primary(), follow(), { ...current,
-      candidatePlans: current.candidatePlans?.map(plan => ({ ...plan, priceConfirmed: false })) });
-    expect(decision.activeSetup).toBe("none");
-    expect(decision.leftEntryAction).toBe("wait");
+  it("does not apply local confirmation or closing-bar gates to model judgments", () => {
+    const decision = resolveJevDecision(primary(), follow(), { ...current, dailyBarComplete:false,
+      candidatePlans: current.candidatePlans?.map(plan => ({...plan,priceConfirmed:false})) });
+    expect(decision.activeSetup).toBe("left");
+    expect(decision.leftStatus).toBe("triggered");
+    expect(decision.adjustments).toEqual([]);
   });
 
-  it("marks an unfinished daily trigger provisional", () => {
-    const decision = resolveJevDecision(primary(), follow(), { ...current, dailyBarComplete: false });
-    expect(decision.leftStatus).toBe("provisional");
-    expect(decision.leftEntryAction).toBe("wait");
-    expect(decision.activeSetup).toBe("none");
-  });
 });
 
 function decide(primary: Record<string, unknown> = {}, followUp: Record<string, unknown> = {}) {
@@ -318,19 +314,11 @@ describe("Jev decision resolution", () => {
     }
   });
 
-  it("downgrades an executable stage without a stop-target pair", () => {
-    const decision = decide({}, { stopLevel: choice("none") });
-    expect(decision.stop).toBeUndefined();
-    expect(decision.target).toBeUndefined();
-    expect(decision.setupStage).toBe("right_watch");
-    expect(decision.activeSetup).toBe("none");
-    expect(decision.rightStatus).toBe("watch");
-    expect(decision.rightAddAction).toBe("wait_breakout");
-    expect(decision.holderAction).toBe("hold");
-    expect(decision.adjustments.length).toBeGreaterThan(0);
+  it("rejects a contradictory executable stage without stop/target instead of lowering it locally", () => {
+    expect(() => decide({}, {stopLevel:choice("none")})).toThrow(/requires a stop and target/);
   });
 
-  it("downgrades an executable stage whose chosen levels pay less than the rule-engine threshold", () => {
+  it("preserves a model judgment below the rule-engine reward-risk threshold", () => {
     const decision = decide({}, { stopLevel: choice("s2"), targetLevel: choice("t1") });
     expect(decision.activeSetup).toBe("right");
     const thin = resolveJevDecision(
@@ -338,9 +326,9 @@ describe("Jev decision resolution", () => {
       followUpAnswers(),
       { ...request, price: 106 }
     );
-    expect(thin.setupStage).toBe("right_watch");
-    expect(thin.activeSetup).toBe("none");
-    expect(thin.adjustments.join(" ")).toContain("reward-to-risk");
+    expect(thin.setupStage).toBe("right_triggered");
+    expect(thin.activeSetup).toBe("right");
+    expect(thin.adjustments).toEqual([]);
   });
 
   it("does not veto a rebound merely because the current background is bearish", () => {

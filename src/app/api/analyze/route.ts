@@ -9,7 +9,7 @@ import { ChanLunResult } from "@/lib/analysis/chanlun";
 import { PatternResult } from "@/lib/analysis/patterns";
 import { EntryAssessment, ScoreDetail, toLegacyScoreDetail } from "@/lib/analysis/scoring";
 import { generateLocalReport } from "@/lib/analysis/fallbackReport";
-import { generateLLMReport, LLMConfig } from "@/lib/analysis/llmProxy";
+import { LLMConfig } from "@/lib/analysis/llmProxy";
 import { generateMockCandles } from "@/lib/analysis/mockData";
 import { getMarketCurrencySymbol, replaceDollarPriceSymbols } from "@/lib/analysis/market";
 import { fetchKabutanMarketData, getKabutanCode } from "@/lib/analysis/kabutan";
@@ -36,8 +36,7 @@ import { EvidenceSnapshot } from "@/lib/analysis/evidence";
 import { buildStrategyAdvice, StrategyAdvice } from "@/lib/analysis/strategyAdvice";
 import { validateAiScoreReview, ValidatedAiScoreReview } from "@/lib/analysis/aiScoreReview";
 import { buildEvidenceAnalystPrompt } from "@/lib/analysis/analysisPrompt";
-import { AiReportFields, composeAiReport } from "@/lib/analysis/reportComposition";
-import { parseLLMJsonResponse } from "@/lib/analysis/llmJson";
+import { ReportValidationError, requestValidatedReport } from "@/lib/analysis/modelReport";
 import {
   applyAnalysisQuoteSnapshot,
   getShanghaiDateKey,
@@ -53,18 +52,16 @@ import { getMarketDataPriority, MarketDataProvider } from "@/lib/analysis/market
 import { canUseMockMarketData, DEFAULT_ANALYSIS_MODE, isAnalysisMode } from "@/lib/analysis/analysisMode";
 import { fetchYahooJsonViaWindows } from "@/lib/analysis/windowsHttpFallback";
 import { AI_NATIVE_SYSTEM_BOUNDARY, buildAiNativeAnalystPrompt } from "@/lib/analysis/aiNativeAnalysisPrompt";
-import { validateAiAnalysisResult, toLegacyAiScoreDetail } from "@/lib/analysis/aiAnalysisResult";
+import { validateAiAnalysisResult, toLegacyAiScoreDetail, type AiStrategyAdvice } from "@/lib/analysis/aiAnalysisResult";
 import { composeAiNativeReport } from "@/lib/analysis/aiNativeReportComposition";
 import {
   buildJevDecisionRequest,
-  buildJevFollowUpRequest,
-  resolveJevDecision,
-  resolveJevPrimaryDecision,
   resolveJevReadings,
   withJevReadings,
 } from "@/lib/analysis/jevDecision";
 import { buildJevReadingsSection } from "@/lib/analysis/jevReadingsReport";
 import { JevConfig, requestJevDecision } from "@/lib/analysis/jevClient";
+import { requestConsistentJevDecision } from "@/lib/analysis/jevPipeline";
 import { buildJevReportPrompt, JEV_REPORT_SYSTEM_BOUNDARY, mergeJevDecisionWithReport } from "@/lib/analysis/jevReportPrompt";
 
 export const maxDuration = 300;
@@ -492,6 +489,7 @@ async function improveCompanyName(symbol: string, currentName: string, englishNa
 }
 
 export async function POST(request: Request) {
+  const reportDeadline = Date.now() + 270_000;
   try {
     const body = await request.json();
     const { symbol, llmConfig, jevConfig, language, useFallback, quoteSnapshot, analysisMode: requestedAnalysisMode } = body as {
@@ -731,13 +729,8 @@ export async function POST(request: Request) {
           language: effectiveLang,
           currencySymbol,
         });
-        const reportText = await generateLLMReport(prompt, llmConfig!, AI_NATIVE_SYSTEM_BOUNDARY);
-        const parsed = parseLLMJsonResponse<unknown>(reportText);
-        const aiResult = validateAiAnalysisResult(
-          parsed,
-          techData.snapshot,
-          effectiveLang as "zh-CN" | "zh-TW" | "en" | "ja"
-        );
+        const aiResult = await requestValidatedReport(prompt, llmConfig!, AI_NATIVE_SYSTEM_BOUNDARY,
+          value => validateAiAnalysisResult(value, techData.snapshot, effectiveLang as "zh-CN" | "zh-TW" | "en" | "ja"), reportDeadline);
         const report = composeAiNativeReport(aiResult, effectiveLang);
 
         return NextResponse.json({
@@ -792,14 +785,11 @@ export async function POST(request: Request) {
           dailyCandles: techData.dailyCandles,
           weeklyCandles: techData.weeklyCandles,
         });
-        const readingResponse = await requestJevDecision(bareRequest.state, bareRequest.readingQuestions, jevConfig!);
+        const readingResponse = await requestJevDecision(bareRequest.state, bareRequest.readingQuestions, jevConfig!, reportDeadline);
         const readings = resolveJevReadings(readingResponse.answers, bareRequest);
         const jevRequest = withJevReadings(bareRequest, readings);
-        const primaryResponse = await requestJevDecision(jevRequest.state, jevRequest.primaryQuestions, jevConfig!);
-        const primaryDecision = resolveJevPrimaryDecision(primaryResponse.answers, jevRequest);
-        const followUp = buildJevFollowUpRequest(jevRequest, primaryDecision);
-        const jevResponse = await requestJevDecision(followUp.state, followUp.questions, jevConfig!);
-        const decision = resolveJevDecision(primaryDecision, jevResponse.answers, jevRequest, readings);
+        const jevResponse = await requestConsistentJevDecision(jevRequest, readings, jevConfig!, reportDeadline);
+        const decision = jevResponse.decision;
 
         stage = "report";
         const prompt = buildJevReportPrompt({
@@ -810,13 +800,9 @@ export async function POST(request: Request) {
           language: effectiveLang,
           currencySymbol,
         });
-        const reportText = await generateLLMReport(prompt, llmConfig!, JEV_REPORT_SYSTEM_BOUNDARY);
         const lang = effectiveLang as "zh-CN" | "zh-TW" | "en" | "ja";
-        const aiResult = validateAiAnalysisResult(
-          mergeJevDecisionWithReport(decision, parseLLMJsonResponse<unknown>(reportText), lang),
-          techData.snapshot,
-          lang
-        );
+        const aiResult = await requestValidatedReport(prompt, llmConfig!, JEV_REPORT_SYSTEM_BOUNDARY,
+          value => validateAiAnalysisResult(mergeJevDecisionWithReport(decision, value, lang), techData.snapshot, lang), reportDeadline);
         const report = composeAiNativeReport(aiResult, effectiveLang);
 
         return NextResponse.json({
@@ -832,7 +818,7 @@ export async function POST(request: Request) {
           // The deterministic rule result costs nothing here and lets every analysis
           // add a sample to the rule track of the validation log.
           ruleBaseline: techData.entryAssessment,
-          jevDecision: { ...decision, model: jevResponse.model, usage: [readingResponse.usage, primaryResponse.usage, jevResponse.usage] },
+          jevDecision: { ...decision, model: jevResponse.model, usage: [readingResponse.usage, ...jevResponse.usage] },
           dataQuality: techData.snapshot.dataQuality,
           dailyCandles: techData.dailyCandles,
           weeklyCandles: techData.weeklyCandles,
@@ -874,7 +860,7 @@ export async function POST(request: Request) {
       techData.entryAssessment,
       effectiveLang
     );
-    const localReport = generateLocalReport({
+    const localReport = () => generateLocalReport({
       snapshot: techData.snapshot,
       entryAssessment: techData.entryAssessment,
       strategyAdvice: localizedStrategyAdvice,
@@ -886,10 +872,11 @@ export async function POST(request: Request) {
     let reportTechnical = "";
     let isLLMUsed = false;
     let finalAssessment: EntryAssessment = techData.entryAssessment;
+    let finalStrategy: StrategyAdvice | AiStrategyAdvice = localizedStrategyAdvice;
     let aiScoreReview: ValidatedAiScoreReview | undefined;
 
     if (techData.isMock && useFallback) {
-      const fallback = localReport;
+      const fallback = localReport();
       const mockPrefix = effectiveLang === "en"
         ? "⚠️ **Live market data is unavailable; this is an offline demo report based on simulated candles. LLM analysis was skipped to avoid analyzing mock data.**\n\n"
         : effectiveLang === "ja"
@@ -911,34 +898,40 @@ export async function POST(request: Request) {
           language: effectiveLang,
           currencySymbol,
         });
-        const reportText = await generateLLMReport(prompt, llmConfig);
-        
-        const parsed = parseLLMJsonResponse<AiReportFields & {
-          scoreReview: unknown;
-        }>(reportText);
-        const evidenceIds = techData.snapshot.items.map((item) => item.id);
-        aiScoreReview = validateAiScoreReview(
-          parsed.scoreReview,
-          evidenceIds,
-          techData.entryAssessment.ruleScore,
-          techData.entryAssessment.hardCap
-        );
+        const result = await requestValidatedReport(prompt, llmConfig, AI_NATIVE_SYSTEM_BOUNDARY, value => {
+          const ai = validateAiAnalysisResult(value, techData.snapshot, effectiveLang as "zh-CN" | "zh-TW" | "en" | "ja");
+          const review = validateAiScoreReview((value as {scoreReview?: unknown}).scoreReview,
+            techData.snapshot.items.map(item => item.id), techData.entryAssessment.ruleScore, techData.entryAssessment.hardCap);
+          if (review.validationWarnings.length) throw new Error(review.validationWarnings.join("; "));
+          if (review.review?.outlook !== ai.scoreAssessment.outlook) throw new Error("scoreReview.outlook contradicts scoreAssessment.outlook");
+          return { ai, review };
+        }, reportDeadline);
+        aiScoreReview = result.review;
+        const ai = result.ai.scoreAssessment;
         finalAssessment = {
           ...techData.entryAssessment,
-          aiAdjustment: aiScoreReview.appliedAdjustment,
-          aiOutlook: aiScoreReview.review?.outlook,
+          currentTrend: ai.currentTrend, forecast: ai.forecast, opportunity: ai.opportunity,
+          leftStatus: ai.leftStatus, rightStatus: ai.rightStatus,
+          aiAdjustment: aiScoreReview.appliedAdjustment, aiOutlook: ai.outlook,
           finalScore: aiScoreReview.finalScore,
         };
-        const composedReport = composeAiReport(parsed, localReport, effectiveLang, evidenceIds, finalAssessment);
+        finalStrategy = result.ai.strategyAdvice;
+        const composedReport = composeAiNativeReport(result.ai, effectiveLang);
         reportOverview = composedReport.overview;
         reportRecommendation = composedReport.recommendation;
         reportTechnical = composedReport.technicalAnalysis;
         isLLMUsed = true;
       } catch (err: unknown) {
         console.error("LLM Generation or parsing failed:", err);
+        // Inconsistent model output is an explicit error, never a switch to local judgment.
+        if (err instanceof ReportValidationError) return NextResponse.json({ error: err.message }, { status: 502 });
         // Only fallback to local engine if useFallback is explicitly enabled
         if (useFallback) {
-          const fallback = localReport;
+          finalAssessment = techData.entryAssessment;
+          finalStrategy = localizedStrategyAdvice;
+          aiScoreReview = undefined;
+          isLLMUsed = false;
+          const fallback = localReport();
           let errorPrefix = "⚠️ **大模型分析失败，已自动使用本地规则引擎兜底生成。**\n";
           if (effectiveLang === "zh-TW") errorPrefix = "⚠️ **大模型分析失敗，已自動使用本地規則引擎兜底生成。**\n";
           else if (effectiveLang === "en") errorPrefix = "⚠️ **AI analysis failed, fallback report generated by local engine.**\n";
@@ -956,7 +949,7 @@ export async function POST(request: Request) {
       }
     } else if (useFallback) {
       // No API key but fallback is enabled
-      const fallback = localReport;
+      const fallback = localReport();
       reportOverview = fallback.overview;
       reportRecommendation = fallback.recommendation;
       reportTechnical = fallback.technicalAnalysis;
@@ -984,7 +977,7 @@ export async function POST(request: Request) {
       changePercent: techData.changePercent,
       score: responseScore,
       entryAssessment: finalAssessment,
-      strategyAdvice: localizedStrategyAdvice,
+      strategyAdvice: finalStrategy,
       dataQuality: techData.snapshot.dataQuality,
       aiScoreReview,
       dailyCandles: techData.dailyCandles,

@@ -1,7 +1,8 @@
-import { Candle } from "./indicators";
-import { EvidenceSnapshot } from "./evidence";
-import { EntryAssessment } from "./scoring";
-import { StrategyAdvice } from "./strategyAdvice";
+import type { Candle } from "./indicators";
+import type { EvidenceSnapshot } from "./evidence";
+import type { EntryAssessment } from "./scoring";
+import type { StrategyAdvice } from "./strategyAdvice";
+import { buildAiNativeAnalystPrompt } from "./aiNativeAnalysisPrompt";
 
 export interface AnalysisPromptInput {
   snapshot: EvidenceSnapshot;
@@ -13,79 +14,19 @@ export interface AnalysisPromptInput {
   currencySymbol: string;
 }
 
-function candleSummary(candle: Candle) {
-  return {
-    date: String(candle.date).slice(0, 10),
-    open: candle.open,
-    high: candle.high,
-    low: candle.low,
-    close: candle.close,
-    volume: candle.volume,
-  };
-}
-
-function targetLanguage(language: string): string {
-  if (language === "en") return "English";
-  if (language === "ja") return "Japanese";
-  if (language === "zh-TW" || language === "zh-HK") return "Traditional Chinese";
-  return "Simplified Chinese";
-}
-
 export function buildEvidenceAnalystPrompt(input: AnalysisPromptInput): string {
-  const payload = {
-    language: input.language,
-    currencySymbol: input.currencySymbol,
-    immutableFacts: {
-      snapshot: input.snapshot,
-      ruleAssessment: input.entryAssessment,
-      strategy: input.strategyAdvice,
-      recentDailyCandles: input.dailyCandles.slice(-20).map(candleSummary),
-      recentWeeklyCandles: input.weeklyCandles.slice(-12).map(candleSummary),
-    },
-  };
-  const outputLanguage = targetLanguage(input.language);
-  return `You are a senior quantitative technical analyst. Review the immutable technical facts for the selected opportunity and its declared trading-day horizon.
-Output language: ${outputLanguage}.
-Write every user-visible string in that language, including headings, explanations, strategy commentary, score-review reasons, conflicts, and change conditions. Indicator abbreviations such as MACD, KDJ, RSI, EMA, BOLL, ATR, CMF, OBV, and VPVR may remain unchanged.
-
-Do not recalculate MACD, KDJ, RSI, EMA, BOLL, Ichimoku, ATR, Fibonacci, TD Sequential, classical patterns, candlesticks, volume, CMF, OBV, VPVR, Elliott Wave, or Chanlun. Use the supplied event timing and provisional daily/weekly status.
-The 0-5 rule score measures current new-entry attractiveness, not trend strength. Holder, left entry, right add, and exit/stop are separate strategies.
-You may adjust the rule score by at most +/-0.5. A nonzero adjustment must cite existing evidence IDs and cannot exceed hardCap.
-Independently classify the exact forecast event in ruleAssessment.forecast as bullish, neutral, or bearish: bullish means the close at the declared horizon strictly exceeds upperPrice; bearish means it is strictly below lowerPrice; neutral means between these boundaries inclusive. Current trend is separate background information. A weak weekly trend can coexist with a short rebound; do not mistake rebound confirmation for a medium-term reversal. Explain disagreement with the local opportunity as a risk, not an unannounced change to its executable status.
-Evidence IDs may appear only in scoreReview.reasons[].evidenceIds. They are machine-readable references, not analyst language.
-Never include evidence IDs in overview, technicalAnalysis, strategyCommentary, score-review reason text, conflicts, or change conditions. Refer to indicators and facts in plain language instead.
-
-Writing requirements:
-- Synthesize the evidence into an analyst view. Do not translate or enumerate the raw evidence list.
-- Review every supplied indicator and pattern internally. Omit categories that have no distinctive or actionable information, and combine evidence that supports the same conclusion.
-- Never omit confirmed or recent trigger events such as a golden/death cross, divergence, breakout/breakdown, volume confirmation, active classical pattern, or active candlestick pattern.
-- For every included category, state its current fact or value, its plain-language meaning, and its effect at the declared forecast horizon. Mention event timing and provisional status when they materially change confidence.
-- The overview must contain 2-3 short paragraphs covering the bull/bear view, trend quality, current price position, main opportunity, and main risk. Do not repeat the Rule/AI/Final score breakdown already shown in the interface.
-- The technicalAnalysis must use concise Markdown headings and bullets. Organize only the meaningful findings among trend and multi-timeframe structure; support/resistance, Fibonacci, VPVR and ATR; MACD/KDJ/RSI; volume/CMF/OBV; Ichimoku; classical and candlestick patterns; TD Sequential; Elliott Wave; and Chanlun.
-- The strategyCommentary should add context or change conditions without repeating the supplied four-part holder, left-entry, right-add, and exit/stop strategy verbatim.
-- Use only supplied facts. Do not invent fundamentals, news, targets, or unseen price levels.
-- The selected opportunity status and supplied strategy actions are binding in ALL prose, including the overview. When status is watch, not_formed, provisional, too_late, or invalidated, do not recommend probing, buying, or entering at support. Explain what must change instead. Oversold potential is not an entry authorization.
-- A support level is not automatically the selected stop. Never replace the selected plan's stop with a nearby VPVR/BOLL support in prose. Distinguish support failure risk from the plan's actual stop.
-- Candidate plans can be infeasible: if an unconfirmed trigger is above the first target or maximum entry, explicitly say no executable path exists under the current levels. Do not present those numbers as a trade to execute, skip the first obstacle, or suggest buying below the trigger to fix reward/risk.
-
-Return JSON only with this shape:
-decisionCheck must copy the selected ruleAssessment.opportunity.status and plan id/stop/target exactly (null for absent prices). Do not round them. These values must also govern the overview and strategyCommentary.
-{
-  "decisionCheck": { "status": "watch", "planId": "copy selected plan id", "stop": null, "target": null },
-  "overview": "string",
-  "technicalAnalysis": "string",
-  "strategyCommentary": "string",
-  "scoreReview": {
-    "adjustment": 0,
-    "confidence": 0,
-    "alignment": "agree",
-    "outlook": "neutral",
-    "reasons": [{ "evidenceIds": ["existing.id"], "text": "string" }],
-    "conflicts": [],
-    "changeConditions": []
-  }
-}
-
-IMMUTABLE_FACTS:
-${JSON.stringify(payload)}`;
+  return buildAiNativeAnalystPrompt(input)
+    .replace("There is no prior score, fixed weighting table, local score cap, or predetermined market regime to preserve.",
+      "The rule-score reference at the end applies to numerical scoring only. Interpret facts and make the technical decision independently.") + `
+MODE: RULE SCORE + AI INTERPRETATION
+The numerical score in this mode is a rule baseline plus an evidence-backed adjustment of at most +/-0.5 (bounded by hardCap).
+This numerical convention does NOT bind your outlook, opportunity, risk plan or report to the local rule interpretation.
+Distinguish rule baseline from your own assessment if they differ; do not claim the baseline represents your independent conviction.
+Return the complete analysis JSON above, plus scoreReview:
+{"adjustment":0,"confidence":0.7,"alignment":"agree","outlook":"neutral","reasons":[{"evidenceIds":["existing.id"],"text":"reason"}],"conflicts":[],"changeConditions":[]}.
+alignment is agree, more_cautious, or more_constructive. scoreReview.outlook must equal scoreAssessment.outlook.
+The visible numerical score will be computed from this baseline; all report sections and strategyAdvice must describe YOUR one coherent technical judgment.
+No local report or local strategy is supplied or appended.
+RULE_SCORE_REFERENCE:
+${JSON.stringify({ruleScore: input.entryAssessment.ruleScore, hardCap: input.entryAssessment.hardCap})}`;
 }

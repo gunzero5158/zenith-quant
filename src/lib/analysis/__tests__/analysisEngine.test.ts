@@ -56,27 +56,15 @@ describe("pure analysis engine", () => {
       language: "zh-CN",
       currencySymbol: "¥",
     });
-    expect(prompt).toContain("MACD, KDJ, RSI");
-    expect(prompt).toContain("Ichimoku");
-    expect(prompt).toContain("Fibonacci");
-    expect(prompt).toContain("TD Sequential");
-    expect(prompt).toContain("weeklyBarComplete");
     expect(prompt).toContain(result.snapshot.items[0].id);
     expect(prompt).toContain('"hardCap"');
+    expect(prompt).toContain("RULE_SCORE_REFERENCE");
+    expect(prompt).toContain("No local report or local strategy is supplied or appended");
+    expect(prompt).toContain("Before writing, form ONE coherent decision");
+    expect(prompt).toContain("NOT contradictions");
+    expect(prompt).not.toContain(result.localReport.recommendation);
     expect(prompt).toContain("Output language: Simplified Chinese");
-    expect(prompt).toContain("Do not translate or enumerate the raw evidence list");
-    expect(prompt).toContain("Omit categories that have no distinctive or actionable information");
-    expect(prompt).toContain("Never omit confirmed or recent trigger events");
-    expect(prompt).toContain("current fact or value");
-    expect(prompt).toContain("plain-language meaning");
-    expect(prompt).toContain("declared forecast horizon");
-    expect(prompt).toContain("strictly exceeds upperPrice");
-    expect(result.legacyComparison.decisionVersion).toBe("rules-0.6.0-paired");
     expect(result.legacyComparison.forecast).toEqual(result.entryAssessment.forecast);
-    expect(result.legacyComparison.opportunity?.plan.entry).toBe(result.snapshot.price);
-    expect(prompt).toContain("Evidence IDs may appear only in scoreReview.reasons[].evidenceIds");
-    expect(prompt).toContain('"outlook": "neutral"');
-    expect(prompt).toContain("Never include evidence IDs in overview, technicalAnalysis, strategyCommentary");
 
     const languageNames = {
       "zh-CN": "Simplified Chinese",
