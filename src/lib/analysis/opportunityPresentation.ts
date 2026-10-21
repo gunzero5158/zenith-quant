@@ -25,11 +25,12 @@ const labels = {
     trigger: "発動参考値", stop: "無効化ストップ", volatility: "変動幅ストップ", target: "第一目標", max: "参考エントリー上限", details: "モデル判断の詳細（取引勝率ではありません）", none: "実行可能な機会なし" },
 };
 
-export function opportunityPresentation(assessment: Pick<EntryAssessment | AiEntryAssessment, "opportunity" | "currentTrend" | "forecast">, language: string) {
+export function opportunityPresentation(assessment: Pick<EntryAssessment | AiEntryAssessment, "opportunity" | "currentTrend" | "forecast"> & { source?: string }, language: string) {
   const t = labels[language === "en" || language === "ja" || language === "zh-TW" ? language : "zh-CN"];
   const opportunity = assessment.opportunity;
   const trend = assessment.currentTrend;
   const plan = opportunity?.plan;
+  const modelDecision = assessment.source === "ai";
   const copy = language === "en" ? {
     pending: "Observation only — no entry authorized", ready: "Confirmed entry conditions",
     conflict: "Confirmation lies beyond the first obstacle or viable entry range. Reassess after the price structure changes.",
@@ -49,15 +50,18 @@ export function opportunityPresentation(assessment: Pick<EntryAssessment | AiEnt
     price: "等待价格确认及独立改善证据，超卖本身不是入场信号。",
     candidate: "候选价位，非执行计划", obstacle: "首个阻力", stop: "候选止损",
   };
-  const executable = opportunity?.status === "triggered" && planIsExecutable(plan) && plan?.priceConfirmed === true;
+  // AI actions are validated with their own structured decision and prose upstream.
+  // Presentation must not introduce the rule engine's reward/risk veto or invent advice.
+  const executable = opportunity?.status === "triggered" && (modelDecision
+    ? true : planIsExecutable(plan) && plan?.priceConfirmed === true);
   const conflict = plan && !plan.priceConfirmed && plan.trigger !== undefined
     && ((plan.target !== undefined && plan.trigger >= plan.target)
       || (plan.stop !== undefined && plan.target !== undefined && plan.trigger > plan.maxEntry));
-  const warning = !plan ? undefined : conflict ? copy.conflict : !planIsExecutable(plan) ? copy.risk
+  const warning = modelDecision || !plan ? undefined : conflict ? copy.conflict : !planIsExecutable(plan) ? copy.risk
     : !plan.priceConfirmed ? copy.price : undefined;
   return {
     label: t.score, note: t.note, detailsLabel: t.details,
-    action: executable ? copy.ready : copy.pending,
+    action: modelDecision ? undefined : executable ? copy.ready : copy.pending,
     warning, planLabel: executable ? t.score : copy.candidate,
     kind: opportunity ? t.kind[opportunity.kind] : t.none,
     status: opportunity ? t.status[opportunity.status] : undefined,
@@ -67,7 +71,7 @@ export function opportunityPresentation(assessment: Pick<EntryAssessment | AiEnt
     plan: plan ? [plan.trigger !== undefined ? `${t.trigger} ${roundPrice(plan.trigger)}` : undefined,
       plan.stop !== undefined ? `${!executable ? copy.stop : plan.stopBasis === "volatility" ? t.volatility : t.stop} ${roundPrice(plan.stop)}` : undefined,
       plan.target !== undefined ? `${executable ? t.target : copy.obstacle} ${roundPrice(plan.target)}` : undefined,
-      executable && plan.stop !== undefined && plan.target !== undefined ? `${t.max} ${roundPrice(plan.maxEntry)}` : undefined,
+      !modelDecision && executable && plan.stop !== undefined && plan.target !== undefined ? `${t.max} ${roundPrice(plan.maxEntry)}` : undefined,
     ].filter(Boolean).join(" · ") : undefined,
   };
 }

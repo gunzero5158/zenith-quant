@@ -29,6 +29,21 @@ function snapshot(overrides: Partial<EvidenceSnapshot> = {}): EvidenceSnapshot {
 }
 
 describe("opportunity decisions", () => {
+  it.each(["zh-CN", "en", "ja"])("does not veto APP model judgment with local payoff rules (%s)", (language) => {
+    const plan = { ...buildTradePlans(snapshot())[0], entry: 272.46, stop: 260.59,
+      target: 282.14, priceConfirmed: true };
+    const opportunity = { kind: "rebound" as const, status: "triggered" as const,
+      horizon: 5 as const, score: 2.5, plan, reasons: [] };
+    expect(planIsExecutable(plan)).toBe(false);
+    const model = opportunityPresentation({ source: "ai", opportunity }, language);
+    expect(model.action).toBeUndefined();
+    expect(model.warning).toBeUndefined();
+    expect(model.plan).toContain("282.14");
+    expect(model.plan).not.toContain(String(plan.maxEntry));
+    const local = opportunityPresentation({ opportunity }, language);
+    expect(local.warning).toBeTruthy();
+    expect(local.action).toBeTruthy();
+  });
   it("rejects the reported 688048 path whose confirmation exceeds its first obstacle", () => {
     const plan = { ...buildTradePlans(snapshot())[0], entry: 183.26, trigger: 195.8,
       stop: 172.59, target: 189.79, maxEntry: 180.41, priceConfirmed: false };

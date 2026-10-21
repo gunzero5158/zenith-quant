@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.1 - 2026-10-21
+
+### Fixed
+- Remove the remaining local reward/risk veto and synthetic entry verdict from AI decision presentation; retain local thresholds only for rule-only fallback decisions.
+- Ask all three AI paths to weigh payoff and uncertainty contextually, explain position sizing, and keep status, actions and prose consistent without a universal 1.2 cutoff.
+- Label Jev percentages as model direction distribution rather than an unexplained certainty metric.
+
+### Notes
+- Live model wording requires acceptance with configured providers; deterministic checks do not validate forecast accuracy.
+
 ## 0.8.0 - 2026-10-21
 
 ### Changed

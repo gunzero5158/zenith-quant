@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { EvidenceSnapshot } from "../evidence";
 import { toLegacyAiScoreDetail, validateAiAnalysisResult } from "../aiAnalysisResult";
 import { buildTradePlans } from "../opportunities";
+import { buildEntryScorePresentation } from "../presentation";
 
 const snapshot: EvidenceSnapshot = {
   version: "2.0",
@@ -96,6 +97,22 @@ function validResult() {
 }
 
 describe("AI report fact and consistency validation", () => {
+  it("preserves a modest-payoff probe through validation and presentation", () => {
+    const value = validResult();
+    value.scoreAssessment.riskPlan = { stop: 260.59, target: 282.14 };
+    Object.assign(value.scoreAssessment, { opportunityKind: "rebound", horizon: 5, selectedPlanId: null });
+    const input = { ...snapshot, price: 272.46, levels: [
+      { price: 260.59, kind: "support" as const, source: "horizontal" as const, strength: 0.8 },
+      { price: 282.14, kind: "resistance" as const, source: "horizontal" as const, strength: 0.8 },
+    ] };
+    const result = validateAiAnalysisResult(value, input);
+    expect(result.scoreAssessment.riskPlan.rewardRisk).toBeLessThan(1.2);
+    expect(result.strategyAdvice.leftEntry.text).toBe(value.strategyAdvice.leftEntry.text);
+    const view = buildEntryScorePresentation(result.scoreAssessment, "zh-CN");
+    expect(view.leftText).toBe("确认");
+    expect(view.opportunity?.warning).toBeUndefined();
+    expect(view.opportunity?.action).toBeUndefined();
+  });
   it("preserves model prose, score and judgment while deriving arithmetic", () => {
     const value = validResult();
     const result = validateAiAnalysisResult(value, snapshot);
