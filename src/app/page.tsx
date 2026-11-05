@@ -1200,7 +1200,6 @@ export default function Home() {
                         <strong>{scorePresentation.opportunity.kind}</strong>
                         {scorePresentation.opportunity.status && <span className="decision-status">{scorePresentation.opportunity.status}</span>}
                       </div>
-                      {scorePresentation.opportunity.trend && <span className="decision-secondary">{effectiveLang === "en" ? "Current" : effectiveLang === "ja" ? "現状" : "当前"} · {scorePresentation.opportunity.trend}</span>}
                       <ModelOutlook score={scorePresentation} jev={jevPresentation} language={effectiveLang} />
                     </div>
                   )}

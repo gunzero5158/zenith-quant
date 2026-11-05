@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.2 - 2026-11-05
+
+### Changed
+- Remove the current daily/weekly trend line from the opportunity card across all analysis modes and remove the Jev model-distribution explanatory note.
+
 ## 0.8.1 - 2026-10-21
 
 ### Fixed
